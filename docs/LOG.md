@@ -482,7 +482,20 @@ smoke; M1's unit tests should add a typeset-path check. (3)
 Chromium-only per §8 (FF/WebKit advisory at M5). (4) Determinism
 asserted, not demonstrated, until M3's double-build.
 
-**Milestone summary.** M0 proved the toolchain end to end on the
+## 2026-07-22 — M1 opened: Runtime v1 plan
+
+**Done.** docs/plans/M1.md authored and committed: §5 API over a
+correlated worker protocol, XeTeX-first scope (pdftex only if
+near-free; luatex reserved), 10 commit-sized items (scaffold →
+protocol → data-driven assets.json → worker → §5.3 sequencing state
+machine → client API → diagnostics parser w/ real-transcript fixtures
+→ demo migration → tester-verified acceptance). The three
+rebase-proofing rules are binding plan text; M0's carry-forward gaps
+(content-level PDF assertion, typeset-path integration test) are in
+the acceptance list. Loop continues without stopping per the
+2026-07-22 push-through directive.
+
+**Milestone summary (M0).** M0 proved the toolchain end to end on the
 native-first path: pinned sources (5, hash-verified incl. the 4.77 GiB
 ISO), pinned emsdk 3.1.43 (container + darwin-arm64), vendored busytex
 machinery byte-verified at f2bd7b1, full TL 2023 build native on arm64

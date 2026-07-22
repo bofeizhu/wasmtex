@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+build/out/
+build/work/
+dist/
+
+# Downloaded source caches (build/sources/pins.lock stays tracked)
+build/sources/cache/
+
+# OS / editor noise
+.DS_Store
+
+# TypeScript / test artifacts
+*.tsbuildinfo
+coverage/
+playwright-report/
+test-results/
+
+# npm debug logs
+npm-debug.log*
+
+# Local Claude settings (shared .claude/settings.json stays tracked)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

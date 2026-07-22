@@ -32,9 +32,11 @@
 # pin-verified artifacts are ever released. Source inputs stay pinned/verified.
 #
 # Usage:  build-native.sh <stage>          (or WASMTEX_STAGE=<stage>)
-#   stage in { prep native basic wasm bundle dist all clean }
+#   stage in { prep native basic wasm bundle dist verify all clean }
 #   `all` runs prep->native->basic->wasm->bundle->dist in order (resumable:
-#   make is incremental and the offline sentinels guard re-staging).
+#   make is incremental and the offline sentinels guard re-staging). The `dist`
+#   stage ends with an execution gate (`verify`, also runnable standalone): it
+#   runs the built engine under node and fails loudly on a hollow-but-valid wasm.
 #
 # Env overrides:
 #   WASMTEX_CACHE_DIR   pinned-source cache (default ~/.cache/wasmtex/sources)
@@ -104,6 +106,23 @@ macos_overrides=(
   # same frameworks a normal MacTeX xetex links. Without them the binary won't
   # even load (dyld: NSFontManager not found in flat namespace).
   "OPTS_BUSYTEX_LINK_native=-lm -pthread -Wl,-undefined,dynamic_lookup -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework Foundation -framework AppKit"
+  # Force the WASM library archives to use emar (the wasm twin of the upstream
+  # OPTS_LIBS_native at Makefile:206). Several libs/ archives (harfbuzz, libpng,
+  # zlib, graphite2, teckit, xpdf, libpaper, zziplib) don't use libtool, so their
+  # configure-generated Makefiles HARDCODE `AR = ar` (libpng Makefile:118). The
+  # wasm archive rule (Makefile:288) passes $(OPTS_LIBS_wasm), which upstream
+  # never defines — so nothing overrides that hardcoded `ar` on the sub-make
+  # command line, and `emmake`'s exported AR=emar loses to the Makefile
+  # assignment. On Linux `ar` is GNU ar (format-agnostic) so the wasm objects
+  # archive fine and the bug is invisible upstream; on macOS `/usr/bin/ar` is
+  # BSD ar, which auto-ranlibs and DROPS every non-Mach-O member ("archive member
+  # 'X.o' not a mach-o file") with exit 0 — producing 96-byte archives holding
+  # only __.SYMDEF and zero members. The link's -Wl,--unresolved-symbols=ignore-all
+  # then stubbed all 363 now-missing dependency symbols to abort(-1) (the 5N/6N
+  # defect). Passing AR=emar on the sub-make command line beats the Makefile's
+  # `AR = ar`; libtool libs (pplib, freetype, …) already got emar via configure
+  # and are unaffected. Upstream-able as `OPTS_LIBS_wasm = AR=$(AR_wasm)`.
+  "OPTS_LIBS_wasm=AR=emar"
   # Offline enforcement: blank every source URL so a missed pre-stage makes
   # curl fail loud (closed) rather than fetch bytes that bypass pins.lock.
   "URL_texlive="
@@ -263,6 +282,30 @@ do_dist() {
 
   banner "dist inventory"
   ( cd "$dist" && ls -la . formats && echo && cat SHA256SUMS )
+
+  # Execution gate (M0 item 5N, reopened): a structurally-valid-but-hollow wasm
+  # (empty dependency archives swallowed by --unresolved-symbols=ignore-all) must
+  # never pass again. Verify the assembled dist/ actually runs before declaring
+  # the stage done.
+  do_verify
+}
+
+# --- Execution gate --------------------------------------------------------
+# Drive the just-built engine under node and assert it is a SOUND binary, not a
+# structurally-valid hollow one. Two checks, both fail the build loudly (the
+# harness exits non-zero and `set -e` aborts):
+#   1. env-import sanity — a correctly linked busytex.wasm imports a few dozen
+#      legitimate emscripten JS helpers; the empty-archive defect produced 363
+#      (every unresolved dependency symbol stubbed to abort(-1)). Cheap, and
+#      catches this exact regression class directly.
+#   2. real execution — `xetex --version` runs to exit 0 and emits the
+#      TeX Live 2023 banner (WebAssembly.validate + a size check cannot: they
+#      were both true for the hollow artifact that shipped in the first 5N run).
+do_verify() {
+  banner "verify: execution gate — run engine under node + env-import sanity"
+  # timeout: synchronous wasm can't be interrupted in-process; a spinning
+  # engine must not hang the gate at the end of a multi-hour build.
+  timeout 300 node "$here/verify-engine.mjs" "$dist"
 }
 
 do_clean() {
@@ -287,9 +330,10 @@ case "$stage" in
   wasm)   do_wasm ;;
   bundle) do_bundle ;;
   dist)   do_dist ;;
+  verify) do_verify ;;
   clean)  do_clean ;;
   all)    do_prep; do_native; do_basic; do_wasm; do_bundle; do_dist ;;
-  *) echo "unknown stage: $stage (want: prep native basic wasm bundle dist all clean)" >&2; exit 2 ;;
+  *) echo "unknown stage: $stage (want: prep native basic wasm bundle dist verify all clean)" >&2; exit 2 ;;
 esac
 
 banner "stage '$stage' done"

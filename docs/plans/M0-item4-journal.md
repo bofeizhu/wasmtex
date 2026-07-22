@@ -345,7 +345,7 @@ the page lives. `busytex.wasm` **requires `Content-Type: application/wasm`**
 failure surfaces as an "Exception during compilation"**, masking its true origin.
 The upstream source even flags it (`// TODO: exception here not caught?`).
 
-### Artifact defect found by 6N — item-5N wasm is functionally hollow (DEFERRED to 5N)
+### Artifact defect found by 6N — item-5N wasm is functionally hollow (DEFERRED to 5N; RESOLVED — see "5N reopened" below)
 
 The hello-world compile **aborts**, not in TeX but in the pipeline's init-time
 `xdvipdfmx --version` probe: `RuntimeError: Aborted(-1)` at
@@ -392,3 +392,130 @@ unchanged once 5N produces a correctly-linked wasm. Everything up to the engine
 abort is proven working: page load, classic worker, `application/wasm` streaming
 instantiation, 79 MB `.data` fetch, package resolution, and the compile
 invocation (screenshot in the 6N run shows the full log through `Running…`).
+
+## Native build (5N) REOPENED (2026-07-22): empty wasm archives → fixed + execution gate
+
+6N's first-ever *execution* of `dist/busytex.wasm` exposed the hollow-archive
+defect (diagnosed in "6N demo notes" above). This section is the fix: the exact
+mechanism (reproduced on real objects), the one-variable remedy, the new
+execution gate, and the green rebuild.
+
+### Root-cause mechanism (reproduced, not guessed)
+
+The wasm archive rule (vendored Makefile:287-288) delegates to each library's
+configure-generated Makefile: `$(MAKE_$*) -C $(dir $@) … $(OPTS_LIBS_$*)`.
+Upstream defines **`OPTS_LIBS_native = AR=$(AR_native)`** (Makefile:206) with the
+comment *"Some of the libraries in libs/ don't use `libtool`, which leads to `AR`
+being hardcoded to `ar`. … Force everyone to respect proper `AR`."* — but there
+is **no `OPTS_LIBS_wasm`**. So the wasm archive sub-make passes nothing to
+override the library Makefile's hardcoded `AR = ar` (e.g. libpng Makefile:118),
+and `emmake`'s exported `AR=emar` (environment) loses to that Makefile assignment.
+
+- On **Linux** (upstream's host) `ar` = GNU ar, format-agnostic — it archives the
+  emscripten wasm/LLVM objects fine, so the missing `OPTS_LIBS_wasm` is invisible
+  upstream.
+- On **macOS** `/usr/bin/ar` is BSD ar (cctools). Reproduced verbatim on libpng's
+  actual staged wasm objects (`build/wasm/texlive/libs/libpng/libpng-src/*.o`,
+  which `file(1)` reports as `WebAssembly (wasm) binary module`):
+  ```
+  $ /usr/bin/ar cru host.a *.o
+  ranlib: warning: archive member 'png.o' not a mach-o file      # …×15, exit 0
+  $ ls -l host.a  → 96 bytes ;  ar t host.a → __.SYMDEF SORTED   (zero members)
+  ```
+  BSD `ar` auto-ranlibs and **silently drops every non-Mach-O member** (a mere
+  warning, **exit 0**), leaving a 96-byte archive of just the symbol table. The
+  final link's `-Wl,--unresolved-symbols=ignore-all -sERROR_ON_UNDEFINED_SYMBOLS=0`
+  then stubbed all now-missing dependency symbols to `abort(-1)` → 363 unresolved
+  `env` imports → the runtime abort at `_png_get_header_ver`.
+
+Contrast, same objects with the correct archiver: `emar cru emar.a *.o` → 210476
+bytes, 15 members, `png_get_header_ver` present (`T`, in the armap). The fix was
+proven at the unit before any build change.
+
+**Why only 8 of the libs went hollow** (evidence: `grep '^AR = ' <lib>/Makefile`):
+
+| through Makefile:287-288 | archiver | libtool? | result |
+| --- | --- | --- | --- |
+| libpng, zlib, harfbuzz, graphite2, teckit, xpdf, libpaper, zziplib | `AR = ar` (host BSD) | no | **96-byte empty** |
+| pplib | `AR = …/emscripten/emar` | yes | real (254 KB) |
+
+Exactly upstream's stated split: the non-libtool libs hardcode `ar`; the libtool
+libs (pplib via libtool; kpathsea/lua53 via the `.libs/` rule; freetype via its
+configure-honored AR; icu via its own build) had
+`emar` detected by configure and were already sound. (The "6N notes" listed xpdf
+as building real; re-measurement shows xpdf too was 96-byte empty — it is a
+non-libtool `AR = ar` lib. It contributed the 27 poppler `_ZN…` stubs.)
+
+### The fix — make-variable override (not a patch)
+
+Added **`OPTS_LIBS_wasm=AR=emar`** to `build-native.sh`'s `macos_overrides` (the
+wasm twin of upstream's `OPTS_LIBS_native`). Passed on the top `make` command line
+it propagates to Makefile:288's `$(OPTS_LIBS_wasm)`, placing `AR=emar` on each
+library sub-make's *command line* — which beats the Makefile's `AR = ar`. Chosen
+as an **override, not a `build/patches/` entry**, because (a) it is build
+orchestration, not a source incompatibility in a vendored file (unlike the
+libpng/zlib `TARGET_OS_MAC` patches); (b) it exactly mirrors an existing upstream
+variable; and (c) it keeps `build/upstream/` pristine — the task's preferred
+mechanism. Upstream-able as a one-line `OPTS_LIBS_wasm = AR=$(AR_wasm)` in the
+Makefile. Native/basic/bundle stages are untouched (they reference
+`$(OPTS_LIBS_native)`; `OPTS_LIBS_wasm` is inert there). Overrides: **4 → 5**.
+
+### NEW execution gate (required by the reopened item)
+
+`build/artifacts/verify-engine.mjs` (original node harness) + `do_verify()` in
+build-native.sh, run at the end of the `dist` stage (and standalone as a new
+`verify` stage). Two assertions, each fails the build loud (non-zero exit →
+`set -e` aborts):
+1. **env-import sanity** — `WebAssembly.Module.imports` `env` count ≤ 150 (a
+   constant). Cheap, and catches this exact class directly (hollow = 363; sound =
+   76). Prints the live count every run.
+2. **real execution** — loads the `-sMODULARIZE=1 -sEXPORT_NAME=busytex
+   -sINVOKE_RUN=0` engine under node and `callMain(['xetex','--version'])`,
+   asserting exit 0 and a `TeX Live 2023` banner. `WebAssembly.validate` + a size
+   check were both true for the hollow artifact — only *running* it tells sound
+   from hollow.
+De-risked before the long build: run against the OLD dist it correctly FAILED at
+check 1 (363 > 150, with a harfbuzz/zlib import sample); against the rebuilt dist
+it PASSED both.
+
+### Rebuild (incremental) + results
+
+Removed the 9 stale empty archives (teckit ships 2: `libTECkit.a` +
+`libTECkit_Compiler.a`) and `build/wasm/busytex.{js,wasm,o,tar}` to force the redo
+(the `.a` targets are timestamp-gated and the `busytex.js` rule has no prereqs);
+the compiled `.o` were left untouched. `make artifacts STAGE=wasm` = **36.8 s**
+(re-archives the 8 libs via `emar cru … && emranlib`, relinks); `make artifacts
+STAGE=dist` re-assembled `dist/` and the gate PASSED.
+
+- **env imports: 363 → 76**, all legitimate emscripten helpers (`__syscall_*`,
+  `invoke_*`, `emscripten_*`, `_*_js`, luasocket net shims) — **zero**
+  library-symbol stubs (no `hb_*`/`png_*`/`gz*`/`TECkit_*`/`zzip_*`/`_ZN`).
+- Archives now real: harfbuzz 3.57 MB/58 members, libxpdf 1.64 MB/56, libpng
+  210 KB/15, zlib 82 KB/15, graphite2 192 KB/29, TECkit 195 KB/1, zziplib 21 KB/9,
+  libpaper 8 KB/2.
+- Engine: `busytex.wasm` = 30,366,631 B (larger than the hollow build, which
+  omitted the dependency code); `busytex.js` = 295,606 B.
+- `dist/` delta: **only** `busytex.wasm` (`b919244c…` → `cf0298e1…`) and
+  `busytex.js` (`fbd87dff…` → `f381d9ba…`) changed; the data bundle, all 8 `.fmt`,
+  and the vendored `busytex_{pipeline,worker}.js` are byte-identical.
+- Gate proof — `xetex --version` self-reports *Compiled with zlib 1.2.13 /
+  Graphite2 1.3.14 / HarfBuzz 7.0.1 / libpng 1.6.39 / ICU 72.1 / FreeType 2.13.0 /
+  fontconfig 2.13.96* (the very libraries that had linked empty), exit 0.
+
+### 6N smoke — GREEN
+
+`cd demo && npm test` → **1 passed (3.4 s)**; compile 2385 ms,
+`exitCode=0 ok=true size=12487B`. All gating assertions pass: no uncaught page
+errors, no console errors, `ok === true`, `exitCode === 0`, PDF bytes present,
+**> 1 KB**, `%PDF-` header, `%%EOF` trailer. Captured PDF ≈ 12.49 KB (`file`:
+*PDF document, version 1.5 (zip deflate encoded)*, 18 objects; sha256
+`57f9d1c13d1ffb3413b614589112951875354f8679144cbc16b44f2255e98bfb` for that
+instance — exact bytes vary run-to-run because xdvipdfmx stamps a runtime
+`/CreationDate`+`/ID`, `SOURCE_DATE_EPOCH` not being present in the browser ENV;
+byte-determinism is the M2 double-build gate). The informational text/provenance
+probes are `false` as expected (content streams are deflate-compressed). The
+`_png_get_header_ver` abort is gone.
+
+**Deferred / not touched:** byte-level PDF determinism (M2). `docs/LOG.md`,
+`README.md`, `DESIGN.md`, `NOTICE` left strictly alone (uncommitted user edits).
+No commit — the orchestrating session reviews and commits.

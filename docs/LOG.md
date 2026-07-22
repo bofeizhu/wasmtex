@@ -339,3 +339,43 @@ the RED smoke as correct gate behavior.
 
 **Deferred.** The wasm archive/link fix is the reopened 5N unit, next
 iteration. 6N acceptance flips green unchanged once a sound wasm lands.
+
+## 2026-07-22 — 5N fixed (hollow wasm) + 6N GREEN: hello-world PDF in Chromium
+
+**Root cause (evidence-backed, review re-reproduced it).** Upstream's
+Makefile defines `OPTS_LIBS_native = AR=$(AR_native)` ("force everyone
+to respect proper AR") but never an `OPTS_LIBS_wasm` twin. Non-libtool
+libs (harfbuzz, libpng, zlib, graphite2, teckit, xpdf, libpaper,
+zziplib) hardcode `AR = ar` in configure-generated Makefiles, beating
+emmake's environment `AR=emar`. On Linux GNU ar archives wasm objects
+fine (bug invisible upstream); on macOS BSD ar auto-ranlibs and
+silently DROPS every non-Mach-O member with exit 0 — eight 96-byte
+archives, 363 symbols stubbed to abort by the link's ignore-all flags.
+Also corrected: the earlier 6N note misreported xpdf as building real;
+re-measurement showed it hollow too (it supplied the poppler stubs).
+
+**Fix.** One make-variable override, `OPTS_LIBS_wasm=AR=emar` (mirrors
+upstream's native guard; upstream-able as `OPTS_LIBS_wasm =
+AR=$(AR_wasm)`). No patch, vendored tree pristine. Incremental rebuild:
+re-archive 8 libs + relink in 37 s. `busytex.wasm` 28.9→30.4 MB (now
+actually carries the dependency code); env imports 363→76, all
+legitimate emscripten helpers. Data bundle and all formats
+byte-identical.
+
+**Execution gate (new, per the reopened item).** `verify-engine.mjs` +
+a `verify` stage ending every dist assembly (timeout-guarded): asserts
+env-import count ≤150 and runs `xetex --version` under node expecting
+exit 0 + a TeX Live 2023 banner. De-risked: it FAILS against the old
+hollow dist, PASSES against the fixed one. Hollow-but-valid can never
+ship silently again.
+
+**6N GREEN.** Demo smoke passes end-to-end in ~3 s: hello-world →
+XeTeX → xdvipdfmx → valid PDF (12,490 B, `%PDF-`…`%%EOF`, 18 objects),
+zero console/page errors. Engine self-reports zlib 1.2.13 / HarfBuzz
+7.0.1 / libpng 1.6.39 / Graphite2 1.3.14 / ICU 72.1 / FreeType 2.13.0.
+Independently re-run from the main session before commit. M0
+acceptance (a) and (c) are now both demonstrably satisfied.
+
+**Deferred.** PDF byte-determinism (xdvipdfmx stamps runtime
+/CreationDate + /ID in-browser) → M2 double-build gate. Remaining M0:
+7N notices audit, 8N acceptance run.

@@ -28,7 +28,8 @@
 #   make artifacts STAGE=basic     # install-tl texlive-basic + dump .fmt
 #   make artifacts STAGE=wasm      # wasm multicall busytex.js/.wasm
 #   make artifacts STAGE=bundle    # pack texlive-basic.js/.data
-#   make artifacts STAGE=dist      # assemble dist/ + SHA256SUMS
+#   make artifacts STAGE=dist      # assemble dist/ + SHA256SUMS (+ verify gate)
+#   make artifacts STAGE=verify    # execution gate alone (env imports + engine run)
 # STAGE defaults to `all`.
 #
 # `make artifacts-container` (PARKED for M2): the pinned-container flow built in

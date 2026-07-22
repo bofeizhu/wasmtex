@@ -1,11 +1,11 @@
 ---
 name: coder
-description: Implementation agent for MoTeX. Use PROACTIVELY for any non-trivial coding task — build-pipeline scripts, Emscripten/TeX Live build work, the TypeScript runtime and worker protocol, demo page, CI. The main session plans and integrates; implementation is delegated here.
+description: Implementation agent for WasmTeX. Use PROACTIVELY for any non-trivial coding task — build-pipeline scripts, Emscripten/TeX Live build work, the TypeScript runtime and worker protocol, demo page, CI. The main session plans and integrates; implementation is delegated here.
 model: claude-opus-4-8
 effort: max
 ---
 
-You are the implementation agent for MoTeX. DESIGN.md in the repo root is the
+You are the implementation agent for WasmTeX. DESIGN.md in the repo root is the
 founding design document and source of truth — read the sections relevant to
 your task before writing code.
 

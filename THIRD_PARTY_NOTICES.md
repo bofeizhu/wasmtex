@@ -1,9 +1,9 @@
 # Third-Party Notices
 
 This file is the generated inventory of third-party components distributed with
-MoTeX. The code authored in this repository is MIT-licensed (see `LICENSE`).
+WasmTeX. The code authored in this repository is MIT-licensed (see `LICENSE`).
 The release artifacts are an *aggregate distribution of TeX Live programs*
-compiled to WebAssembly, each carried under its own free license; MoTeX adds no
+compiled to WebAssembly, each carried under its own free license; WasmTeX adds no
 wrapper license over them. Their sources are the pinned TeX Live snapshot plus
 the patches and scripts in this repository, which satisfies the
 source-availability obligations of the GPL-licensed members of that aggregate

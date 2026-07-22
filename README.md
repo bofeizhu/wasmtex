@@ -1,6 +1,6 @@
-# motex
+# wasmtex
 
-**motex** is an MIT-licensed, current-TeX-Live WebAssembly typesetter for
+**wasmtex** is an MIT-licensed, current-TeX-Live WebAssembly typesetter for
 embedding in host applications. It compiles LaTeX projects to PDF entirely
 inside browser-class runtimes — web pages, Web Workers, Electron renderers or
 hidden views — via a single multicall engine binary, tiered TeX Live data

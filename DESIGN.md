@@ -1,10 +1,12 @@
-# MoTeX — a current-TeX-Live WASM typesetter for embedding
+# WasmTeX — a current-TeX-Live WASM typesetter for embedding
 
 Status: founding design (pre-code). License: MIT for everything authored in
-this repository. Working name `motex` — verify npm availability at bootstrap
-and rename freely; nothing below depends on the name.
+this repository. Named `wasmtex` at bootstrap
+(2026-07-22): the original working name `motex` was taken on npm (a v0.0.0
+placeholder) and as a GitHub org, so it was renamed per the bootstrap rule;
+`wasmtex` was verified free on both. Nothing below depends on the name.
 
-MoTeX compiles LaTeX projects to PDF entirely inside a browser-class runtime
+WasmTeX compiles LaTeX projects to PDF entirely inside a browser-class runtime
 (web page, Web Worker, Electron renderer or hidden view). It packages the
 TeX Live engines as a single WebAssembly multicall binary plus tiered TeX
 Live data bundles, and exposes a small, typed, job-oriented API designed for
@@ -13,7 +15,7 @@ Live data bundles, and exposes a small, typed, job-oriented API designed for
 ## 1. Why this exists
 
 - **Current TeX Live.** Existing MIT-licensed WASM TeX builds pin old TeX
-  Live snapshots. MoTeX tracks a pinned *current* TeX Live (starting with
+  Live snapshots. WasmTeX tracks a pinned *current* TeX Live (starting with
   TL 2026) and treats the rebase-to-next-year as a first-class, scripted
   operation, not an archaeology project.
 - **License clarity for proprietary hosts.** The repository's own code —
@@ -56,7 +58,7 @@ Live data bundles, and exposes a small, typed, job-oriented API designed for
 - Tiered TeX Live bundles (`core` / `extended` / `full`) generated from TeX
   Live's own package database (tlpdb), each with a machine-readable manifest
   (file list, sizes, sha256, provided package names).
-- A typed ESM runtime (`motex` npm package) with: multi-file projects,
+- A typed ESM runtime (`wasmtex` npm package) with: multi-file projects,
   engine choice, auto bibliography (bibtex8) / index / rerun passes, SyncTeX
   opt-in, streaming logs, parsed diagnostics, cancellation, progress events.
 - On-demand bundle resolution driven by tlpdb data plus missing-file
@@ -76,7 +78,7 @@ Live data bundles, and exposes a small, typed, job-oriented API designed for
 ## 4. Repository layout
 
 ```
-motex/
+wasmtex/
   build/            # reproducible artifact pipeline (Docker + bash/python)
     toolchain/      #   pinned emsdk, container definition
     sources/        #   fetch + verify TeX Live snapshot & deps (pins.lock)
@@ -99,11 +101,11 @@ motex/
 Release artifacts (GitHub Releases, tag `assets-vX.Y.Z` in lockstep with the
 npm version):
 
-- `motex-assets-<version>.tar.gz` — engine wasm/js + formats + all bundles
+- `wasmtex-assets-<version>.tar.gz` — engine wasm/js + formats + all bundles
 - `manifest.json` — top-level integrity manifest: texlive snapshot id,
   engine list, per-file `{ bytes, sha256 }`, per-bundle provided-package
   index. Hosts verify installs against this instead of trusting the tarball.
-- Per-bundle archives (`motex-bundle-core-<version>.tar.gz`, …) so hosts can
+- Per-bundle archives (`wasmtex-bundle-core-<version>.tar.gz`, …) so hosts can
   ship minimal footprints.
 
 ## 5. Runtime API (original design)
@@ -111,10 +113,10 @@ npm version):
 ### 5.1 Shape
 
 ```ts
-import { createTypesetter, type Typesetter } from 'motex'
+import { createTypesetter, type Typesetter } from 'wasmtex'
 
 const tex: Typesetter = await createTypesetter({
-  assetsBaseUrl: 'motex-assets://dist',      // any same-origin base URL
+  assetsBaseUrl: 'wasmtex-assets://dist',      // any same-origin base URL
   bundles: { preload: ['core'], onDemand: ['extended', 'full'] },
   onAssetProgress: (p) => {},                // { assetId, loadedBytes, totalBytes }
   locateAsset: (name) => undefined,          // optional per-file URL override
@@ -267,7 +269,7 @@ using a small open font checked into `conformance/fixtures`.
 
 ## 10. Embedding profile (design target)
 
-The first consumer is a desktop app embedding MoTeX in a hidden Electron
+The first consumer is a desktop app embedding WasmTeX in a hidden Electron
 view behind a custom scheme. The requirements below are therefore hard
 constraints, not nice-to-haves:
 

@@ -1,6 +1,6 @@
 # Kickoff prompt for Claude Code (paste as the first message in the new repo)
 
-You are bootstrapping **MoTeX**, a new standalone open-source project:
+You are bootstrapping **WasmTeX**, a new standalone open-source project:
 an MIT-licensed, current-TeX-Live WebAssembly typesetter designed for
 embedding in host applications. `DESIGN.md` in the repo root is the founding
 design document — read it fully before doing anything; it is the source of
@@ -40,7 +40,7 @@ commits rather than silently drifting.
    `THIRD_PARTY_NOTICES.md` (skeleton), `.editorconfig`, `.gitignore`,
    `README.md` (short: what/why/status table pointing at DESIGN.md),
    `docs/LOG.md`.
-2. Verify the working name: check the `motex` name on npm and GitHub. If
+2. Verify the working name: check the `wasmtex` name on npm and GitHub. If
    taken, propose three alternatives and pick one; update DESIGN.md's title
    note and all references in one commit.
 3. Scaffold the layout from DESIGN.md §4 with placeholder READMEs per
@@ -77,7 +77,7 @@ seed documents (hello-world per engine, one bibtex8 document, one makeindex
 document) compile in the demo; reproducibility check still green.
 
 **M2 — Runtime v1.**
-Implement the `motex` npm package exactly per DESIGN.md §5: `createTypesetter`,
+Implement the `wasmtex` npm package exactly per DESIGN.md §5: `createTypesetter`,
 job objects with `done`/`onLog`/`cancel`, the correlated worker protocol
 (every message carries `jobId`; foreign/late ids are dropped), streaming
 log lines, the diagnostics parser, engine sequencing per §5.3. Replace the
@@ -108,7 +108,7 @@ contamination, memory returns to baseline after `dispose()`.
 
 ## Embedding profile to keep in mind throughout
 
-The first consumer embeds MoTeX in a hidden Electron view behind a custom
+The first consumer embeds WasmTeX in a hidden Electron view behind a custom
 URL scheme, with zero browser storage, verifying every downloaded byte
 against `manifest.json`, and surfacing logs/diagnostics to an LLM agent
 that authored the LaTeX. Concretely: never assume `https:`, never assume

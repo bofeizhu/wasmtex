@@ -1,4 +1,4 @@
-# MoTeX — Claude Code conventions
+# WasmTeX — Claude Code conventions
 
 DESIGN.md is the founding design document and source of truth; PROMPT.md is
 the bootstrap/milestone kickoff prompt. Read the relevant DESIGN.md sections

@@ -448,3 +448,48 @@ the usual code-reviewer pass; the script's documented negative-test
 de-risking substitutes for the adversarial half of that review.
 
 **Remaining M0.** 8N acceptance run only.
+
+## 2026-07-22 — M0 COMPLETE: acceptance verified independently (8N)
+
+**Verdict.** `tester` agent re-executed every check against HEAD
+`219f775`, clean tree: (a) `make artifacts STAGE=all` exit 0 (11 s
+incremental no-op, 0 recompiles), execution gate PASSED (76 env
+imports vs 150 ceiling; `xetex --version` → "TeX Live 2023", exit 0),
+`shasum -c SHA256SUMS` all 14 OK; (b) reproducibility double-build
+confirmed *not claimed* — recorded M3 deferral in plan + DESIGN
+§6.1/§9; (c) demo smoke: 1 passed, hello-world → valid 12,488 B PDF in
+headless Chromium, 2396 ms compile, zero console/page errors; (d)
+license audit: all five checks pass. CI: runtime-tests, build,
+license-audit all green on HEAD. **M0 acceptance SATISFIED.**
+
+**Artifact inventory of record (dist/, 139 MB, git-ignored).**
+busytex.js f381d9ba… (295,606 B); busytex.wasm cf0298e1… (30,366,631
+B); busytex_pipeline.js 3677f3c5… (31,204 B); busytex_worker.js
+b557fd0d… (2,052 B); formats/: dvilualatex 801a2f97… (4,558,611),
+dviluatex f1753efb… (1,194,589), luahblatex ecc8f976… (11,880,048),
+luatex 45446b99… (1,194,521), optex ad9c808b… (698,555), pdflatex
+92d56285… (6,477,728), tex d10a56cb… (303,574), xelatex a18f97b4…
+(8,714,792); texlive-basic.data 2d7a6d6f… (79,503,467);
+texlive-basic.js bf7f44b3… (1,703,852). Full 64-char hashes:
+dist/SHA256SUMS (regenerate via `make artifacts STAGE=dist`).
+
+**Coverage gaps carried forward (tester's notes, none blocking).**
+(1) PDF validity is proven structurally, not by content — text-snippet
++ page-count assertions land with the M5 conformance corpus; consider
+a content probe in M1's runtime tests. (2) The execution gate proves
+boot, not typesetting — the compile path is covered only by the demo
+smoke; M1's unit tests should add a typeset-path check. (3)
+Chromium-only per §8 (FF/WebKit advisory at M5). (4) Determinism
+asserted, not demonstrated, until M3's double-build.
+
+**Milestone summary.** M0 proved the toolchain end to end on the
+native-first path: pinned sources (5, hash-verified incl. the 4.77 GiB
+ISO), pinned emsdk 3.1.43 (container + darwin-arm64), vendored busytex
+machinery byte-verified at f2bd7b1, full TL 2023 build native on arm64
+in ~70 min, wasm multicall engine that boots and typesets in Chromium,
+a demo + Playwright gate, a real license audit, and three green CI
+workflows on a now-public repo. Deviations all recorded: native-first
+pivot, amd64 requirement dropped, LuaTeX dropped from v1, M2↔M3 swap,
+repro/CI deferrals. Next per the revised §9: **M1 Runtime v1** — plan
+written next iteration (loop continues per the 2026-07-22 push-through
+directive).

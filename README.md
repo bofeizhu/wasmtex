@@ -28,8 +28,8 @@ no engine or runtime code yet.
 | Milestone | Goal | Status |
 | --- | --- | --- |
 | Bootstrap | Repo scaffolding, licensing posture, CI skeletons | Done |
-| M0 | Faithful baseline — reproduce upstream busytex's build natively on the dev host | In progress |
-| M1 | Runtime v1 — typed ESM API, XeTeX-first (LuaTeX dropped from v1) (MVP core) | Not started |
+| M0 | Faithful baseline — reproduce upstream busytex's build natively on the dev host | Done |
+| M1 | Runtime v1 — typed ESM API, XeTeX-first (LuaTeX dropped from v1) (MVP core) | In progress |
 | M2 | Rebase to TeX Live 2026 — port patches, dump formats; LuaTeX exits the build | Not started |
 | M3 | Build logistics & CI — pinned arm64 container as canonical builder, repro gate | Not started |
 | M4 | Bundles + manifests — tlpdb-driven tiering and on-demand resolution | Not started |

@@ -27,13 +27,16 @@ no engine or runtime code yet.
 
 | Milestone | Goal | Status |
 | --- | --- | --- |
-| Bootstrap | Repo scaffolding, licensing posture, CI skeletons | In progress |
-| M0 | Faithful baseline — reproduce upstream busytex's build in our pinned container | Not started |
-| M1 | Rebase to TeX Live 2026 — port patches, build all engines, dump formats | Not started |
-| M2 | Runtime v1 — typed ESM API over a correlated worker protocol | Not started |
-| M3 | Bundles + manifests — tlpdb-driven tiering and on-demand resolution | Not started |
-| M4 | Release engineering — versioned archives, license audit, npm publish dry-run | Not started |
-| M5 | Hardening — full conformance corpus, browser matrix, size budgets, soak tests | Not started |
+| Bootstrap | Repo scaffolding, licensing posture, CI skeletons | Done |
+| M0 | Faithful baseline — reproduce upstream busytex's build natively on the dev host | In progress |
+| M1 | Runtime v1 — typed ESM API over a correlated worker protocol (MVP core) | Not started |
+| M2 | Build logistics & CI — pinned amd64 container as canonical builder, repro gate | Not started |
+| M3 | Rebase to TeX Live 2026 — port patches, build all engines, dump formats | Not started |
+| M4 | Bundles + manifests — tlpdb-driven tiering and on-demand resolution | Not started |
+| M5 | Release engineering + hardening — archives, audit, npm dry-run, corpus, budgets | Not started |
+
+(Milestone order revised 2026-07-22 — native-first bootstrap pivot; see
+DESIGN.md §9.)
 
 ## Design
 

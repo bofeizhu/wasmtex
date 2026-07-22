@@ -52,6 +52,11 @@ commits rather than silently drifting.
 
 ## Milestone plan — work strictly in order
 
+> Superseded 2026-07-22: milestone numbering and order below are the
+> original charter; the binding order is DESIGN.md §9 (revised —
+> native-first bootstrap pivot). Per this document's own rule, DESIGN.md
+> wins.
+
 Execute the milestones exactly as DESIGN.md §9 defines them. For each:
 announce the plan, do the work, run the acceptance checks, record results
 in `docs/LOG.md`, then stop and summarize before starting the next.

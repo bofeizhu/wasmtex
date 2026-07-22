@@ -164,3 +164,41 @@ Make 4.3 (`make -n` on two targets).
 **Deferred.** `ubuntu_package_preload.py` is unused by M0's build path
 (only the `build/wasm/ubuntu/%.js` recipe uses it) but vendored to keep
 the Makefile's path references closed; drop at M1 if still unused.
+
+## 2026-07-22 — M0 item 4 (container attempt) + native-first pivot
+
+**Attempted.** `coder` agent wired the containerized `make artifacts`:
+root Makefile, `build/artifacts/build.sh` (preflight pins check,
+`--network none`, ro cache mount), `run-in-container.sh` (repro env,
+offline pre-staging into the exact `source/<id>` paths the upstream
+Makefile's download recipes produce — zero vendored-file edits, no
+patches needed), journal at docs/plans/M0-item4-journal.md. Prep stage
+verified offline (4.8G texmf repo staged from the ISO, 11524 packages).
+
+**Failed → diagnosed.** `make -j4 native` died repeatedly with
+`write jobserver: Bad file descriptor` — GNU Make's jobserver pipe fds
+do not survive process spawning under Rosetta emulation; hits both
+autotools and CMake sub-makes (first at zziplib's literal
+`cd ../zlib && make rebuild`). Not fixable per-leaf without whack-a-mole
+patching. Fix chosen: `-j1` on this host (no jobserver exists at -j1),
+`WASMTEX_JOBS` override for real x86_64 builders. Operational fixes:
+named container (`wasmtex-m0-build`), dropped `--rm` (keep logs for
+post-mortem), `docker wait` for blocking supervision — the third
+yield-and-wait agent failure this project (items 1 and 2 each needed a
+manual nudge after their waiters never fired) made in-session
+babysitting the standing rule.
+
+**Pivot (user direction).** Serial emulated builds are prohibitively
+slow for bootstrap. User directive: arm64 macOS is first-class now —
+build raw on the host (no container), prove the toolchain, and drive
+fast toward the wrapper-layer MVP (the project core); container/amd64/
+CI/reproducibility logistics return after the MVP round. Recorded as an
+explicit DESIGN.md §9 revision (milestones reordered: M0 native
+baseline → M1 runtime MVP → M2 build logistics & CI → M3 TL 2026 →
+M4 bundles → M5 release+hardening) + §6.1 bootstrap note. M0 plan
+gained a revised work list (4N–8N); items 1–3 stand; the amd64
+container wiring is committed as parked-for-M2, per-file provenance
+headers intact. The orphaned serial build container was stopped and
+removed (its driver agent died in a session restart). Constitutional
+floor preserved: only container-built, pin-verified artifacts are ever
+released; native host builds are dev-only.

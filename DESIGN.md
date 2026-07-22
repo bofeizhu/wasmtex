@@ -101,7 +101,8 @@ wasmtex/
 > M0 staging: `build/upstream/` is a temporary M0-only staging area holding the
 > upstream busytex build machinery vendored unmodified at its pinned commit (see
 > `build/upstream/README.md`); it is dissolved into `build/engines/`,
-> `build/formats/`, `build/bundles/` and `build/patches/` at M1, then removed.
+> `build/formats/`, `build/bundles/` and `build/patches/` at the TL 2026
+> rebase (M3 under the revised §9 numbering), then removed.
 
 Release artifacts (GitHub Releases, tag `assets-vX.Y.Z` in lockstep with the
 npm version):
@@ -208,6 +209,11 @@ emsdk version, container digest. CI runs the full build twice and fails on
 any artifact-hash mismatch. `SOURCE_DATE_EPOCH` and stable file ordering in
 archives are mandatory.
 
+> Bootstrap-phase note (2026-07-22): this contract binds the canonical
+> container build path, activated at M2 (§9 revision). During the
+> native-first bootstrap, host builds consume the same pinned, verified
+> sources but are development-only — never committed or released.
+
 ### 6.2 The annual rebase
 
 `build/patches/` holds our TL patches; each has a header (what, why,
@@ -258,19 +264,36 @@ using a small open font checked into `conformance/fixtures`.
 
 ## 9. Milestones
 
-- **M0 — Faithful baseline.** Reproduce upstream busytex's build (its pinned
-  TL) inside our pinned container, unchanged; artifacts boot in the demo
-  page and compile hello-world. *Proves the toolchain before changing it.*
-- **M1 — Rebase to TL 2026.** Port patches to the pinned TL 2026 snapshot;
-  all engines build; formats dump; corpus seeds pass.
-- **M2 — Runtime v1.** The §5 API over a correlated worker protocol, with
-  unit tests and the demo migrated to it.
-- **M3 — Bundles + manifests.** tlpdb-driven tiering, per-bundle manifests,
-  top-level integrity manifest, on-demand resolution with log feedback.
-- **M4 — Release engineering.** Versioned archives, license audit,
-  reproducibility gate, README/docs, npm publish dry-run.
-- **M5 — Hardening.** Full conformance corpus, browser matrix, size
-  budgets, cancellation/timeout soak tests.
+> **Revised 2026-07-22 (bootstrap-phase pivot, explicit amendment).**
+> Development happens natively on the maintainer's arm64 macOS host — raw
+> host builds, no container — to maximize iteration speed toward the
+> runtime MVP: the wrapper layer is the core of this project. The pinned
+> amd64 container (built and parked during the original M0), the
+> bit-for-bit reproducibility gate, and CI execution move to their own
+> milestone after the MVP. The constitutional floor that survives the
+> pivot: **only container-built, pin-verified artifacts are ever
+> released**; native host builds are a development vehicle, never a
+> release source. Source *inputs* stay pinned and hash-verified via
+> `build/sources/pins.lock` on every path.
+
+- **M0 — Faithful baseline (native).** Reproduce upstream busytex's build
+  (its pinned TL 2023) raw on the arm64 macOS host from the hash-verified
+  source cache; artifacts boot in the demo page and compile hello-world.
+  *Proves the toolchain with the fastest iteration loop.*
+- **M1 — Runtime v1 (MVP core, formerly M2).** The §5 API over a
+  correlated worker protocol, with unit tests and the demo migrated to it.
+- **M2 — Build logistics & CI (formerly M0's container scope + part of
+  M4).** GitHub CI; the pinned amd64 container becomes the canonical
+  builder; the build-twice reproducibility gate; a native-vs-container
+  wasm-output equivalence check.
+- **M3 — Rebase to TL 2026 (formerly M1).** Port patches to the pinned
+  TL 2026 snapshot; all engines build; formats dump; corpus seeds pass.
+- **M4 — Bundles + manifests (formerly M3).** tlpdb-driven tiering,
+  per-bundle manifests, top-level integrity manifest, on-demand
+  resolution with log feedback.
+- **M5 — Release engineering + hardening (former M4 + M5).** Versioned
+  archives, license audit, README/docs, npm publish dry-run; full
+  conformance corpus, browser matrix, size budgets, soak tests.
 
 ## 10. Embedding profile (design target)
 

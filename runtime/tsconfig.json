@@ -1,0 +1,50 @@
+{
+  // Build config for the wasmtex package: `npm run build` emits with this config.
+  // Scope is src/ + worker/; test/ is deliberately NOT in `include`, so tests are
+  // never emitted to dist/. Tests ARE type-checked — by tsconfig.test.json (which
+  // extends this file and adds test/) through `npm run typecheck`. (Vitest's
+  // `typecheck` mode is a type-assertion feature, not a general typechecker: it
+  // does not fail on ordinary type errors in test bodies, so it is not relied on
+  // for correctness here.)
+  //
+  // moduleResolution "bundler": wasmtex is authored as ESM and consumed through
+  // its package.json `exports` map by bundlers and, in tests, by vitest/esbuild.
+  // "bundler" models that resolution and lets source use extensionless relative
+  // imports (no ".js" specifiers pointing at not-yet-emitted files). We do not
+  // commit to Node-native execution of the emitted files — the runtime targets
+  // Worker + fetch + WebAssembly (DESIGN.md §5.2). If Node-native ESM execution
+  // of dist/ ever becomes a requirement, switch to "nodenext" and add explicit
+  // ".js" import specifiers.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    // Empty on purpose: src/ and worker/ target the browser/worker world
+    // (DESIGN §5.2 — Worker + fetch + WebAssembly, no Node). Node ambient
+    // globals leaking here would let Buffer/process slip past tsc and break
+    // at runtime. Only test/ gets node types (tsconfig.test.json).
+    "types": [],
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "rootDir": ".",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "worker"],
+  "exclude": ["dist", "node_modules"]
+}

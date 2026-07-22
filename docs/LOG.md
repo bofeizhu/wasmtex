@@ -482,6 +482,29 @@ smoke; M1's unit tests should add a typeset-path check. (3)
 Chromium-only per §8 (FF/WebKit advisory at M5). (4) Determinism
 asserted, not demonstrated, until M3's double-build.
 
+## 2026-07-22 — M1 item 2: runtime package scaffold (loop)
+
+**Done.** `coder` agent scaffolded `runtime/`: package `wasmtex`
+(private until M5, ESM, exports map matching real tsc output, node
+>=24), strict tsconfig pair, vitest, tiny-but-real first surface
+(`version` + `EngineName` union with 'luatex' reserved) with a
+drift-guard test; runtime-tests CI workflow replaced with a real
+npm ci → typecheck → test run (lockfile carries linux binaries;
+cache-dependency-path correct for the subdir package).
+
+**Finding worth keeping.** vitest's typecheck mode does NOT fail on
+ordinary type errors in test bodies (assertion feature only —
+empirically proven with a planted error); test/ is therefore
+typechecked by real tsc via tsconfig.test.json. False-green averted.
+
+**Review (approve + fixes applied).** (1) Build tsconfig had
+`types:["node"]` — would let Buffer/process leak into browser/worker
+code unseen; now `types:[]` for src//worker/, node types only in the
+test config. (2) license-audit check (e) was blind to runtime/ .ts
+files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
+vitest.config.ts brought under typecheck. All re-verified green
+(typecheck, 2/2 tests, audit).
+
 ## 2026-07-22 — M1 opened: Runtime v1 plan
 
 **Done.** docs/plans/M1.md authored and committed: §5 API over a

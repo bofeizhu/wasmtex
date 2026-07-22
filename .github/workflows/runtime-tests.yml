@@ -5,20 +5,26 @@ on:
     branches: [main]
   pull_request:
 
+# Node 24 matches the maintainer's dev host (docs/native-host.md) so local and
+# CI results are comparable, and runtime/package.json `engines` pins the same
+# major. Hard, reproducible toolchain pinning is an M3 concern (see M1 plan);
+# here we track the major via actions/setup-node.
 jobs:
   runtime-tests:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runtime
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - name: Run runtime tests if present
-        run: |
-          if [ -f runtime/package.json ]; then
-            cd runtime
-            npm ci
-            npm test
-          else
-            echo "runtime not yet implemented - skipping"
-          fi
+          node-version: 24
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+      - name: Install (clean, from committed lockfile)
+        run: npm ci
+      - name: Typecheck (src + worker + test)
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test

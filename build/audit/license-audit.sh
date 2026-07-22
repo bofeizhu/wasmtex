@@ -178,8 +178,8 @@ echo "== (e) SPDX MIT headers (build/ + demo/ originals) =="
 #   .editorconfig pins.lock*   convention (pins.lock does carry one, not required).
 #   *.patch                    covered by check (c) (SPDX + clause), not here.
 #   *.c *.h *.js under vendored only; no original build/demo files of those types.
-req=$(git ls-files --cached --others --exclude-standard build demo 2>/dev/null \
-  | grep -E '(\.sh|\.mjs|\.py|\.html)$|(^|/)Dockerfile$' \
+req=$(git ls-files --cached --others --exclude-standard build demo runtime 2>/dev/null \
+  | grep -E '(\.sh|\.mjs|\.py|\.html|\.ts)$|(^|/)Dockerfile$' \
   | grep -v '^build/upstream/busytex/' || true)
 missing_e=0
 for f in $req; do

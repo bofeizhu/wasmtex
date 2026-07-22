@@ -1,0 +1,16 @@
+{
+  // Typecheck config: `npm run typecheck` runs `tsc --noEmit -p tsconfig.test.json`.
+  // Extends the build config and widens `include` to add test/, so the unit tests
+  // are genuinely type-checked (raw tsc — it catches ordinary type errors and
+  // unused `@ts-expect-error` directives, which vitest's typecheck mode does not).
+  // noEmit: this config only checks types; emitting is the build config's job.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "compilerOptions": {
+    // Tests run under node (vitest) and may import node:fs etc.
+    "types": ["node"]
+  },
+  "include": ["src", "worker", "test", "vitest.config.ts"]
+}

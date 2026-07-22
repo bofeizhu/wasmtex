@@ -13,6 +13,10 @@ build/sources/cache/
 .DS_Store
 
 # TypeScript / test artifacts
+# runtime/ tsc output (.js + .d.ts). Also matched by the dist/ rule above;
+# listed explicitly so the intent is unambiguous — build artifacts are never
+# committed (DESIGN.md §2 reproducibility).
+runtime/dist/
 *.tsbuildinfo
 coverage/
 playwright-report/

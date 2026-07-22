@@ -172,3 +172,97 @@ Cheap nits also applied: `describeError` deduped (exported from `core.ts`);
 repeat-init is an idempotent re-ack (never a second `host.load`, so no engine
 leak); `synctex:true` emits an explicit advisory log line instead of silent
 drop.
+
+# M1 item 6 — §5.3 engine-sequencing state machine
+
+Dated 2026-07-23 (rename-scope: item-6 notes live here, not a new file). The
+`planCompile` seam flagged in item 5 is replaced. `worker/sequencing.ts` is the
+§5.3 decision machine — a PURE reducer (no FS/engine/protocol beyond types);
+`worker/core.ts` drives it, mapping abstract steps to applet runs and reading
+back `.aux`/`.toc`/`.idx` snapshots as observations. No walls were hit twice;
+this section records the durable design decisions.
+
+## Machine shape (states / transitions)
+
+`beginSequence(options) → {state, step}` issues engine pass 1 always. Each
+`advanceSequence(state, observation) → {state, step}` folds one step's outcome
+(exit code, per-step transcript, FS facts) and returns the next of: `engine{N}`,
+`bibtex8`, `makeindex`, `xdvipdfmx`, `done`, `abort`. Decision cascade after a
+step: settle the bibtex8 gate (once, right after pass 1: run iff `bibliography`
+on AND `.aux` has `\citation`+`\bibdata`) → settle the makeindex gate (run iff
+`index` on AND a non-empty `.idx`) → engine-rerun-vs-finalize. A tool forces one
+incorporate pass. Rerun (auto) iff a transcript marker OR `.aux`/`.toc` changed,
+under the cap of 5; explicit N runs exactly N engine passes, rerun signals
+ignored. XeTeX finalizes through `xdvipdfmx`; pdfTeX writes the PDF direct.
+
+## Divergence from upstream (behavioural reference only)
+
+`busytex_pipeline.js` (MIT) uses a FIXED command list — one xetex pass without
+bibtex; `xetex → bibtex8 → xetex → xetex` with bibtex — and has NO rerun
+detection. Our §5.3 machine is original: it reruns *until quiescent* driven by
+real markers + file change, bounded by `passes`. The e2e bibtex doc converges to
+3 passes on its own (measured), matching upstream's fixed 3 by *detection*, not
+by hardcoding. Only applet argv (`bibtex8 --8bit <job>.aux`, `--8bit` from
+upstream) and the multi-pass-for-bibtex fact were taken as behaviour.
+
+## Real fixture strings (verified against the pinned TL2023 engine)
+
+Captured via a throwaway host harness (not committed; documents +
+regeneration in `runtime/test/fixtures/sequencing/GENERATOR.md`). Verified
+single-line markers the detector anchors on (whitespace-normalized substrings):
+
+- `LaTeX Warning: There were undefined references.`
+- `LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.`
+
+Quiescent passes (resolved crossref pass 2; hello) and tool transcripts carry
+none — no false positives. Folklore was avoided: only strings observed in real
+output are trusted.
+
+## bibtex8 failure semantics — decision + rationale
+
+**exit ≤ 1 → continue; exit ≥ 2 → abort** (`BIBTEX_ABORT_EXIT = 2`). Grounded in
+real captures: a missing database entry warns with exit **1** and still writes a
+usable `.bbl`; a missing `.bst` or `.bib` errors with exit **2** and leaves the
+`.bbl` unusable. This is BibTeX's `history` (0 spotless / 1 warning / 2 error /
+3 fatal). Warnings are common in real bibliographies, so aborting on them would
+break the common case; errors/fatals mean the bibliography is wrong or absent,
+so a numeric threshold (not English-string matching, which is rebase-fragile)
+aborts and surfaces the transcript. This is stricter and simpler than upstream,
+which force-resets bibtex's exit to 0 unless stdout contains a fatal-message
+string — we prefer the exit code as the stable signal. makeindex: non-zero
+aborts (only ever invoked on a validated non-empty `.idx`).
+
+## "There were undefined references" + the cap (accepted trade-off)
+
+§5.3 lists unresolved references as a rerun condition, so the detector matches
+it. A *permanently* undefined `\ref`/`\cite` keeps emitting it, so on its own it
+would rerun to the cap of 5 — this is exactly latexmk's bounded-repeat behaviour
+and the hard cap is the deliberate bound. Resolvable forward references also
+trip `Label(s) may have changed`, so this marker only ever adds passes for the
+genuinely-unresolvable case; it never removes a needed pass. Accepted as
+spec-faithful; a future refinement (rerun on undefined-refs only while the `.aux`
+is still changing) is possible but deviates from §5.3's literal wording.
+
+## Bib-integration path reality
+
+The `texlive-basic` bundle carries `plain.bst` (+ alpha/unsrt/plainnat/… and the
+makeindex `.ist` styles). So the bibtex8 e2e integration test runs FULLY — no
+need to supply a `.bst` as a project input (§6.3) or defer to M4's extended
+bundle. `runtime/test/typeset-integration.test.ts` compiles a real 2-citation
+document through `xelatex → bibtex8 → xelatex → xelatex → xdvipdfmx` and asserts
+3 passes + a valid PDF + resolved citations.
+
+## Degenerate `passes: 1` + bibliography (documented)
+
+Tools are gated by their own options + FS facts, independent of `passes`. With
+an explicit pass count too low to incorporate a tool's output (e.g. N=1 with a
+bibliography), bibtex8 still runs once but no later pass re-reads its `.bbl` —
+the caller's explicit choice, not an error. Unit-tested.
+
+## Gates (all green)
+
+typecheck (tsc `tsconfig.test.json`); full suite 115 tests / 7 files
+(sequencing 41 new, worker-core +6, integration +2 real-wasm); `build:worker`
+esbuild bundle 27.3 kB, self-contained (sequencing imports only types, so no
+`node:` leakage); `build/audit/license-audit.sh` all checks pass (new `.ts`
+carry SPDX MIT; no copyleft in runtime/).

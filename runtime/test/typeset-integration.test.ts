@@ -205,4 +205,128 @@ describe('typeset integration (real wasm engine, node)', () => {
     expect(fatal?.type).toBe('fatal');
     if (fatal?.type === 'fatal') expect(fatal.code).toBe('unsupported-engine');
   }, 120_000);
+
+  // The §5.3 rerun loop end to end (item 6): a \tableofcontents + forward
+  // \ref/\pageref document is unresolved on pass 1 (undefined refs, TOC not yet
+  // written) and resolves on pass 2. The machine must detect the pass-1 rerun
+  // markers and run exactly a second engine pass, then finalize.
+  it.runIf(present)(
+    'reruns a \\label/\\ref document a second time until cross-references resolve',
+    async () => {
+      const messages: WorkerMessage[] = [];
+      const host = new EmscriptenEngineHost(createNodeModuleLoader());
+      const core = createWorkerCore({ host, post: (m) => messages.push(m) });
+      await core.handle({ type: 'init', v: 1, jobId: newJobId(), assets: assetsFromDist() });
+
+      const CROSSREF =
+        '\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n' +
+        '\\section{First}\\label{sec:first}\n' +
+        'See section~\\ref{sec:second} on page~\\pageref{sec:second}.\n' +
+        '\\newpage\n\\section{Second}\\label{sec:second}\nBack to~\\ref{sec:first}.\n\\end{document}\n';
+      const jobId = newJobId();
+      await core.handle({
+        type: 'compile',
+        v: 1,
+        jobId,
+        files: { 'main.tex': CROSSREF },
+        entry: 'main.tex',
+        engine: 'xetex',
+        passes: 'auto',
+        bibliography: 'off',
+        index: 'off',
+        synctex: false,
+      });
+
+      const forJob = messages.filter((m) => m.jobId === jobId);
+      const phases = forJob
+        .filter((m) => m.type === 'progress')
+        .map((m) => (m.type === 'progress' ? m.phase.kind : ''));
+      // TWO engine passes, then the driver — the machine reran once and stopped.
+      expect(phases).toEqual(['engine', 'engine', 'xdvipdfmx']);
+
+      const result = forJob.at(-1);
+      if (result?.type !== 'result') throw new Error('no result message');
+      expect(result.ok).toBe(true);
+      expect(result.stats.passes).toBe(2);
+      expect(result.pdf).toBeInstanceOf(Uint8Array);
+
+      // Started unresolved (pass 1 warned) and converged (the final pass — the
+      // text after the last engine banner — carries no undefined-reference line).
+      expect(result.log).toContain('There were undefined references');
+      const lastPass = result.log.slice(result.log.lastIndexOf('This is XeTeX'));
+      expect(lastPass).not.toContain('There were undefined references');
+
+      const pdf = result.pdf!;
+      expect(pdf.length).toBeGreaterThan(1000);
+      expect(Array.from(pdf.slice(0, 5))).toEqual([0x25, 0x50, 0x44, 0x46, 0x2d]);
+      console.log(`[typeset-integration] crossref rerun: ${result.stats.passes} passes, pdf ${pdf.length} B`);
+    },
+    120_000,
+  );
+
+  // bibtex8 end to end (item 6). The texlive-basic bundle carries plain.bst
+  // (verified: build/… bundle inventory), so a \bibliographystyle{plain} +
+  // \bibliography document compiles fully: xelatex → bibtex8 (on the .aux) →
+  // reruns to incorporate the .bbl and resolve citations → xdvipdfmx.
+  it.runIf(present)(
+    'compiles a bibtex8 document end to end (xelatex → bibtex8 → reruns → xdvipdfmx)',
+    async () => {
+      const messages: WorkerMessage[] = [];
+      const host = new EmscriptenEngineHost(createNodeModuleLoader());
+      const core = createWorkerCore({ host, post: (m) => messages.push(m) });
+      await core.handle({ type: 'init', v: 1, jobId: newJobId(), assets: assetsFromDist() });
+
+      const MAIN =
+        '\\documentclass{article}\n\\begin{document}\n' +
+        'Text citing~\\cite{knuth1984} and~\\cite{lamport1994}.\n' +
+        '\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n';
+      const BIB =
+        '@book{knuth1984, author = {Donald E. Knuth}, title = {The {\\TeX}book}, ' +
+        'publisher = {Addison-Wesley}, year = {1984}}\n' +
+        '@book{lamport1994, author = {Leslie Lamport}, title = {{\\LaTeX}: A Document ' +
+        'Preparation System}, publisher = {Addison-Wesley}, year = {1994}}\n';
+      const jobId = newJobId();
+      await core.handle({
+        type: 'compile',
+        v: 1,
+        jobId,
+        files: { 'main.tex': MAIN, 'refs.bib': BIB },
+        entry: 'main.tex',
+        engine: 'xetex',
+        passes: 'auto',
+        bibliography: 'auto',
+        index: 'off',
+        synctex: false,
+      });
+
+      const forJob = messages.filter((m) => m.jobId === jobId);
+      const phases = forJob
+        .filter((m) => m.type === 'progress')
+        .map((m) => (m.type === 'progress' ? m.phase.kind : ''));
+      // pass 1 → bibtex8 → pass 2 (incorporate .bbl) → pass 3 (resolve) → driver.
+      expect(phases).toEqual(['engine', 'bibtex8', 'engine', 'engine', 'xdvipdfmx']);
+
+      const result = forJob.at(-1);
+      if (result?.type !== 'result') throw new Error('no result message');
+      expect(result.ok).toBe(true);
+      expect(result.stats.passes).toBe(3);
+      expect(result.pdf).toBeInstanceOf(Uint8Array);
+
+      // bibtex8 resolved the citations: the citations were undefined earlier
+      // (the .bbl did not exist yet) but the final pass has no undefined line.
+      expect(result.log).toContain('There were undefined references');
+      const lastPass = result.log.slice(result.log.lastIndexOf('This is XeTeX'));
+      expect(lastPass).not.toContain('There were undefined references');
+      // bibtex8 itself ran and found the style + database (its own transcript).
+      expect(result.log).toContain('The style file: plain.bst');
+
+      const pdf = result.pdf!;
+      expect(pdf.length).toBeGreaterThan(1000);
+      expect(Array.from(pdf.slice(0, 5))).toEqual([0x25, 0x50, 0x44, 0x46, 0x2d]);
+      const tail = new TextDecoder().decode(pdf.slice(-1024));
+      expect(tail).toContain('%%EOF');
+      console.log(`[typeset-integration] bibtex8 e2e: ${result.stats.passes} passes, pdf ${pdf.length} B`);
+    },
+    120_000,
+  );
 });

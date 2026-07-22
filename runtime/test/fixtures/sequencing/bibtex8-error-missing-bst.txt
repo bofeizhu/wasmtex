@@ -1,0 +1,14 @@
+# exit=2
+The top-level auxiliary file: main.aux
+I couldn't open style file nosuchstylexyz.bst
+
+Reason: No such file or directory
+---line 3 of file main.aux
+ : \bibstyle{nosuchstylexyz
+ :                         }
+I'm skipping whatever remains of this command
+I found no style file---while reading file main.aux
+(There were 2 error messages)
+program exited (with status: 2), but keepRuntimeAlive() is set (counter=0) due to an async operation, so halting execution but not exiting the runtime or preventing further async execution (you can use emscripten_force_exit, if you want to force a true shutdown)
+
+

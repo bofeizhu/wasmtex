@@ -505,6 +505,33 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-23 — M1 item 6: §5.3 sequencing state machine (loop)
+
+**Done.** `coder` agent delivered `sequencing.ts` — a pure reducer
+encoding §5.3 exactly: bib gate (\citation AND \bibdata in the root
+aux), makeindex gate (non-empty .idx), rerun on transcript markers OR
+aux/toc change, tools force one incorporate pass, hard cap 5, explicit
+N exact (tools still gate; degenerate passes:1+bib documented).
+Rerun markers captured as fixtures from the REAL pinned engines (9
+transcripts + GENERATOR.md — no folklore strings). bibtex8 semantics
+evidence-grounded: exit ≤1 continue (warnings write usable .bbl),
+≥2 abort → ok:false with the tool's transcript; stricter and simpler
+than upstream's stdout-string sniffing. texlive-basic turned out to
+carry plain.bst, so the bibtex8 path is proven END-TO-END on real
+wasm: xelatex→bibtex8→xelatex→xelatex→xdvipdfmx, 3 passes; crossref
+converges in 2; hello in 1. 116 tests total (41 pure machine).
+
+**Review (request-changes → fixed).** (1) pdfTeX collects a PDF every
+pass, so an abort after a good pass 1 attached a STALE pass-1 PDF
+(citations as [?]) to ok:false — now bytes ship only on full success,
+with a pdftex-variant regression test. (2) Root-aux-only bib detection
+misses \include projects (\citation lands in chapter .aux) — accepted
+as documented v1 limitation at the detection site + journal; real fix
+needs dynamic collect, deferred. (3) Defense-in-depth step bound on
+the driver loop (invariant regression → loud fatal, not a spinning
+worker). Gates: typecheck clean, 116/116, 27 KB bundle self-contained,
+audit green.
+
 ## 2026-07-23 — M1 item 5: worker entry (loop)
 
 **Done.** `coder` agent built the worker: `core.ts` (orchestration over

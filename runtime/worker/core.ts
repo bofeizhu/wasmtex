@@ -36,12 +36,18 @@
 //     the preloaded bundle persist across jobs (warm state is a cache, never a
 //     correctness dependency — DESIGN.md §5.2).
 //
-// SEQUENCING (M1 item-5 scope is the MINIMAL single pass): xetex → xdvipdfmx,
-// or pdftex direct. The §5.3 state machine (bibtex8 when `.aux` cites, makeindex
-// on a non-empty `.idx`, reruns while the log shows unresolved refs, bounded by
-// `passes`) is item 6. The `planCompile` function below is the SEAM: item 6
-// replaces its hardcoded plan with the state machine, and nothing else in this
-// file needs to change.
+// SEQUENCING (M1 item 6): the §5.3 decision machine lives in `sequencing.ts` (a
+// pure reducer — no FS, no engine). This core DRIVES it: it maps each abstract
+// step the machine returns (engine pass N / bibtex8 / makeindex / xdvipdfmx) to
+// a concrete applet run (per-engine argv + format, below), executes it, reads
+// back the `.aux`/`.toc`/`.idx` snapshots the machine needs as observations, and
+// threads the state forward until the machine says `done` or `abort`. bibtex8
+// runs when the `.aux` cites (`\citation`+`\bibdata`) and `bibliography` is on;
+// makeindex when a non-empty `.idx` exists and `index` is on; engine reruns
+// while the transcript shows a rerun marker or the `.aux`/`.toc` changed, bounded
+// by `passes`. XeTeX finalizes through xdvipdfmx; pdfTeX writes the PDF directly.
+// The abstract-step → applet mapping (`toRunStep`) is the ONLY per-engine
+// argv/format knowledge; the decision logic is entirely in `sequencing.ts`.
 // ---------------------------------------------------------------------------
 
 import {
@@ -60,6 +66,16 @@ import {
   type ResultFields,
   type WorkerMessage,
 } from '../src/protocol';
+import {
+  advanceSequence,
+  beginSequence,
+  NO_FS_FACTS,
+  type SequencingEngine,
+  type SequencingOptions,
+  type SequencingStep,
+  type StepFsFacts,
+  type StepObservation,
+} from './sequencing';
 
 // ---------------------------------------------------------------------------
 // The injected engine host contract
@@ -131,15 +147,15 @@ export class EngineAborted extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Engine support + the (item-5 minimal) compile plan
+// Engine support + the abstract-step → applet mapping (item 6)
 // ---------------------------------------------------------------------------
 
 /**
  * Engines implemented end-to-end in v1. `luatex` is deliberately absent — it is
  * a reserved enum member (DESIGN.md §9), rejected with `unsupported-engine`.
  * `pdftex` is included because it costs only a different format + direct output
- * (no `xdvipdfmx`), needing no engine-specific branching beyond this plan
- * (M1 plan "pdfTeX near-free" test).
+ * (no `xdvipdfmx`), needing no engine-specific branching beyond the mapping
+ * below (M1 plan "pdfTeX near-free" test).
  */
 const SUPPORTED_ENGINES: ReadonlySet<EngineName> = new Set<EngineName>(['xetex', 'pdftex']);
 
@@ -151,10 +167,18 @@ const SUPPORTED_ENGINES: ReadonlySet<EngineName> = new Set<EngineName>(['xetex',
 const FORMAT_XELATEX = '/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt';
 const FORMAT_PDFLATEX = '/texlive/texmf-dist/texmf-var/web2c/pdftex/pdflatex.fmt';
 
-/** A planned applet run plus the coarse progress phase to announce before it. */
-interface CompileStage {
-  readonly progress: ProgressPhase;
-  readonly step: EngineRunStep;
+/** A runnable step the caller executes (the machine's `done`/`abort` are terminal, never run). */
+type RunnableStep = Extract<SequencingStep, { kind: 'engine' | 'bibtex8' | 'makeindex' | 'xdvipdfmx' }>;
+
+/** Immutable per-job naming context (derived once from the compile message). */
+interface JobContext {
+  readonly engine: SequencingEngine;
+  /** The entry file's basename (the argv the engine is invoked on, after chdir). */
+  readonly entryBase: string;
+  /** The TeX jobname (entry basename minus `.tex`) — names every output (`<job>.aux`, …). */
+  readonly jobname: string;
+  /** The job-dir-relative directory to chdir into (the entry's directory, or `.`). */
+  readonly cwd: string;
 }
 
 /** Last path segment of a project-relative path. */
@@ -176,79 +200,109 @@ function jobnameOf(entryBasename: string): string {
     : entryBasename;
 }
 
-/**
- * THE SEAM (item 6). Produce the ordered applet sequence for a supported engine.
- * Item-5 scope is the minimal single pass; item 6 replaces THIS function with
- * the §5.3 state machine (bibtex8 / makeindex / bounded reruns) — the run loop
- * in {@link createWorkerCore} stays unchanged because it only consumes stages.
- *
- * Precondition: `msg.engine ∈ SUPPORTED_ENGINES` (the caller rejects the rest).
- */
-function planCompile(msg: CompileMessage): readonly CompileStage[] {
-  const entryBase = basename(msg.entry);
-  const jobname = jobnameOf(entryBase);
-  const cwd = dirname(msg.entry) || '.';
-  const stage: EngineStageInfo = { files: msg.files, cwd };
-  const pdf = `${jobname}.pdf`;
+/** Project the compile message onto the machine's option surface (engine already validated). */
+function sequencingOptionsOf(msg: CompileMessage): SequencingOptions {
+  return {
+    engine: msg.engine as SequencingEngine, // luatex rejected before this point
+    passes: msg.passes,
+    bibliography: msg.bibliography,
+    index: msg.index,
+  };
+}
 
-  if (msg.engine === 'pdftex') {
-    // pdfTeX writes the PDF directly — no xdvipdfmx step.
-    return [
-      {
-        progress: { kind: 'engine', pass: 1 },
-        step: {
-          applet: 'pdflatex',
-          argv: [
-            '--no-shell-escape',
-            '--interaction=nonstopmode',
-            '--halt-on-error',
-            '--output-format=pdf',
-            '--fmt',
-            FORMAT_PDFLATEX,
-            entryBase,
-          ],
-          stage,
-          collect: [pdf],
-        },
-      },
-    ];
+/** The coarse progress phase to announce before running a runnable step. */
+function progressOf(step: RunnableStep): ProgressPhase {
+  switch (step.kind) {
+    case 'engine':
+      return { kind: 'engine', pass: step.pass };
+    case 'bibtex8':
+      return { kind: 'bibtex8' };
+    case 'makeindex':
+      return { kind: 'makeindex' };
+    case 'xdvipdfmx':
+      return { kind: 'xdvipdfmx' };
   }
+}
 
-  // xetex (default): engine produces an .xdv, xdvipdfmx turns it into the PDF.
-  const xdv = `${jobname}.xdv`;
-  return [
-    {
-      progress: { kind: 'engine', pass: 1 },
-      step: {
-        applet: 'xelatex',
-        argv: [
-          '--no-shell-escape',
-          // nonstopmode (not batchmode): TeX then prints its full transcript —
-          // crucially the "! …" error lines with l.N — to the terminal, which
-          // the host captures and streams, so result.log carries the errors a
-          // failing compile needs (batchmode writes them only to <job>.log and
-          // leaves result.log a bare banner). Matches the pdflatex step and is
-          // the source the diagnostics parser (item 8) reads.
-          '--interaction=nonstopmode',
-          '--halt-on-error',
-          '--no-pdf',
-          '--fmt',
-          FORMAT_XELATEX,
-          entryBase,
-        ],
-        stage,
-        collect: [],
-      },
-    },
-    {
-      progress: { kind: 'xdvipdfmx' },
-      step: {
+// Files an engine pass produces that the machine observes: the `.aux` (citations
+// + cross-reference state), the `.toc` (TOC change), and the `.idx` (index).
+// pdfTeX also writes the final PDF on every pass, so it is collected too (the
+// latest pass's PDF wins); XeTeX produces an `.xdv` consumed by xdvipdfmx.
+function engineCollect(ctx: JobContext): string[] {
+  const base = [`${ctx.jobname}.aux`, `${ctx.jobname}.toc`, `${ctx.jobname}.idx`];
+  return ctx.engine === 'pdftex' ? [...base, `${ctx.jobname}.pdf`] : base;
+}
+
+/**
+ * Map one abstract {@link RunnableStep} to a concrete {@link EngineRunStep}: the
+ * applet, its argv (per-engine format/driver knowledge — the only place it
+ * lives), and the files to read back. `stage` is passed ONLY for the first step
+ * (engine pass 1) to open a fresh job; every later step reuses the job FS so it
+ * sees the previous applet's outputs (`.xdv`, `.aux`, `.bbl`, `.ind`).
+ */
+function toRunStep(step: RunnableStep, ctx: JobContext, stage?: EngineStageInfo): EngineRunStep {
+  const withStage = <T extends object>(s: T): T & { stage?: EngineStageInfo } =>
+    stage ? { ...s, stage } : s;
+
+  switch (step.kind) {
+    case 'engine':
+      return ctx.engine === 'pdftex'
+        ? withStage({
+            applet: 'pdflatex',
+            // pdfTeX writes the PDF directly — no xdvipdfmx step.
+            argv: [
+              '--no-shell-escape',
+              '--interaction=nonstopmode',
+              '--halt-on-error',
+              '--output-format=pdf',
+              '--fmt',
+              FORMAT_PDFLATEX,
+              ctx.entryBase,
+            ],
+            collect: engineCollect(ctx),
+          })
+        : withStage({
+            applet: 'xelatex',
+            // nonstopmode (not batchmode): TeX then prints its full transcript —
+            // crucially the "! …" error lines with l.N AND the "Rerun to get …"
+            // markers the machine reads — to the terminal, which the host
+            // captures and streams. batchmode would write them only to <job>.log.
+            argv: [
+              '--no-shell-escape',
+              '--interaction=nonstopmode',
+              '--halt-on-error',
+              '--no-pdf',
+              '--fmt',
+              FORMAT_XELATEX,
+              ctx.entryBase,
+            ],
+            collect: engineCollect(ctx),
+          });
+    case 'bibtex8':
+      // Runs on the `.aux` (with extension), reusing the job FS; the bundle
+      // resolves the `.bst` via kpathsea. `--8bit` matches upstream busytex.
+      return { applet: 'bibtex8', argv: ['--8bit', `${ctx.jobname}.aux`], collect: [] };
+    case 'makeindex':
+      // Reads `<job>.idx`, writes `<job>.ind` into the job FS for the next pass.
+      return { applet: 'makeindex', argv: [`${ctx.jobname}.idx`], collect: [] };
+    case 'xdvipdfmx':
+      // Turns the engine's `.xdv` into the final PDF (XeTeX only).
+      return {
         applet: 'xdvipdfmx',
-        argv: ['-o', pdf, xdv],
-        collect: [pdf],
-      },
-    },
-  ];
+        argv: ['-o', `${ctx.jobname}.pdf`, `${ctx.jobname}.xdv`],
+        collect: [`${ctx.jobname}.pdf`],
+      };
+  }
+}
+
+/** Byte-exact equality of two optional buffers (both absent ⇒ equal; one absent ⇒ different). */
+function bytesEqual(a: Uint8Array | undefined, b: Uint8Array | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -350,18 +404,76 @@ export function createWorkerCore(deps: WorkerCoreDeps): WorkerCore {
       );
     }
 
+    const entryBase = basename(msg.entry);
+    const ctx: JobContext = {
+      engine: msg.engine as SequencingEngine, // luatex rejected above
+      entryBase,
+      jobname: jobnameOf(entryBase),
+      cwd: dirname(msg.entry) || '.',
+    };
+    const stageInfo: EngineStageInfo = { files: msg.files, cwd: ctx.cwd };
+    const decoder = new TextDecoder();
+
     const collected = new Map<string, Uint8Array>();
     let lastExit = 0;
-    let enginePasses = 0;
+    // Previous engine pass's `.aux`/`.toc`, for the change signal (item 6). Kept
+    // out of the pure machine (which sees only the derived booleans); `hasPrev`
+    // distinguishes "first pass" (no comparison) from "previous had no such file".
+    let prevAux: Uint8Array | undefined;
+    let prevToc: Uint8Array | undefined;
+    let hasPrevEngine = false;
+    // The first step (always engine pass 1) opens a fresh job FS by staging the
+    // project files; every later step reuses it (sees the prior applet's output).
+    let staged = false;
 
+    // Drive the §5.3 machine: run each step, observe, feed back, until terminal.
+    // Defense-in-depth iteration bound: termination normally rests on the
+    // machine's own monotonic-progress invariants (5 engine passes + 3 tool
+    // steps max); this guard turns a future regression there into a loud
+    // fatal instead of a worker spinning wasm forever.
+    const MAX_STEPS = 5 + 3 + 2;
+    let steps = 0;
+    let { state, step } = beginSequence(sequencingOptionsOf(msg));
     try {
-      for (const { progress, step } of planCompile(msg)) {
-        post(progressMessage(jobId, progress));
-        if (progress.kind === 'engine') enginePasses += 1;
-        const result = host.run(step, onLine);
+      while (step.kind !== 'done' && step.kind !== 'abort') {
+        if (++steps > MAX_STEPS) {
+          post(fatalMessage(jobId, 'internal', 'sequencing exceeded the step bound (machine invariant regression)'));
+          return;
+        }
+        post(progressMessage(jobId, progressOf(step)));
+        const stage = staged ? undefined : stageInfo;
+        staged = true;
+        const runStep = toRunStep(step, ctx, stage);
+        const result = host.run(runStep, onLine);
         lastExit = result.exitCode;
         for (const [path, bytes] of result.outputs) collected.set(path, bytes);
-        if (result.exitCode !== 0) break; // stop the sequence on the first failure
+
+        // Build the observation. FS facts are meaningful only after an engine
+        // pass (the machine ignores them otherwise); the transcript is this
+        // run's captured output — the rerun-marker source.
+        let fs: StepFsFacts = NO_FS_FACTS;
+        if (step.kind === 'engine') {
+          const curAux = result.outputs.get(`${ctx.jobname}.aux`);
+          const curToc = result.outputs.get(`${ctx.jobname}.toc`);
+          const curIdx = result.outputs.get(`${ctx.jobname}.idx`);
+          const auxText = curAux ? decoder.decode(curAux) : '';
+          fs = {
+            // v1 limitation (documented, journal item 6): only the ROOT aux is
+            // scanned. In \include projects LaTeX writes \citation lines into
+            // the chapter's own .aux (root has \@input{chapter.aux}), so the
+            // bib gate misses them and citations render [?]. Fix would scan
+            // \@input-referenced aux files; deferred (needs dynamic collect).
+            auxRequestsBib: auxText.includes('\\citation') && auxText.includes('\\bibdata'),
+            idxNonEmpty: curIdx !== undefined && decoder.decode(curIdx).trim().length > 0,
+            auxChanged: hasPrevEngine && !bytesEqual(curAux, prevAux),
+            tocChanged: hasPrevEngine && !bytesEqual(curToc, prevToc),
+          };
+          prevAux = curAux;
+          prevToc = curToc;
+          hasPrevEngine = true;
+        }
+        const observation: StepObservation = { exitCode: result.exitCode, transcript: `${result.stdout}\n${result.stderr}`, fs };
+        ({ state, step } = advanceSequence(state, observation));
       }
     } catch (error) {
       const code = error instanceof EngineAborted ? 'engine-aborted' : 'internal';
@@ -369,16 +481,24 @@ export function createWorkerCore(deps: WorkerCoreDeps): WorkerCore {
       return;
     }
 
-    const jobname = jobnameOf(basename(msg.entry));
-    const pdf = collected.get(`${jobname}.pdf`);
-    const ok = lastExit === 0 && pdf !== undefined;
+    // `done` ⇒ the sequence completed and the terminal driver/engine step exited
+    // 0; `abort` ⇒ a step failed (engine ≠ 0, bibtex8 ≥ 2, makeindex ≠ 0, or
+    // xdvipdfmx ≠ 0) and `lastExit` holds that failing code (item-5 semantics:
+    // stop, ok:false, surface the transcript). A tolerated bibtex8 warning
+    // (exit 1) never ends the sequence, so `done` implies a real success.
+    const succeeded = step.kind === 'done';
+    // Only a fully successful sequence may deliver bytes: pdfTeX collects a
+    // PDF on every pass, so an abort after a successful pass N-1 would
+    // otherwise attach that stale PDF (e.g. citations as [?]) to ok:false.
+    const pdf = succeeded ? collected.get(`${ctx.jobname}.pdf`) : undefined;
+    const ok = succeeded && pdf !== undefined;
 
     const fields: ResultFields = {
       ok,
-      exitCode: lastExit,
+      exitCode: succeeded ? 0 : lastExit,
       log: transcript.join('\n'),
       stats: {
-        passes: enginePasses,
+        passes: state.enginePasses,
         elapsedMs: now() - startedAt,
         bundlesLoaded: [...bundlesLoaded],
       },

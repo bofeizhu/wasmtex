@@ -267,7 +267,9 @@ describe('core — compile (pdftex direct)', () => {
     const [pdflatex] = host.runCalls;
     expect(pdflatex?.applet).toBe('pdflatex');
     expect(pdflatex?.argv).toContain('--output-format=pdf');
-    expect(pdflatex?.collect).toEqual(['hello.pdf']);
+    // pdfTeX writes the PDF directly; item 6 also snapshots the observation files
+    // (.aux/.toc/.idx) each pass so the machine can detect reruns / bib / index.
+    expect(pdflatex?.collect).toEqual(['hello.aux', 'hello.toc', 'hello.idx', 'hello.pdf']);
 
     const compileMessages = messages.filter((m) => m.jobId === jobId);
     expect(compileMessages.map((m) => m.type)).toEqual(['progress', 'log', 'result']);
@@ -445,5 +447,179 @@ describe('core — correlation across jobs', () => {
     // No message for A carries B's id or vice versa (exact-identity correlation).
     expect(forA.every((m) => m.jobId !== jobB)).toBe(true);
     expect(forB.every((m) => m.jobId !== jobA)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §5.3 sequencing wiring (item 6): the core drives the pure machine, gathering
+// FS-fact observations from each run's collected outputs (the .aux/.idx bytes)
+// and streaming the right progress phases. The decision logic itself is unit
+// tested in sequencing.test.ts; here we prove the core feeds it real snapshots.
+// ---------------------------------------------------------------------------
+
+const enc = new TextEncoder();
+const AUX_CITES = enc.encode('\\citation{k}\n\\bibstyle{plain}\n\\bibdata{refs}\n');
+const IDX_NONEMPTY = enc.encode('\\indexentry{k}{1}\n');
+const RERUN_STDOUT = 'LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.';
+
+/** The ordered progress-phase kinds emitted for a job. */
+function progressKinds(messages: readonly WorkerMessage[], jobId: JobId): string[] {
+  return messages
+    .filter((m): m is Extract<WorkerMessage, { type: 'progress' }> => m.type === 'progress' && m.jobId === jobId)
+    .map((m) => m.phase.kind);
+}
+
+describe('core — §5.3 sequencing (item 6)', () => {
+  it('bibliography: a citing .aux drives xelatex → bibtex8 → incorporate pass → xdvipdfmx', async () => {
+    const host = new FakeHost();
+    host.scripts = [
+      { exitCode: 0, outputs: { 'hello.aux': AUX_CITES } }, // pass 1 writes a citing .aux
+      { exitCode: 0 }, // bibtex8 clean
+      { exitCode: 0, outputs: { 'hello.aux': AUX_CITES } }, // pass 2: same .aux ⇒ quiescent
+      { exitCode: 0, outputs: { 'hello.pdf': PDF_BYTES } }, // xdvipdfmx
+    ];
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initMessage(newJobId()));
+    const jobId = newJobId();
+    await core.handle(compileMessage(jobId, 'xetex'));
+
+    expect(host.runCalls.map((s) => s.applet)).toEqual(['xelatex', 'bibtex8', 'xelatex', 'xdvipdfmx']);
+    expect(host.runCalls[1]?.argv).toEqual(['--8bit', 'hello.aux']); // bibtex8 on the .aux, --8bit
+    expect(host.runCalls[1]?.stage).toBeUndefined(); // reuses the job FS
+    expect(progressKinds(messages, jobId)).toEqual(['engine', 'bibtex8', 'engine', 'xdvipdfmx']);
+    const result = messages.filter((m) => m.jobId === jobId).at(-1);
+    if (result?.type === 'result') {
+      expect(result.ok).toBe(true);
+      expect(result.stats.passes).toBe(2);
+    }
+  });
+
+  it('bibliography: bibtex8 error (exit 2) aborts — no xdvipdfmx, ok:false, exitCode 2', async () => {
+    const host = new FakeHost();
+    host.scripts = [
+      { exitCode: 0, outputs: { 'hello.aux': AUX_CITES } },
+      { exitCode: 2, stderr: ["I couldn't open style file nosuch.bst"] },
+    ];
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initMessage(newJobId()));
+    const jobId = newJobId();
+    await core.handle(compileMessage(jobId, 'xetex'));
+
+    // The sequence stops at bibtex8; xdvipdfmx never runs.
+    expect(host.runCalls.map((s) => s.applet)).toEqual(['xelatex', 'bibtex8']);
+    const result = messages.filter((m) => m.jobId === jobId).at(-1);
+    expect(result?.type).toBe('result');
+    if (result?.type === 'result') {
+      expect(result.ok).toBe(false);
+      expect(result.exitCode).toBe(2);
+      expect(result.pdf).toBeUndefined();
+      expect(result.log).toContain("couldn't open style file");
+    }
+  });
+
+  it('pdftex: bibtex8 abort does NOT attach the stale pass-1 PDF to ok:false', async () => {
+    // pdfTeX collects a PDF on EVERY pass (unlike xetex, whose PDF only comes
+    // from the terminal xdvipdfmx step). A bibtex8 exit-2 abort after a
+    // successful pass 1 must not deliver that pass-1 PDF (citations as [?]).
+    const host = new FakeHost();
+    host.scripts = [
+      {
+        exitCode: 0,
+        outputs: { 'hello.aux': AUX_CITES, 'hello.pdf': new Uint8Array([0x25, 0x50, 0x44, 0x46]) },
+      },
+      { exitCode: 2, stderr: ["I couldn't open style file nosuch.bst"] },
+    ];
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initMessage(newJobId()));
+    const jobId = newJobId();
+    await core.handle(compileMessage(jobId, 'pdftex'));
+
+    expect(host.runCalls.map((s) => s.applet)).toEqual(['pdflatex', 'bibtex8']);
+    const result = messages.filter((m) => m.jobId === jobId).at(-1);
+    expect(result?.type).toBe('result');
+    if (result?.type === 'result') {
+      expect(result.ok).toBe(false);
+      expect(result.exitCode).toBe(2);
+      expect(result.pdf).toBeUndefined();
+    }
+  });
+
+  it('index: a non-empty .idx drives xelatex → makeindex → incorporate pass → xdvipdfmx', async () => {
+    const host = new FakeHost();
+    host.scripts = [
+      { exitCode: 0, outputs: { 'hello.idx': IDX_NONEMPTY } }, // pass 1 writes a non-empty .idx
+      { exitCode: 0 }, // makeindex
+      { exitCode: 0 }, // pass 2 quiescent
+      { exitCode: 0, outputs: { 'hello.pdf': PDF_BYTES } }, // xdvipdfmx
+    ];
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initMessage(newJobId()));
+    const jobId = newJobId();
+    await core.handle(compileMessage(jobId, 'xetex'));
+
+    expect(host.runCalls.map((s) => s.applet)).toEqual(['xelatex', 'makeindex', 'xelatex', 'xdvipdfmx']);
+    expect(host.runCalls[1]?.argv).toEqual(['hello.idx']);
+    expect(progressKinds(messages, jobId)).toEqual(['engine', 'makeindex', 'engine', 'xdvipdfmx']);
+  });
+
+  it('rerun: a "Rerun to get…" transcript marker drives a second engine pass', async () => {
+    const host = new FakeHost();
+    host.scripts = [
+      { exitCode: 0, stdout: [RERUN_STDOUT] }, // pass 1 asks to rerun
+      { exitCode: 0 }, // pass 2 quiescent
+      { exitCode: 0, outputs: { 'hello.pdf': PDF_BYTES } }, // xdvipdfmx
+    ];
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initMessage(newJobId()));
+    const jobId = newJobId();
+    await core.handle(compileMessage(jobId, 'xetex'));
+
+    expect(host.runCalls.map((s) => s.applet)).toEqual(['xelatex', 'xelatex', 'xdvipdfmx']);
+    const result = messages.filter((m) => m.jobId === jobId).at(-1);
+    if (result?.type === 'result') {
+      expect(result.ok).toBe(true);
+      expect(result.stats.passes).toBe(2);
+    }
+  });
+
+  it('explicit passes=1 with a citing .aux still runs bibtex8 but no incorporate pass', async () => {
+    const host = new FakeHost();
+    host.scripts = [
+      { exitCode: 0, outputs: { 'hello.aux': AUX_CITES } }, // pass 1
+      { exitCode: 0 }, // bibtex8
+      { exitCode: 0, outputs: { 'hello.pdf': PDF_BYTES } }, // xdvipdfmx (no engine pass 2)
+    ];
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initMessage(newJobId()));
+    const jobId = newJobId();
+    await core.handle({ ...compileMessage(jobId, 'xetex'), passes: 1 });
+
+    expect(host.runCalls.map((s) => s.applet)).toEqual(['xelatex', 'bibtex8', 'xdvipdfmx']);
+    const result = messages.filter((m) => m.jobId === jobId).at(-1);
+    if (result?.type === 'result') expect(result.stats.passes).toBe(1);
+  });
+
+  it('staging happens once: only the first step opens a fresh job FS', async () => {
+    const host = new FakeHost();
+    host.scripts = [
+      { exitCode: 0, outputs: { 'hello.aux': AUX_CITES } },
+      { exitCode: 0 },
+      { exitCode: 0, outputs: { 'hello.aux': AUX_CITES } },
+      { exitCode: 0, outputs: { 'hello.pdf': PDF_BYTES } },
+    ];
+    const { post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initMessage(newJobId()));
+    await core.handle(compileMessage(newJobId(), 'xetex'));
+
+    const staged = host.runCalls.filter((s) => s.stage !== undefined);
+    expect(staged).toHaveLength(1);
+    expect(host.runCalls[0]?.stage).toBeDefined(); // the first (engine pass 1) step stages
   });
 });

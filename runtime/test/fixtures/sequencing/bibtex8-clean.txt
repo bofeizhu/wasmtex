@@ -1,0 +1,7 @@
+# exit=0
+The top-level auxiliary file: main.aux
+The style file: plain.bst
+Database file #1: refs.bib
+program exited (with status: 0), but keepRuntimeAlive() is set (counter=0) due to an async operation, so halting execution but not exiting the runtime or preventing further async execution (you can use emscripten_force_exit, if you want to force a true shutdown)
+
+

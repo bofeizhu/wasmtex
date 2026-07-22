@@ -98,7 +98,7 @@ wasmtex/
   conformance/      # golden-document corpus + expected assertions
   demo/             # minimal static page: paste LaTeX -> PDF (CI smoke)
   .github/workflows # build, test, release, reproducibility, license-audit
-  DESIGN.md  LICENSE  THIRD_PARTY_NOTICES.md  README.md
+  DESIGN.md  LICENSE  NOTICE  THIRD_PARTY_NOTICES.md  README.md
 ```
 
 > M0 staging: `build/upstream/` is a temporary M0-only staging area holding the

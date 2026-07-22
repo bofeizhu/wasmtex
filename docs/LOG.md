@@ -505,6 +505,30 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-23 — M1 item 9: demo migrated to the runtime (loop)
+
+**Done.** `coder` agent rewrote demo/index.html to drive the §5
+runtime as native ESM (createTypesetter; import map bridges tsc's
+extensionless internal specifiers — documented as a deliberate
+canary), rendering PDF/log/diagnostics/stats. The vendored glue is no
+longer loaded by the page — proven at the NETWORK level by the smoke
+(all requests recorded; glue absent; our worker present). CI
+demo-smoke builds the runtime when the dist guard passes; still skips
+green without artifacts.
+
+**Acceptance wins.** (1) Content-level PDF proof, twice over: XeTeX
+text reconstructed via the embedded ToUnicode CMap (ligature-safe) and
+pdfTeX via content-stream literals — both with COMMITTED negative
+controls (wrong sentence asserted absent; demonstrated red when
+pointed at the wrong string). Closes M0 gap #1. (2) First REAL
+Worker.terminate() cancellation in Chromium: cancel → CancelledError →
+fresh-worker recompile succeeds. (3) Broken-doc diagnostics visible in
+a real browser: {error, 'Undefined control sequence.',
+chapters/broken.tex, 4}. Smoke 4/4 (~7 s); runtime 186/186; audit
+green. Review: APPROVE, nits only (clear-triage assertion applied;
+CMap collision with math fonts documented — demo doc kept single-font
+with a warning comment).
+
 ## 2026-07-23 — M1 item 8: diagnostics parser (loop)
 
 **Done.** `coder` agent delivered `runtime/src/diagnostics.ts` — pure,

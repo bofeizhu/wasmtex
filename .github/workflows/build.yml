@@ -17,11 +17,12 @@ jobs:
           echo "See DESIGN.md milestones and the build/ layout."
           exit 0
 
-  # M0 item 6N: run the demo hello-world -> PDF smoke ONLY when the dist/
-  # artifacts are present in the checkout. dist/ is git-ignored and not
-  # committed, so on a stock checkout this job skips every real step and stays
-  # green. When M3 wires artifact build/download into CI (the recorded
-  # deferral), the guard below flips to `present=true` and the smoke runs.
+  # Demo -> PDF smoke (M1 item 9: the page drives the `wasmtex` RUNTIME, not the
+  # vendored glue). Runs ONLY when the dist/ engine artifacts are present in the
+  # checkout. dist/ is git-ignored and not committed, so on a stock checkout this
+  # job skips every real step and stays green. When M3 wires artifact
+  # build/download into CI (the recorded deferral), the guard flips to
+  # `present=true`, the runtime is built, and the smoke runs.
   demo-smoke:
     runs-on: ubuntu-latest
     steps:
@@ -37,7 +38,7 @@ jobs:
              && [ -f dist/texlive-basic.js ] \
              && [ -f dist/texlive-basic.data ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
-            echo "dist/ artifacts present -> running demo smoke."
+            echo "dist/ artifacts present -> building runtime + running demo smoke."
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "dist/ artifacts absent -> skipping demo smoke (full CI build lands at M3)."
@@ -46,7 +47,22 @@ jobs:
       - if: steps.guard.outputs.present == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Node 24 matches runtime/package.json `engines` and runtime-tests.yml.
+          node-version: 24
+
+      # The demo loads runtime/dist/{src,worker.js}, which are git-ignored build
+      # products — build them here before the smoke (the demo's own `pretest`
+      # also builds, so a manual `npm test` works locally; this makes the runtime
+      # build an explicit, independently-reported CI step).
+      - if: steps.guard.outputs.present == 'true'
+        name: Install runtime dependencies (clean, from committed lockfile)
+        working-directory: runtime
+        run: npm ci
+
+      - if: steps.guard.outputs.present == 'true'
+        name: Build the runtime (ESM client + worker bundle)
+        working-directory: runtime
+        run: npm run build
 
       - if: steps.guard.outputs.present == 'true'
         name: Install demo dependencies

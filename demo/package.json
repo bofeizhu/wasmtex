@@ -3,10 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "M0 faithful-baseline demo + Playwright hello-world PDF smoke (CI vehicle, not the npm package).",
+  "description": "WasmTeX runtime-v1 demo + Playwright PDF smoke (CI vehicle, not the npm package). Drives the wasmtex runtime; no vendored glue.",
   "license": "MIT",
   "scripts": {
     "serve": "node serve.mjs",
+    "build:runtime": "npm --prefix ../runtime run build",
+    "pretest": "npm --prefix ../runtime run build",
     "test": "playwright test",
     "test:headed": "playwright test --headed"
   },

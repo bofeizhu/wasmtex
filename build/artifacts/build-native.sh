@@ -278,7 +278,18 @@ do_dist() {
   find "$fmtdir" -name '*.fmt' -exec cp {} "$dist/formats/" \;
 
   # Deterministic integrity list (sorted, relative paths). macOS: shasum -a 256.
-  ( cd "$dist" && find . -type f ! -name SHA256SUMS | LC_ALL=C sort | xargs shasum -a 256 > SHA256SUMS )
+  ( cd "$dist" && find . -type f ! -name SHA256SUMS ! -name assets.json | LC_ALL=C sort | xargs shasum -a 256 > SHA256SUMS )
+
+  # Data-driven asset inventory: dist/assets.json (M1 item 4). Emitted AFTER
+  # SHA256SUMS (so the generator can cross-check every payload file's hash
+  # against it — catching a stale dist) and BEFORE the verify gate (so a
+  # mis-/unclassified artifact or a hash mismatch fails the BUILD, not a
+  # downstream consumer). assets.json is deliberately NOT in SHA256SUMS (it
+  # would be a self-reference fixpoint); SHA256SUMS itself IS listed in
+  # assets.json (role "checksums"). generated= is pinned off SOURCE_DATE_EPOCH,
+  # so re-running this stage yields a byte-identical assets.json.
+  banner "dist: generate assets.json (data-driven inventory)"
+  node "$here/../manifest/gen-assets.mjs" "$dist"
 
   banner "dist inventory"
   ( cd "$dist" && ls -la . formats && echo && cat SHA256SUMS )

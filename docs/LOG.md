@@ -505,6 +505,27 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-23 — M1 item 4: assets.json generator (loop)
+
+**Done.** `coder` agent delivered `build/manifest/gen-assets.mjs`
+(original, zero-dep): deterministic dist inventory — sorted paths,
+SOURCE_DATE_EPOCH-only timestamp, 8 structural roles (first-match-wins;
+sibling-pairing rules so a rebase's renamed bundles classify with no
+code change), UNKNOWN file → hard exit 1, SHA256SUMS cross-check both
+directions, symlinks rejected. Wired into the dist stage before the
+verify gate. Trust chain: assets.json carries the sha256 of SHA256SUMS
+which covers everything else — the single unanchored root, exactly the
+seat M4's integrity manifest takes over (schemaVersion bump).
+Idempotency proven across three runs incl. one from the main session
+(identical bytes, 2f917af1…). Protocol asset types tightened
+(strictly type-level — reviewer verified the item-3 guards untouched);
+schema↔type compatibility pinned by compile-time witnesses + a
+real-file runtime test that skips cleanly in CI. 31/31 tests, audit
+green (20 sources). Review: approve; nits folded (SHA256SUMS find now
+excludes assets.json against a future incremental dist; test comment
+credits the precision pins, not excess-property checking). Deferred to
+item 5: verify-engine gaining an assets.json existence/parse check.
+
 ## 2026-07-23 — M1 item 3: correlated protocol module (loop)
 
 **Done.** `coder` agent delivered `runtime/src/protocol.ts` — the §5.2

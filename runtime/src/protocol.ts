@@ -136,22 +136,34 @@ export type PassPolicy = 'auto' | PassCount;
 export type AutoOff = 'auto' | 'off';
 
 /**
- * A role an asset plays in the pipeline. The four known roles are the ones item
- * 4's generator (`build/manifest/gen-assets.mjs`, per `docs/plans/M1.md`) emits;
- * the `(string & {})` arm keeps them as autocomplete hints while leaving the set
- * OPEN — item 4 owns the schema, this protocol only carries it.
+ * A role an asset plays in the pipeline. These eight literals are exactly the
+ * roles item 4's generator (`build/manifest/gen-assets.mjs`, schemaVersion 1)
+ * emits — one per artifact kind in a built `dist/`. The `(string & {})` arm
+ * keeps them as autocomplete hints while leaving the set OPEN: item 4 OWNS the
+ * schema, this protocol only carries it, so M4's integrity manifest can add
+ * roles (e.g. on-demand bundle tiers) without a protocol change.
  */
-export type AssetRole = 'engine' | 'glue' | 'format' | 'bundle' | (string & {});
+export type AssetRole =
+  | 'engine-wasm' // the multicall engine WebAssembly binary
+  | 'engine-js' // the Emscripten JS loader paired with the engine wasm
+  | 'glue-pipeline' // vendored busytex pipeline glue (dist parity; not loaded by M1 demo)
+  | 'glue-worker' // vendored busytex worker glue (dist parity; not loaded by M1 demo)
+  | 'format' // a preloaded engine `.fmt` format dump
+  | 'bundle-js' // an Emscripten file_packager bundle loader
+  | 'bundle-data' // an Emscripten file_packager bundle data blob
+  | 'checksums' // the SHA256SUMS integrity list
+  | (string & {});
 
 /**
  * One entry of the parsed `assets.json` inventory.
  *
  * Item 4 OWNS this schema; the protocol only carries the inventory from client
- * to worker, so it is typed loosely — `path` is the one field the worker truly
- * needs, and `bytes`/`sha256`/`role` are REFERENCED (the field names item 4 will
- * emit) but optional. The index signature keeps the shape forward-compatible so
- * tightening the schema in item 4, or the M4 integrity manifest, does not churn
- * the protocol.
+ * to worker. Its schemaVersion-1 generator emits all four of `path`, `bytes`,
+ * `sha256`, `role` on EVERY entry — but only `path` is required here (the one
+ * field the worker truly needs to locate an asset); the rest are optional so a
+ * hand-written minimal file still validates. The index signature keeps the shape
+ * forward-compatible so a later schema (e.g. the M4 integrity manifest) can add
+ * per-entry fields without churning the protocol.
  */
 export interface AssetEntry {
   readonly path: string;
@@ -163,12 +175,19 @@ export interface AssetEntry {
 
 /**
  * The parsed `assets.json` inventory (DESIGN.md §5.1, §5.4). Loosely typed on
- * purpose — see {@link AssetEntry}. `version` is item 4's own schema stamp,
- * optional so a minimal M1 file validates.
+ * purpose — see {@link AssetEntry}. `schemaVersion` is item 4's own schema stamp
+ * (1 for the M1 generator; the M4 integrity manifest bumps it) and `generated`
+ * its optional deterministic ISO build stamp (present iff the build sets
+ * `SOURCE_DATE_EPOCH`); both are optional so a hand-written minimal
+ * `{ assets: [] }` still validates. The index signature absorbs any additional
+ * top-level fields a later schema adds (M4: texlive snapshot id, per-bundle
+ * provided-package indexes) without a protocol change.
  */
 export interface AssetsInventory {
-  readonly version?: number;
+  readonly schemaVersion?: number;
+  readonly generated?: string;
   readonly assets: readonly AssetEntry[];
+  readonly [field: string]: unknown;
 }
 
 /**

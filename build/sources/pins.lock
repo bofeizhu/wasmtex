@@ -48,7 +48,12 @@ tools       = git 2.48.1, curl 8.7.1
 # pins a deterministic uncompressed tar of the checkout, produced by:
 #   git archive --format=tar --prefix=busytex-<short>/ <commit>
 # MIT per upstream README (upstream has no top-level LICENSE file); recorded in
-# THIRD_PARTY_NOTICES.md when the machinery is vendored at M0 item 3.
+# THIRD_PARTY_NOTICES.md. Machinery vendored at M0 item 3 into
+# build/upstream/busytex/ (per-file manifest: build/upstream/busytex/PROVENANCE.md).
+# archive_sha256 framing is git-version-sensitive (README "git integrity anchor").
+# Verified reproducible in the pinned container at M0 item 3: git 2.34.1 (the
+# [toolchain-image] git) produces this exact hash, identical to the authoring
+# host's git 2.48.1 — so no container re-pin is needed.
 [busytex]
 kind           = git
 url            = https://github.com/busytex/busytex.git

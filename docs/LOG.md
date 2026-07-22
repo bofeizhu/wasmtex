@@ -135,3 +135,32 @@ archives are not guaranteed byte-stable; a future hash mismatch means
 Upstream's `download-native` release binaries and rolling-`.deb` bundle
 path deliberately not pinned (documented in the README); busytex
 THIRD_PARTY_NOTICES entry lands with item 3 when code is vendored.
+
+## 2026-07-22 — M0 item 3: vendor busytex machinery (loop, iteration 7)
+
+**Attempted / done.** `coder` agent vendored 10 upstream files into
+`build/upstream/busytex/` from the commit-verified cache clone
+(`rev-parse` == `f2bd7b1`): Makefile, busytex.c, packfs.c/.py,
+emcc_wrapper.py, cosmo_getpass.h, ubuntu_package_preload.py,
+busytex_pipeline.js, busytex_worker.js, upstream README. Selection rule:
+Makefile + every repo-local path it references + the two JS glue files
+the demo loads. Each file: pristine body + provenance header;
+PROVENANCE.md manifest records upstream and vendored sha256 per file.
+Excluded: CI workflows, example/ tree, busytexmk.py, arXiv/cosmo
+helpers (enumerated with reasons in the agent report / PROVENANCE.md).
+THIRD_PARTY_NOTICES.md rewritten with the real busytex entry (verbatim
+README license quote; upstream has no LICENSE file) and a
+fetched-not-vendored table mirroring pins.lock. DESIGN.md §4 gained the
+staging-area note (recorded deviation, per plan). Review: APPROVE —
+reviewer independently re-verified all 10 body hashes, the license
+quote, and the container git-archive check.
+
+**Verified.** `git archive` framing for the busytex pin is identical
+under host git 2.48.1 and the container's git 2.34.1 (both produce the
+pinned `archive_sha256` `f670beff…`); recorded as a pins.lock comment,
+no re-pin needed. Vendored Makefile parses under the container's GNU
+Make 4.3 (`make -n` on two targets).
+
+**Deferred.** `ubuntu_package_preload.py` is unused by M0's build path
+(only the `build/wasm/ubuntu/%.js` recipe uses it) but vendored to keep
+the Makefile's path references closed; drop at M1 if still unused.

@@ -1,5 +1,5 @@
 ---
-description: One autonomous WasmTeX iteration — orient from disk, advance the active milestone by one committed unit, then yield. Designed for `/loop /work`.
+description: One autonomous WasmTeX iteration — orient from disk, advance the active milestone by one committed unit, then yield. Runs milestone-to-milestone without stopping until M3 (Build logistics & CI) completes. Designed for `/loop /work`.
 ---
 
 Continue WasmTeX autonomously. Do ONE bounded unit of work, close it out cleanly, then yield. Workflow / multi-agent orchestration is authorized whenever a step warrants fan-out.
@@ -29,11 +29,12 @@ Context may have been compacted; trust only the repo:
 
 - The unit's tests/checks are green, or the failure is recorded honestly.
 - Tick the plan checkbox; append to today's `docs/LOG.md` entry (attempted / failed→fixed / deferred).
-- Small conventional commit(s) on `main`, reviewer-approved, with the CI-workflow-equivalent checks passing locally. NEVER push, create remotes, tag releases, or publish — those are user-only calls; park them in LOG.md under "Deferred".
+- Small conventional commit(s) on `main`, reviewer-approved, with the CI-workflow-equivalent checks passing locally, then `git push origin main` (standing authorization 2026-07-22: the repo is public at github.com/bofeizhu/wasmtex; CI runs on push — check the result with `gh run list`/`gh run watch`, and a red CI on a pushed commit is the next unit's first priority). NEVER tag releases or publish to npm — those remain user-only calls; park them in LOG.md under "Deferred".
 
 ## Yield or stop
 
 - Waiting on a background build → schedule the wakeup for when it should plausibly finish (20+ min; match the build), not sooner.
 - Unit done, more remain → short wakeup (~2 min) and continue.
-- Milestone acceptance checks ALL pass → record results in LOG.md, commit, then STOP the loop with a summary for the user (PROMPT.md: stop and summarize before starting the next milestone).
-- The same step has failed twice with no new information, or a user-only decision blocks all remaining work → STOP the loop, stating exactly what is needed and what state everything was left in.
+- Milestone acceptance checks ALL pass → record results in LOG.md + the plan, commit, push, and present the milestone summary prominently in the iteration status — then CONTINUE (standing user directive 2026-07-22, superseding PROMPT.md's stop-between-milestones): the next iteration writes the next milestone's plan per the plan-first rule. Do not stop between milestones.
+- STOP the loop only when: the milestone named **Build logistics & CI** (M3 under DESIGN.md §9's current numbering) has all acceptance checks green — final summary + PushNotification; or a decision only the user can make blocks all remaining work; or the two-strikes rule below fires.
+- The same step has failed twice with no new information → STOP the loop, stating exactly what is needed and what state everything was left in.

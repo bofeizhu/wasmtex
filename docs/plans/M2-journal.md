@@ -224,3 +224,215 @@ needs only the filename swap (`texlive2023-…iso` -> `texlive2026-20260301.iso`
   coherence is the reason the .0 was chosen; bumping the whole pin to `.1`
   would dissolve it).
 
+---
+
+## Item 3 — Dissolve `build/upstream/` into our own build config
+
+Dated 2026-07-23. Goal: fork the vendored busytex Makefile (+ the helpers it
+needs) into `build/engines/` as OUR maintained, MIT build config with per-file
+derived-work headers; drop LuaTeX / bench / Ubuntu-bundle / Cosmopolitan /
+example paths; retarget the driver and the license audit; retire
+`build/upstream/`; drop the worker/pipeline glue from `dist/`. **Sequencing: this
+item stays on the TL 2023 pins** — item 4 does the 2026 cutover. The deliverable
+is a coherent, working OURS config **verified against the known-good TL 2023
+cache**. No commit here (the orchestrating session commits).
+
+### Forked files (build/engines/) + modification summaries
+
+Copied byte-for-byte from the pinned commit, then adapted; each carries a
+`DERIVED WORK (DESIGN.md §2.1)` header naming commit `f2bd7b11…` and listing its
+mods (the header IS the provenance record — no `PROVENANCE.md` manifest):
+
+- **`Makefile`** — our engine build config. Mods: LuaTeX removed end to end;
+  `OPTS_LIBS_wasm = AR=$(AR_wasm)` folded in; bench/Ubuntu/example/Cosmopolitan
+  paths dropped; format dump/prune trimmed to the non-lua retained set. (See the
+  dropped-target inventory below.)
+- **`busytex.c`** — multicall dispatcher. Mods: dropped the `#ifdef
+  BUSYTEX_LUATEX` extern (`busymain_luahbtex`), the `luatex`/`luahbtex` applet-
+  listing lines, and the `luahbtex`/`luahblatex` argv[1] dispatch. Verified: the
+  relinked native binary's applet listing is `pdftex xetex xdvipdfmx bibtex8
+  makeindex kpse{which,stat,access,readlink}` and `busytex luahbtex` exits 1.
+- **`emcc_wrapper.py`** — the `CCSKIP_*_wasm` compiler-wrapper shim, body
+  UNMODIFIED (no substantive change needed; xetex/pdftex + ICU/freetype wasm
+  builds still reuse the native helper tools through it).
+
+**Helpers evaluated and NOT forked** (only served dropped paths):
+`packfs.c` / `packfs.py` (only the `busytexextra` native-fat/bench binary used
+them), `cosmo_getpass.h` (Cosmopolitan-only — `#ifdef __COSMOPOLITAN__`, a no-op
+on native/wasm; its inject into `dvipdfm-x/dvipdfmx.c` is dropped), and
+`ubuntu_package_preload.py` (Ubuntu `.deb` bundle path). `README.md` (original
+WasmTeX) describes the directory. The upstream README and the two glue JS files
+are not carried forward (glue decision below).
+
+### Dropped-target inventory (rebase-surface metric)
+
+The Makefile shrank **618 → 560 lines**. Dropped blocks (each shrinks the annual
+rebase surface):
+- LuaTeX: `OBJ_LUAHBTEX`/`OBJ_LUATEX`; `lua53` from `OBJ_DEPS`;
+  `LUATEX_REDEFINE` (the ~1-line mega symbol list); `LUATEX_SOCKET_DEFINES`;
+  `CFLAGS_LUAHBTEX`/`CFLAGS_LUATEX`; `OPTS_LUAHBTEX_*`/`OPTS_LUATEX_*`;
+  `-DBUSYTEX_LUATEX`; the `busytex_libluahbtex.a` target; the `lua53`
+  library target (kpathsea half kept); `busytex_libluahbtex.a` from
+  `busytexapplets`; `lua53` from `texlivedependencies`; `OBJ_LUAHBTEX` from the
+  multicall link.
+- bench / native-fat: the `busytexextra` target (+ `packfs`), `dist-native-full`,
+  `download-native`, `BUSYTEX_BIN`.
+- Ubuntu bundle: `URL_ubuntu_*`, `build/wasm/ubuntu/%.js`, `ubuntu-wasm`,
+  `TEXMFFULL`, the `versions.txt` ubuntu line.
+- Cosmopolitan: the `cosmo_getpass.h` copy+inject in `source/texlive.patched`
+  (kept the ICU `common/Makefile.in` quoted-space normalization — re-annotated;
+  it is a source-tree normalization, cheap, and was in the known-good build).
+  Also re-annotated (kept as a proven no-op) the XeTeX `-Dprivileged=privileged`
+  self-define.
+- example / tiers: the `example` asset-download target, the `texlive-extra` and
+  `texlive-full` install profiles, `dist-wasm`, `clean-example`.
+- biber: **already absent** from the busytex Makefile (it lived in a separate
+  `build-biber.yml`), so nothing to drop here — noted for completeness.
+
+### Format-set decision (+ a real finding)
+
+Retained set = **`{ xetex/xelatex.fmt, pdftex/pdflatex.fmt }`** — exactly what
+the runtime `FORMAT_*` constants (`runtime/worker/core.ts`: `FORMAT_XELATEX`,
+`FORMAT_PDFLATEX`) and the conformance corpus (hello-xetex, hello-pdftex,
+bibtex8, makeindex — all LaTeX) use. Plain `tex/tex.fmt` is used by neither, so
+it is pruned too. The `FORMAT_*` MEMFS constants are therefore unaffected (they
+never referenced a lua format).
+
+**Finding — the profile drop is NOT the mechanism; the PRUNE is.** I dropped
+`collection-luatex 1` from `texlive-basic.profile` AND the `luahbtex`/`luahblatex`
+install wrappers, AND the lua `lualatex.fmt->luahblatex.fmt` rename. But the
+redump STILL produced lua formats. Cause (confirmed against the staged tlpdb):
+`scheme-basic` pulls `collection-basic`, which has `depend luahbtex` +
+`depend luatex` (→ 10 `execute AddFormat engine=lua*` lines). So the lua
+fmtutil.cnf entries install regardless of `collection-luatex`. fmtutil then built
+those lua `.fmt` using the **host** `luahbtex`/`luatex` (`/Library/TeX/texbin/…`
+is on PATH — our multicall has no lua applet) — a non-hermetic leak, but the
+outputs are **pruned** and never shipped. The shipped `xelatex.fmt`/`pdflatex.fmt`
+ARE ours (built via the custom-bin wrappers; engine banner
+`TeX Live 2023_busytexwasm`). Decision: keep the profile drop (correct intent)
+but make the prune load-bearing by removing the whole `luahbtex/ luatex/ tex/`
+dirs (rebase-robust: catches any lua format that leaks in via a dependency). The
+old M0/M1 build hit the same host-engine path — it just had its own luahbtex, so
+the leak was invisible; documenting it here for the annual rebaser.
+
+### Glue-drop decision + fallout
+
+**Decision: DROP `busytex_pipeline.js` / `busytex_worker.js` from `dist/`** (the
+task's RECOMMENDED option). Rationale: the runtime replaced their role at M1
+(the demo drives our typed worker, not the glue; the smoke already asserts they
+are NOT loaded), and M2 makes the config ours — so `dist/` should carry only
+WasmTeX-authored/-consumed artifacts. Verified nothing asserts their PRESENCE:
+`demo/test/smoke.spec.mjs` asserts the glue is NOT loaded (still true); the
+`assets.test.ts` runtime block only asserts every role is IN `KNOWN_ROLES`
+(never that glue exists); `verify-engine.mjs` never references glue.
+
+Fallout handled (all green after):
+- `build-native.sh` do_dist: dropped the two glue `cp`s; `machinery_files`
+  trimmed to `Makefile busytex.c emcc_wrapper.py`.
+- `gen-assets.mjs`: retired the `glue-pipeline`/`glue-worker` ROLE_RULES + header
+  table (8→6 roles). A retired rule can't fire on an absent file, so no
+  unclassified-artifact error.
+- `build/manifest/README.md`, `runtime/src/protocol.ts` (`AssetRole` 8→6 arms),
+  `runtime/test/assets.test.ts` (`KNOWN_ROLES` 8→6): retired glue for
+  consistency; typecheck + vitest green.
+- `.github/workflows/build.yml`: removed the `-f dist/busytex_worker.js` /
+  `-f dist/busytex_pipeline.js` presence checks from the demo-smoke guard (they
+  would have wrongly skipped the smoke once glue is gone).
+- Docs: `demo/index.html`, `demo/README.md`, `demo/serve.mjs` (stale
+  "busytex_pipeline.js is the engine" comment fixed → `busytex.wasm`).
+
+### Override fold-ins (driver → Makefile)
+
+- **`OPTS_LIBS_wasm=AR=emar`** — FOLDED into the Makefile as
+  `OPTS_LIBS_wasm = AR=$(AR_wasm)`. Upstream never defined it (a latent bug: the
+  wasm archive rule passed an undefined var, so non-libtool libs' hardcoded
+  `AR = ar` won — the hollow-wasm-archive defect on BSD-ar hosts). It fixes the
+  bug for every host, not just this macOS driver, so it belongs in the config now
+  that the config is ours. Removed the driver override.
+- **`NM_native=true`** — REMOVED. It only existed to no-op the `nm -D`
+  diagnostic in `busytexapplets` (macOS `nm` has no `-D`). Folded away by
+  deleting that debug-only `echo BEFORENM && nm -D … && echo AFTERNM` tail.
+- **KEPT as driver overrides** (genuinely host-specific, not config): the macOS
+  frameworks link (`OPTS_BUSYTEX_LINK_native`), `LDFLAGS_TEXLIVE_native`, the
+  cmake-4 policy floor (`CMAKE_native`/`CMAKE_wasm`), and the offline URL blanks.
+  Also improved do_prep to SYNC changed config files (cmp-based) rather than
+  copy-once, so a fork/rebase re-syncs into the work tree.
+
+### Audit retarget + induced-failure proof
+
+Checks (a)/(b) no longer enforce the `build/upstream` PROVENANCE.md manifest +
+vendored-sha256 (both retired with the staging tree). They now require every file
+under `build/engines/` to carry an SPDX MIT header AND one provenance marker:
+original WasmTeX work, or a `DERIVED WORK` header naming the pinned `[busytex]`
+commit. Check (e)'s `build/upstream/busytex/` exemption removed; roots now cover
+`build/engines/` (`emcc_wrapper.py` is double-covered, intended). Dead
+`sha256_of`/`tmpd` scaffolding removed.
+
+Fail-closed proof (induced, then restored): (1) a headerless
+`build/engines/_induced_headerless.sh` → `FAIL … lacks an SPDX-License-Identifier`
++ exit 1; (2) a `DERIVED WORK` header omitting the commit → `FAIL … does not name
+the pinned [busytex] commit f2bd7b11…` + exit 1; after removing both, audit exits
+0 (`all checks passed`).
+
+### Verification against TL 2023 (in-turn, staged)
+
+Clean-ish rebuild of what changed, on the existing (known-good) work tree:
+- **native relink (no lua):** forced by removing the link outputs. `busytex.c`
+  compiled without `-DBUSYTEX_LUATEX`; link has xetex+pdftex+bibtex8+xdvipdfmx+
+  makeindex+kpathsea + deps, no `libtexlua53`/luahbtex. Binary
+  `36,553,752 → 30,294,664 B`.
+- **basic redump (adjusted set):** `install-tl` reran; the prune left exactly
+  `pdflatex.fmt` + `xelatex.fmt` (see the finding above).
+- **wasm relink (no lua):** `busytex.wasm 30,366,631 → 26,369,418 B`
+  (`busytex.js 295,606 → 273,991`). One expected warning: `undefined symbol:
+  getpass` — pre-existing on wasm (emscripten has no getpass; the cosmo stub only
+  fired for `__COSMOPOLITAN__`, so it was always undefined and stubbed by
+  `--unresolved-symbols=ignore-all`). This confirms the cosmo_getpass drop is a
+  true wasm no-op. getpass is only reached for encrypted-PDF prompts.
+- **bundle + dist + execution gate:** `texlive-basic.data 79,503,467 →
+  59,247,516 B`. Gate green: 53 env imports (sound; the hollow defect was 363),
+  `xetex --version` exit 0, banner `TeX Live 2023_busytexwasm`. `assets.json`:
+  7 entries, roles `{checksums, engine-js, engine-wasm, format×2, bundle-data,
+  bundle-js}` — no glue role; no unclassified artifact.
+- **runtime suite:** `npm run typecheck` clean; `vitest` **186/186** across 10
+  files — incl. `assets.test.ts` (real 6-role `dist/assets.json`), the real-wasm
+  integration tests (hello-world, crossref rerun, bibtex8 e2e, public API,
+  cancel+reinit, broken-doc diagnostics — all compile with the new lua-free
+  engine), and "rejects luatex with a fatal". Fixtures unchanged (still TL 2023).
+- **demo smoke: 4/4** (XeTeX text-bearing PDF + clean diagnostics; pdfTeX text;
+  broken-doc file+line diagnostics; cancel()+fresh-worker follow-up).
+- **license audit:** green.
+
+### wasm size delta (budget note)
+
+Dropping LuaTeX (luahbtex objects + lua53) from the multicall link:
+`busytex.wasm 30,366,631 → 26,369,418 B` = **−3,997,213 B (−13.2%)**; loader
+`busytex.js −21,615 B (−7.3%)`. Native binary `−6,259,088 B (−17.1%)`. Bundle
+`texlive-basic.data 79,503,467 → 59,247,516 B` = **−20,255,951 B (−25.5%)** (lua
+formats + the luatex/luahbtex packages pruned from the TDS the packer embeds).
+No explicit budget file exists yet (DESIGN §8's is a later deliverable); recorded
+here so the drop is not silently absorbed.
+
+### Parked container flow
+
+`build.sh` + `run-in-container.sh` still mount the retired `build/upstream/
+busytex` as `/machinery`; per the plan they are NOT rewritten now. Each got a
+prominent `!! PARKED (M3) — STALE PATH` banner explaining the mount is retired and
+that they are re-pinned + re-pointed at `build/engines/` on arm64 at M3.
+
+### Deviations / notes
+
+- **ICU `common/Makefile.in` sed kept** (originally a Cosmopolitan args-with-
+  spaces fix) as a source normalization, and the XeTeX `-Dprivileged=privileged`
+  self-define kept as a proven no-op — both re-annotated. Conservative: they were
+  in the known-good build and removing them buys nothing but build risk. Not a
+  DESIGN deviation.
+- **Host-engine leak into the (pruned) lua format build** — documented above; the
+  shipped formats are ours, so no artifact-integrity impact. A fully hermetic
+  format dump is an M3 (container, no host TeX) property.
+- The wasm/native verification is a **relink** reusing M0/M1 dependency archives
+  (harfbuzz/icu/… built once); the folded `OPTS_LIBS_wasm` only matters when
+  those archives are rebuilt, which item 4's from-scratch TL-2026 build does. The
+  relink + green execution gate proves the link graph and the config are coherent
+  on TL 2023.
+

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # Provenance: original work authored in the WasmTeX repository (see LICENSE).
-#   Not derived from any third-party source. It *drives* the vendored busytex
-#   (MIT) Makefile at build/upstream/busytex/ without modifying it; the make
-#   targets and their order mirror the parked container flow
-#   (build/artifacts/run-in-container.sh) and upstream busytex's own target
-#   graph at the pinned commit. macOS incompatibilities are handled by make
-#   variable overrides (below), never by editing the vendored files.
+#   Not derived from any third-party source. It drives OUR maintained engine
+#   build config at build/engines/ (the Makefile forked from busytex at M2 item
+#   3, MIT, with per-file derived-work headers). macOS incompatibilities that
+#   are genuinely host-specific (Apple ld frameworks, cmake 4.x policy floor,
+#   offline URL enforcement) are handled by make-variable overrides below; the
+#   generic-but-formerly-missing ones (AR=emar for the wasm archives) are now
+#   folded INTO build/engines/Makefile (OPTS_LIBS_wasm) since the config is ours.
 #
 # WasmTeX M0 "faithful baseline" build — NATIVE arm64 macOS host (M0 item 5N).
 # =============================================================================
@@ -25,8 +26,8 @@
 # The build tree lives OUT OF TREE at ~/.cache/wasmtex/build/native/busytex
 # (override WASMTEX_WORK_DIR), a sibling of the source/toolchain caches: the
 # multi-GB TL source tree + ~4.8 GB texmfrepo staging stay off the repo volume;
-# only dist/ (git-ignored) lands in the repo. build/upstream/ stays pristine —
-# the vendored machinery is COPIED into the work tree and make runs there.
+# only dist/ (git-ignored) lands in the repo. build/engines/ is the source of
+# truth — its files are SYNCED into the work tree (below) and make runs there.
 #
 # This path is DEVELOPMENT-ONLY (DESIGN.md §9): only container-built,
 # pin-verified artifacts are ever released. Source inputs stay pinned/verified.
@@ -67,7 +68,7 @@ stage="${1:-${WASMTEX_STAGE:-all}}"
 cache_dir="${WASMTEX_CACHE_DIR:-$HOME/.cache/wasmtex/sources}"
 work="${WASMTEX_WORK_DIR:-$HOME/.cache/wasmtex/build/native/busytex}"
 dist="$repo/dist"
-machinery="$repo/build/upstream/busytex"
+machinery="$repo/build/engines"
 
 # --- Reproducibility hooks (same derivation as the container flow) -----------
 # SOURCE_DATE_EPOCH is the busytex pin commit date (f2bd7b11, 1781618797);
@@ -96,7 +97,6 @@ export MAKEFLAGS="-j${jobs}"
 # "Native build (5N)". Vendored files are NOT edited (no build/patches entry
 # needed for the native pass).
 macos_overrides=(
-  "NM_native=true"                                   # macOS nm has no -D; rule use is diagnostic-only
   "CMAKE_native=cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5"  # expat 2.5.0 wants cmake<3.5; cmake 4.4 dropped it
   "CMAKE_wasm=emcmake cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5"  # same policy floor for the wasm expat build
   "LDFLAGS_TEXLIVE_native=-lm -pthread"              # drop Linux static/-ldl/--unresolved-symbols
@@ -106,23 +106,11 @@ macos_overrides=(
   # same frameworks a normal MacTeX xetex links. Without them the binary won't
   # even load (dyld: NSFontManager not found in flat namespace).
   "OPTS_BUSYTEX_LINK_native=-lm -pthread -Wl,-undefined,dynamic_lookup -framework CoreFoundation -framework CoreGraphics -framework CoreText -framework Foundation -framework AppKit"
-  # Force the WASM library archives to use emar (the wasm twin of the upstream
-  # OPTS_LIBS_native at Makefile:206). Several libs/ archives (harfbuzz, libpng,
-  # zlib, graphite2, teckit, xpdf, libpaper, zziplib) don't use libtool, so their
-  # configure-generated Makefiles HARDCODE `AR = ar` (libpng Makefile:118). The
-  # wasm archive rule (Makefile:288) passes $(OPTS_LIBS_wasm), which upstream
-  # never defines — so nothing overrides that hardcoded `ar` on the sub-make
-  # command line, and `emmake`'s exported AR=emar loses to the Makefile
-  # assignment. On Linux `ar` is GNU ar (format-agnostic) so the wasm objects
-  # archive fine and the bug is invisible upstream; on macOS `/usr/bin/ar` is
-  # BSD ar, which auto-ranlibs and DROPS every non-Mach-O member ("archive member
-  # 'X.o' not a mach-o file") with exit 0 — producing 96-byte archives holding
-  # only __.SYMDEF and zero members. The link's -Wl,--unresolved-symbols=ignore-all
-  # then stubbed all 363 now-missing dependency symbols to abort(-1) (the 5N/6N
-  # defect). Passing AR=emar on the sub-make command line beats the Makefile's
-  # `AR = ar`; libtool libs (pplib, freetype, …) already got emar via configure
-  # and are unaffected. Upstream-able as `OPTS_LIBS_wasm = AR=$(AR_wasm)`.
-  "OPTS_LIBS_wasm=AR=emar"
+  # (The former OPTS_LIBS_wasm=AR=emar override is now folded into
+  #  build/engines/Makefile as `OPTS_LIBS_wasm = AR=$(AR_wasm)` — see that
+  #  file's comment and docs/plans/M2-journal.md item 3. It fixes the hollow-
+  #  wasm-archive defect for every host, not just this macOS driver, so it
+  #  belongs in the config now that the config is ours.)
   # Offline enforcement: blank every source URL so a missed pre-stage makes
   # curl fail loud (closed) rather than fetch bytes that bypass pins.lock.
   "URL_texlive="
@@ -131,10 +119,11 @@ macos_overrides=(
   "URL_texlive_full_iso_cache="
 )
 
-# Vendored machinery files the Makefile references by path (PROVENANCE.md).
+# OUR engine build-config files the Makefile references by path (build/engines/).
+# The dropped helpers (packfs.c/.py, cosmo_getpass.h, ubuntu_package_preload.py)
+# and the retired worker/pipeline glue are no longer forked or copied.
 machinery_files=(
-  Makefile busytex.c packfs.c packfs.py emcc_wrapper.py cosmo_getpass.h
-  ubuntu_package_preload.py busytex_pipeline.js busytex_worker.js
+  Makefile busytex.c emcc_wrapper.py
 )
 
 # Cached inputs (names match build/sources/pins.lock).
@@ -168,8 +157,8 @@ stage_tarball() {
 # Apply our macOS source patches (build/patches/<name>/*.patch) to the staged TL
 # work copy. Each patch applies with `patch -p1` from source/texlive/. Idempotent:
 # a patch that already reverses cleanly is skipped, so re-running prep (or a
-# resume against an already-patched tree) is a no-op. Vendored files under
-# build/upstream/ are never touched — only the extracted work copy here.
+# resume against an already-patched tree) is a no-op. Our build config in
+# build/engines/ is untouched — only the extracted TL work copy is patched here.
 apply_macos_patches() {
   local pf tldir="$work/source/texlive"
   shopt -s nullglob
@@ -188,17 +177,17 @@ do_prep() {
   banner "prep: stage machinery + sources (offline)"
   mkdir -p "$work"
 
-  # Copy the vendored build machinery into the work tree (build/upstream/ stays
-  # pristine). Only on first prep, so we do not churn mtimes on resume.
-  if [ ! -f "$work/Makefile" ]; then
-    echo "   copying vendored busytex machinery into $work"
-    local f
-    for f in "${machinery_files[@]}"; do
+  # Sync OUR engine build-config (build/engines/) into the work tree, which is a
+  # build sandbox. Copy only files whose content DIFFERS, so unchanged files keep
+  # their mtime and make stays incremental on resume — while an edited config
+  # (the M2 fork, or a future rebase) always re-syncs into the tree.
+  local f
+  for f in "${machinery_files[@]}"; do
+    if ! cmp -s "$machinery/$f" "$work/$f" 2>/dev/null; then
+      echo "   syncing build config into work tree: $f"
       cp "$machinery/$f" "$work/$f"
-    done
-  else
-    echo "   machinery already present; skipping copy"
-  fi
+    fi
+  done
 
   # Pre-stage the three tarball sources the Makefile would curl.
   stage_tarball texlive    "$tl_src"
@@ -257,9 +246,11 @@ do_bundle() {
 }
 
 do_dist() {
-  banner "dist: assemble $dist (engine + glue + formats + bundle + checksums)"
-  # Our own assembly (equivalent to upstream `dist-wasm`, plus the worker/
-  # pipeline glue and the standalone .fmt formats the acceptance spec lists).
+  banner "dist: assemble $dist (engine + formats + bundle + checksums)"
+  # Our own assembly: the engine wasm/js, the standalone .fmt formats, and the
+  # texlive-basic data bundle. The vendored busytex worker/pipeline glue is NO
+  # LONGER shipped — the M1 runtime replaced its role and M2 makes the config
+  # ours, so dist/ carries only WasmTeX-consumed artifacts (M2 item 3 decision).
   local wasm="$work/build/wasm" fmtdir="$work/build/texlive-basic/texmf-dist/texmf-var/web2c"
 
   rm -rf "${dist:?}"/*
@@ -268,9 +259,6 @@ do_dist() {
   # Engine wasm + js.
   cp "$wasm/busytex.js"   "$dist/busytex.js"
   cp "$wasm/busytex.wasm" "$dist/busytex.wasm"
-  # Worker / pipeline glue the demo loads (vendored busytex, MIT).
-  cp "$machinery/busytex_pipeline.js" "$dist/busytex_pipeline.js"
-  cp "$machinery/busytex_worker.js"   "$dist/busytex_worker.js"
   # Data bundle (js + data pair).
   cp "$wasm/texlive-basic.js"   "$dist/texlive-basic.js"
   cp "$wasm/texlive-basic.data" "$dist/texlive-basic.data"

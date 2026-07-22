@@ -50,18 +50,16 @@
 //   4  bundle-data     extension == ".data"       (Emscripten file_packager data)
 //   5  engine-js       ".js" AND a sibling "<stem>.wasm" exists  (engine loader)
 //   6  bundle-js       ".js" AND a sibling "<stem>.data" exists  (bundle loader)
-//   7  glue-pipeline   basename == "busytex_pipeline.js"
-//   8  glue-worker     basename == "busytex_worker.js"
 //
-// Rules 3/4/5/6 are STRUCTURAL: the engine js loader always pairs with the
-// engine wasm of the same stem, and a bundle js loader always pairs with its
-// <stem>.data — so an engine/bundle rename at rebase reclassifies correctly with
-// no code change, and M4's multi-bundle tiering (core.js/core.data,
-// extended.js/extended.data, ...) classifies for free. Rules 7/8 key on the two
-// vendored busytex glue files, whose upstream names are fixed; the demo stops
-// loading them at M1 but they stay in dist/ for provenance parity (M1 plan
-// risks), so they must still classify. Any file matching NO rule is a hard
-// error (see below).
+// All six rules are STRUCTURAL (name/extension/sibling-pairing): the engine js
+// loader always pairs with the engine wasm of the same stem, and a bundle js
+// loader always pairs with its <stem>.data — so an engine/bundle rename at
+// rebase reclassifies correctly with no code change, and M4's multi-bundle
+// tiering (core.js/core.data, extended.js/extended.data, ...) classifies for
+// free. (The former glue-pipeline / glue-worker rules were retired at M2 item 3
+// when the vendored busytex worker/pipeline glue was dropped from dist/ — the
+// runtime replaced their role at M1 and the config is ours now.) Any file
+// matching NO rule is a hard error (see below).
 //
 // UNKNOWN FILES ARE A HARD ERROR
 // -----------------------------------------------------------------------------
@@ -181,8 +179,6 @@ const ROLE_RULES = [
   { role: 'bundle-data', test: (c) => c.ext === '.data' },
   { role: 'engine-js', test: (c) => c.ext === '.js' && siblingWithExt(c.rel, '.wasm') },
   { role: 'bundle-js', test: (c) => c.ext === '.js' && siblingWithExt(c.rel, '.data') },
-  { role: 'glue-pipeline', test: (c) => c.base === 'busytex_pipeline.js' },
-  { role: 'glue-worker', test: (c) => c.base === 'busytex_worker.js' },
 ];
 
 function classify(rel) {

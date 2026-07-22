@@ -16,13 +16,14 @@ bash build/audit/license-audit.sh
 
 ## What it checks
 
-- **(a/b) Vendored busytex tree** — every file under `build/upstream/busytex/`
-  (except the ours-authored `PROVENANCE.md` manifest) carries a provenance
-  header naming the pinned upstream commit; the on-disk file set is exactly the
-  manifest's rows (bijective); and every manifest `Vendored sha256` matches the
-  file on disk. The hash check doubles as a tamper detector — a mutated body or
-  header changes the hash and fails. The pinned commit is read from
-  `build/sources/pins.lock` `[busytex]`.
+- **(a/b) build/engines provenance headers** — every file under
+  `build/engines/` (our maintained build config, forked from busytex at M2 item
+  3) carries an `SPDX-License-Identifier: MIT` header AND one provenance marker:
+  either original WasmTeX work, or a `DERIVED WORK` header that names the pinned
+  `[busytex]` commit (from `build/sources/pins.lock`). The per-file headers are
+  the provenance record — the M0 `PROVENANCE.md` manifest + vendored-sha256
+  tamper check were retired when `build/upstream/` was dissolved. A headerless
+  file, a file with no marker, or a derived header omitting the commit fails.
 - **(c) Patches** — every `build/patches/<name>/*.patch` has a sibling
   `HEADER.md`, and both the patch and its header carry the diff-context-excerpt
   licensing-clause reference (the context lines quote small excerpts of the
@@ -31,10 +32,11 @@ bash build/audit/license-audit.sh
 - **(d) Copyleft tripwire** — no `SPDX-License-Identifier:` line naming GPL/AGPL
   appears in any `runtime/` or `demo/` source (DESIGN.md §7). It matches only
   SPDX identifier lines, so prose that merely mentions GPL does not trip it.
-- **(e) SPDX MIT headers** — every original `build/` and `demo/` source
-  (`*.sh`, `*.mjs`, `*.py`, `*.html`, `Dockerfile`) carries an `SPDX-License-
-  Identifier: MIT` header. Exemptions (docs, config, lockfiles, `*.patch`, the
-  vendored tree) are enumerated inline in the script.
+- **(e) SPDX MIT headers** — every original `build/`, `demo/`, and `runtime/`
+  source (`*.sh`, `*.mjs`, `*.py`, `*.html`, `*.ts`, `Dockerfile`) carries an
+  `SPDX-License-Identifier: MIT` header. Exemptions (docs, config, lockfiles,
+  `*.patch`, and the `*.c` / `Makefile` under `build/engines/` that (a/b) covers
+  instead) are enumerated inline in the script.
 
 File enumeration uses `git ls-files --cached --others --exclude-standard`, so
 git-ignored build outputs (`dist/`, `build/out/`, `node_modules/`, Playwright

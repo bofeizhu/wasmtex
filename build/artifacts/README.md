@@ -10,9 +10,15 @@
 > M0 item 5N drives the native host build; this container flow becomes the
 > canonical builder at M3 (build logistics & CI).
 
-Original WasmTeX (MIT) glue that runs the **vendored, unmodified** busytex build
-(`build/upstream/busytex/`) inside the pinned `wasmtex-toolchain` image, fully
-offline, and lands the M0 faithful-baseline artifacts in `dist/` (git-ignored).
+Original WasmTeX (MIT) glue that runs the engine build inside the pinned
+`wasmtex-toolchain` image, fully offline, and lands the artifacts in `dist/`
+(git-ignored).
+
+> STALE MOUNT: `build.sh` / `run-in-container.sh` still mount the retired M0
+> staging tree `build/upstream/busytex/` (dissolved into `build/engines/` at M2
+> item 3). They are intentionally left un-rewritten and are re-pinned +
+> re-pointed at `build/engines/` on arm64 at M3. The active flow is the native
+> one — `build/artifacts/build-native.sh`, which already drives `build/engines/`.
 
 ## Files
 
@@ -27,21 +33,22 @@ offline, and lands the M0 faithful-baseline artifacts in `dist/` (git-ignored).
   download rules produce (so those rules never reach the network), then runs the
   make targets in upstream `build-wasm.yml` order and assembles `dist/`.
 
-## How offline works without touching vendored files
+## How offline works
 
-The busytex `Makefile` downloads its sources. We do not edit it. Instead:
+Our `build/engines/Makefile` downloads its sources by default. We do not let it:
 
 1. The container has **no network** (`--network none`).
 2. `run-in-container.sh` extracts each pinned source from the read-only cache
    into `source/<id>/` and writes the `source/<id>.txt` sentinel — byte-for-byte
    what the Makefile's `source/<id>.txt` rule would have produced via `curl`.
    A no-prerequisite target that already exists is up-to-date, so make skips the
-   download recipe entirely. The TL 2023 texmf repo is unpacked from the frozen
-   ISO with `bsdtar` (as the Makefile does), not the split-release cache URL.
+   download recipe entirely. The TL texmf repo is unpacked from the frozen ISO
+   with `bsdtar` (as the Makefile does), not the split-release cache URL.
 
-No `build/patches/` entry is required: pre-staging closes every acquisition path
-M0 exercises. If a future change ever needs to alter vendored machinery, it must
-land as a documented patch under `build/patches/`, never an in-place edit.
+The build **config** (`build/engines/`) is ours and edited directly; changes to
+third-party **TeX Live source** still land as documented patches under
+`build/patches/` (each with a HEADER.md), never in-place edits to the extracted
+source tree.
 
 ## Usage
 
@@ -57,9 +64,11 @@ make clean-artifacts               # remove dist/ and the work volume
 
 ## Output (`dist/`)
 
-`busytex.js`, `busytex.wasm` (engine), `busytex_pipeline.js`, `busytex_worker.js`
-(worker/pipeline glue), `texlive-basic.js` + `texlive-basic.data` (data bundle),
-`formats/*.fmt` (pdflatex/xelatex/luahblatex format dumps), and `SHA256SUMS`.
+`busytex.js`, `busytex.wasm` (engine), `texlive-basic.js` +
+`texlive-basic.data` (data bundle), `formats/*.fmt` (the `xelatex` + `pdflatex`
+format dumps — the non-lua retained set), `assets.json` (data-driven inventory),
+and `SHA256SUMS`. (The vendored worker/pipeline glue was dropped from `dist/` at
+M2 item 3; LuaTeX formats went with LuaTeX.)
 
 Reproducibility (`SOURCE_DATE_EPOCH`, stable ordering) is wired here; the
 byte-for-byte double-build gate lands at M3 (`build/repro-check.sh`).

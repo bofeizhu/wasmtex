@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Provenance: original work authored in the WasmTeX repository (see LICENSE).
-#   Not derived from any third-party source. The build machinery this image
-#   later runs (busytex/busytex, MIT) is vendored separately under
-#   build/upstream/ at M0 item 3, each file with its own provenance header.
+#   Not derived from any third-party source. The build config this image later
+#   runs is WasmTeX's own, under build/engines/ (forked from busytex/busytex,
+#   MIT, at M2 item 3; each file carries its own provenance header).
 #
 # WasmTeX build-toolchain image (M0 item 1).
 # -----------------------------------------------------------------------------

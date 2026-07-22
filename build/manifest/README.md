@@ -51,12 +51,13 @@ without code changes.
 | `bundle-data`   | extension `.data` (Emscripten file_packager data)      |
 | `engine-js`     | `.js` with a sibling `<stem>.wasm` (engine loader)     |
 | `bundle-js`     | `.js` with a sibling `<stem>.data` (bundle loader)     |
-| `glue-pipeline` | basename `busytex_pipeline.js` (vendored glue)         |
-| `glue-worker`   | basename `busytex_worker.js` (vendored glue)           |
+
+(The `glue-pipeline` / `glue-worker` roles were retired at M2 item 3 when the
+vendored busytex worker/pipeline glue was dropped from `dist/`.)
 
 A file matching **no** rule is a hard error: a new dist artifact must be
 classified deliberately, not silently dropped or mislabeled. The runtime's
-`AssetRole` type (`runtime/src/protocol.ts`) mirrors these eight roles with an
+`AssetRole` type (`runtime/src/protocol.ts`) mirrors these six roles with an
 open `(string & {})` arm; `runtime/test/assets.test.ts` pins the schema against
 that type.
 

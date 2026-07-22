@@ -4,6 +4,17 @@
 #   Not derived from any third-party source. Intentionally boring and readable
 #   (style-matched to build/toolchain/build-image.sh).
 #
+# ============================================================================
+# !! PARKED (M3) — STALE PATH. This container flow still mounts the M0 staging
+#    tree `build/upstream/busytex` as /machinery (see `machinery=` below), which
+#    was RETIRED at M2 item 3 when the build config was forked into
+#    `build/engines/`. It therefore does NOT run as-is (the preflight fails on
+#    the missing machinery). It is intentionally left un-rewritten per the M2
+#    item-3 plan: it is fully re-pinned and re-pointed at `build/engines/` on
+#    arm64 at the M3 build-logistics milestone (DESIGN.md §9). Until then, use
+#    the active native flow, `build/artifacts/build-native.sh`.
+# ============================================================================
+#
 # WasmTeX M0 "faithful baseline" build — host side (M0 item 4).
 # =============================================================================
 # Runs the vendored busytex build inside the pinned wasmtex-toolchain image,

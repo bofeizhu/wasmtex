@@ -11,14 +11,13 @@
 # exits non-zero.
 #
 # Checks:
-#   (a) Every file under build/upstream/busytex/ (except the ours-authored
-#       PROVENANCE.md manifest) carries a provenance header naming the pinned
-#       upstream commit, AND the on-disk file set is exactly the set of
-#       PROVENANCE.md manifest rows (bijective — no vendored file escapes the
-#       manifest, no manifest row lacks a file).
-#   (b) Every PROVENANCE.md "Vendored sha256" equals the file on disk. This is
-#       the tamper check: a mutated vendored file (body OR provenance header)
-#       changes its hash and fails here.
+#   (a/b) Every file under build/engines/ (OUR maintained build config, forked
+#       from busytex at M2 item 3) carries an SPDX MIT header AND exactly one
+#       provenance marker: original WasmTeX work, or a "DERIVED WORK" header
+#       naming the pinned [busytex] commit. The per-file headers ARE the record
+#       (the M0 PROVENANCE.md manifest + vendored-sha256 tamper check were
+#       retired when build/upstream/ was dissolved). A headerless file, a file
+#       with no marker, or a derived header that omits the commit FAILS.
 #   (c) Every build/patches/<name>/*.patch has a sibling HEADER.md, and each
 #       patch carries the diff-context-excerpt licensing-clause reference (an
 #       SPDX line plus a pointer to HEADER.md's "excerpt" clause). The sibling
@@ -40,26 +39,24 @@ fail=0
 err() { printf 'FAIL: %s\n' "$*" >&2; fail=1; }
 ok()  { printf 'ok:   %s\n' "$*"; }
 
-# Portable sha256 -> bare lowercase hex (GNU coreutils sha256sum or BSD shasum).
-sha256_of() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
-}
-
-tmpd=$(mktemp -d)
-trap 'rm -rf "$tmpd"' EXIT
-
-VENDOR_DIR="build/upstream/busytex"
-MANIFEST="$VENDOR_DIR/PROVENANCE.md"
+ENGINES_DIR="build/engines"
 PINS="build/sources/pins.lock"
 
 # ---------------------------------------------------------------------------
-# (a) + (b) Vendored busytex tree: provenance headers, manifest bijection, hashes
+# (a/b) build/engines provenance headers.
+# At M2 item 3 the M0 staging tree build/upstream/busytex/ was dissolved into
+# build/engines/ as OUR maintained build config, and its PROVENANCE.md manifest
+# was retired. The per-file HEADERS are now the provenance record. Every file
+# under build/engines/ must carry an SPDX MIT header AND exactly one of:
+#   * ORIGINAL WasmTeX work  — "Original work authored in the WasmTeX repository", or
+#   * DERIVED FROM busytex    — a "DERIVED WORK" header that NAMES the pinned
+#                               [busytex] commit (build/sources/pins.lock).
+# A file with no SPDX MIT header, no provenance marker, or a derived header that
+# does not name the commit FAILS. (This replaces the former manifest bijection +
+# vendored-sha256 tamper check: with an evolving fork the headers, not frozen
+# hashes, are the contract.)
 # ---------------------------------------------------------------------------
-echo "== (a/b) vendored busytex tree =="
+echo "== (a/b) build/engines provenance headers =="
 
 # Pinned upstream commit is the single source of truth in pins.lock [busytex].
 PIN_COMMIT=$(awk -F= '
@@ -68,48 +65,42 @@ PIN_COMMIT=$(awk -F= '
 ' "$PINS")
 if ! printf '%s' "$PIN_COMMIT" | grep -qE '^[0-9a-f]{40}$'; then
   err "could not parse a 40-hex [busytex] commit from $PINS (got: '${PIN_COMMIT:-}')"
-  PIN_COMMIT=""
+  PIN_COMMIT="__unparsed_commit__"
 fi
 
-# Parse manifest rows: "| `origin` | `upstream_sha` | `vendored_sha` | modified |".
-# The header and separator rows carry no backticks, so this matches data only.
-awk -F'|' '
-  /^\|[[:space:]]*`[^`]+`[[:space:]]*\|/ {
-    name = $2; vend = $4
-    gsub(/[` ]/, "", name); gsub(/[` ]/, "", vend)
-    if (name != "" && vend != "") print name, vend
-  }
-' "$MANIFEST" > "$tmpd/rows"
-
-if [ ! -s "$tmpd/rows" ]; then
-  err "parsed zero rows from $MANIFEST (manifest format changed?)"
+ab_fail_before=$fail
+# Tracked + untracked-but-not-ignored files under build/engines/ (a new,
+# not-yet-committed engine file is audited by a pre-commit local run).
+engine_files=$(git ls-files --cached --others --exclude-standard "$ENGINES_DIR" 2>/dev/null || true)
+if [ -z "$engine_files" ]; then
+  err "no files found under $ENGINES_DIR/ (expected the forked Makefile + helpers)"
 fi
-
-# Per-row: file exists, vendored sha256 matches (tamper), header names the commit.
-while read -r name vend; do
-  [ -n "$name" ] || continue
-  f="$VENDOR_DIR/$name"
-  if [ ! -f "$f" ]; then
-    err "manifest lists '$name' but $f is missing on disk"
+engine_n=0; engine_derived=0; engine_original=0
+for f in $engine_files; do
+  [ -f "$f" ] || continue
+  engine_n=$((engine_n + 1))
+  hdr=$(head -n 40 "$f")
+  if ! printf '%s\n' "$hdr" | grep -qF 'SPDX-License-Identifier: MIT'; then
+    err "$f lacks an 'SPDX-License-Identifier: MIT' header"
     continue
   fi
-  got=$(sha256_of "$f")
-  if [ "$got" != "$vend" ]; then
-    err "vendored sha256 mismatch for $name (tamper?): disk=$got manifest=$vend"
+  # Derived-wins ordering: a file carrying BOTH markers must satisfy the
+  # stricter DERIVED WORK requirements (commit named), not slip through as
+  # original because boilerplate appears earlier in the header.
+  if printf '%s\n' "$hdr" | grep -qF 'DERIVED WORK'; then
+    if printf '%s\n' "$hdr" | grep -qF "$PIN_COMMIT"; then
+      engine_derived=$((engine_derived + 1))
+    else
+      err "$f has a DERIVED WORK header but does not name the pinned [busytex] commit $PIN_COMMIT"
+    fi
+  elif printf '%s\n' "$hdr" | grep -qF 'Original work authored in the WasmTeX repository'; then
+    engine_original=$((engine_original + 1))
+  else
+    err "$f carries no provenance marker (need 'Original work authored in the WasmTeX repository' OR a 'DERIVED WORK' header naming commit $PIN_COMMIT)"
   fi
-  if [ -n "$PIN_COMMIT" ] && ! grep -qF "$PIN_COMMIT" "$f"; then
-    err "$f lacks a provenance header naming the pinned commit $PIN_COMMIT"
-  fi
-done < "$tmpd/rows"
-
-# Bijection: on-disk files (minus the ours-authored PROVENANCE.md) == manifest rows.
-ls -1 "$VENDOR_DIR" | grep -v '^PROVENANCE\.md$' | sort > "$tmpd/disk"
-awk '{print $1}' "$tmpd/rows" | sort > "$tmpd/man"
-if ! diff "$tmpd/man" "$tmpd/disk" >/dev/null 2>&1; then
-  err "vendored file set != PROVENANCE.md manifest rows (< manifest-only, > disk-only):"
-  diff "$tmpd/man" "$tmpd/disk" | sed 's/^/       /' >&2 || true
-else
-  ok "$(wc -l < "$tmpd/man" | tr -d ' ') vendored files: headers name $PIN_COMMIT, hashes match, manifest bijective"
+done
+if [ "$fail" -eq "$ab_fail_before" ]; then
+  ok "$engine_n build/engines file(s): $engine_derived derived-from-busytex (commit named), $engine_original original WasmTeX — all SPDX MIT"
 fi
 
 # ---------------------------------------------------------------------------
@@ -168,19 +159,18 @@ fi
 # (e) SPDX MIT header on every original build/ and demo/ source
 # ---------------------------------------------------------------------------
 echo "== (e) SPDX MIT headers (build/ + demo/ originals) =="
-# Required types: *.sh *.mjs *.py *.html and (extensionless) Dockerfile.
+# Required types: *.sh *.mjs *.py *.html *.ts and (extensionless) Dockerfile.
+# build/engines/ files ARE scanned here where they match (emcc_wrapper.py) — its
+# SPDX MIT header is also required by (a/b), so double coverage is intended; the
+# Makefile and busytex.c are not matched by the type filter and rely on (a/b).
 # EXEMPTIONS (deliberate — not oversights):
-#   build/upstream/busytex/**  vendored busytex (MIT); headers frozen at
-#                              vendoring time and verified by (a)/(b) against the
-#                              manifest, so they are not re-scanned here.
-#   *.md / *.markdown          documentation (README/HEADER/PROVENANCE/notes).
+#   *.md / *.markdown          documentation (README/HEADER/notes).
 #   *.json *.lock .gitignore   package/lock/config/data files — no comment/header
 #   .editorconfig pins.lock*   convention (pins.lock does carry one, not required).
 #   *.patch                    covered by check (c) (SPDX + clause), not here.
-#   *.c *.h *.js under vendored only; no original build/demo files of those types.
+#   *.c / Makefile             carried by (a/b) provenance headers, not this scan.
 req=$(git ls-files --cached --others --exclude-standard build demo runtime 2>/dev/null \
-  | grep -E '(\.sh|\.mjs|\.py|\.html|\.ts)$|(^|/)Dockerfile$' \
-  | grep -v '^build/upstream/busytex/' || true)
+  | grep -E '(\.sh|\.mjs|\.py|\.html|\.ts)$|(^|/)Dockerfile$' || true)
 missing_e=0
 for f in $req; do
   if ! head -n 15 "$f" | grep -qF 'SPDX-License-Identifier: MIT'; then

@@ -7,11 +7,11 @@
     Not derived from any third-party source code. It drives the ORIGINAL §5
     `wasmtex` runtime (runtime/dist/src/index.js) through its public
     createTypesetter API — no vendored busytex glue is referenced by this page
-    (M1 item 9). The vendored worker/pipeline glue scripts stay in /dist for
-    provenance parity but are no longer loaded here; our runtime's worker
-    (/runtime/dist/worker.js) has replaced their role. (The busytex ENGINE
-    artifacts — busytex.js/.wasm + the texlive-basic bundle — are still loaded,
-    by OUR worker, from /dist: they are the engine, not the retired glue.)
+    (M1 item 9). The vendored worker/pipeline glue scripts were dropped from
+    /dist entirely at M2 item 3; our runtime's worker (/runtime/dist/worker.js)
+    replaced their role. (The busytex ENGINE artifacts — busytex.js/.wasm + the
+    texlive-basic bundle — are still loaded, by OUR worker, from /dist: they are
+    the engine, not the retired glue.)
 
   M1 item 9: the demo migrated off the vendored glue onto the typed §5 runtime.
     The page loads the runtime as a native ES module, calls createTypesetter,

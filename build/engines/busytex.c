@@ -1,16 +1,21 @@
 /*
  * SPDX-License-Identifier: MIT
- * Vendored from busytex/busytex <https://github.com/busytex/busytex>
- *   at commit f2bd7b11ee1b7b093638321c1f3e5d70389d307b
- *   (pinned in build/sources/pins.lock; commit hard-verified at fetch time).
- * License: MIT, per the upstream README "License" section; the upstream
- *   repository has no top-level LICENSE file. See THIRD_PARTY_NOTICES.md.
- * Vendored UNMODIFIED (M0 item 3): the file body below is byte-for-byte
- *   identical to the pinned commit; the only change is this provenance header.
- * build/upstream/ is an M0-only staging area (see build/upstream/README.md),
- *   dissolved into build/engines/ etc. at M1. Do not modify vendored files
- *   here except via documented item-4 patches.
- * Per-file manifest with sha256: build/upstream/busytex/PROVENANCE.md.
+ * DERIVED WORK (DESIGN.md §2.1). Derived from busytex/busytex
+ *   <https://github.com/busytex/busytex> at commit
+ *   f2bd7b11ee1b7b093638321c1f3e5d70389d307b (MIT; pinned in
+ *   build/sources/pins.lock [busytex], hard-verified at fetch time). The
+ *   upstream repository has no top-level LICENSE file; its README "License"
+ *   section is the statement of record. See THIRD_PARTY_NOTICES.md / NOTICE.
+ *
+ * This is OUR maintained multicall dispatcher, forked from the upstream
+ *   busytex.c at the WasmTeX TL-2026 rebase (M2 item 3), when build/upstream/
+ *   was dissolved into build/engines/. Substantive modifications vs upstream:
+ *     - Dropped LuaTeX: removed the `#ifdef BUSYTEX_LUATEX` extern for
+ *       busymain_luahbtex, the `luatex`/`luahbtex` lines from the applet
+ *       listing, and the `luahbtex`/`luahblatex` argv[1] dispatch. LuaTeX
+ *       leaves v1 scope and the annual-rebase surface (DESIGN.md §9 amendment).
+ *   The retained applet set is XeTeX + pdfTeX + bibtex8 + xdvipdfmx +
+ *   makeindex + the kpathsea tools (DESIGN.md §3).
  */
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -22,12 +27,8 @@
 #define extern  extern "C"
 #endif
 
-#ifdef BUSYTEX_PDFTEX 
+#ifdef BUSYTEX_PDFTEX
 extern int busymain_pdftex(int argc, char* argv[]);
-#endif
-#ifdef BUSYTEX_LUATEX
-//extern "C" int busymain_luatex(int argc, char* argv[]);
-extern int busymain_luahbtex(int argc, char* argv[]);
 #endif
 #ifdef BUSYTEX_XETEX
 extern int busymain_xetex(int argc, char* argv[]);
@@ -91,10 +92,6 @@ int main(int argc, char* argv[])
 #ifdef BUSYTEX_PDFTEX
             "pdftex\n"
 #endif
-#ifdef BUSYTEX_LUATEX
-            "luatex\n"
-            "luahbtex\n"
-#endif
 #ifdef BUSYTEX_XETEX
             "xetex\n"
 #endif
@@ -120,10 +117,6 @@ int main(int argc, char* argv[])
     extern int optind;
 #ifdef BUSYTEX_PDFTEX
     if(0 == strcmp("pdftex", argv[1]) || 0 == strcmp("pdflatex", argv[1]))     { argv[1] = argv[0]; optind = 1; return busymain_pdftex  (argc - 1, argv + 1); }
-#endif
-#ifdef BUSYTEX_LUATEX
-    // luatex, lualatex
-    if(0 == strcmp("luahbtex", argv[1]) || 0 == strcmp("luahblatex", argv[1])) { argv[1] = argv[0]; optind = 1; return busymain_luahbtex(argc - 1, argv + 1); }
 #endif
 #ifdef BUSYTEX_XETEX
     if(0 == strcmp("xetex", argv[1]) || 0 == strcmp("xelatex", argv[1]))       { argv[1] = argv[0]; optind = 1; return busymain_xetex   (argc - 1, argv + 1); }

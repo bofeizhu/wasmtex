@@ -505,6 +505,39 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-23 — M2 item 3: build/upstream dissolved into build/engines (loop)
+
+**Done.** `coder` agent forked the build config into our own tree:
+build/engines/{Makefile,busytex.c,emcc_wrapper.py} with DERIVED WORK
+headers naming f2bd7b1 (mods listed per file; reviewer verified them
+against the actual diffs), README original. LuaTeX excised end to end
+— targets, lua53 dep, dispatch table, flags — plus bench/ubuntu/
+cosmo/example paths (Makefile 618→560 lines; the rebase surface
+shrank measurably). Un-forked: packfs.*, cosmo_getpass.h,
+ubuntu_package_preload.py (served only dropped paths). The M0 hollow-
+archive fix folded into the Makefile proper (OPTS_LIBS_wasm=AR=emar —
+fixes every host now the config is ours). Vendored glue dropped from
+dist/ (roles 8→6, propagated through protocol/generator/tests/CI
+guard). build/upstream/ deleted; DESIGN §4 staging note removed —
+the dissolution it promised is complete. Audit retargeted: per-file
+provenance headers ARE the record now (frozen-hash tamper check
+retired with rationale; baseline anchor stays in pins.lock [busytex]);
+fail-closed proven by induced failures.
+
+**Key finding (journaled).** Dropping collection-luatex does NOT stop
+lua-format dumping: scheme-basic→collection-basic force-installs lua
+fmtutil entries, built by the HOST TeX (non-hermetic). The whole-dir
+prune is the load-bearing excision — now stated at both Makefile
+sites (review's should-fix; a rebaser would have deleted the prune as
+dead code). Review also hardened the audit's marker precedence
+(derived-wins) and corrected a journal metric.
+
+**Numbers (verified against TL 2023).** busytex.wasm 30.37→26.37 MB
+(−13.2%); busytex.js −7.3%; native −17.1%; texlive-basic.data
+79.5→59.2 MB (−25.5%). Gates: execution gate green (53 env imports),
+runtime 186/186, demo smoke 4/4, audit green — all re-run from the
+main session.
+
 ## 2026-07-23 — M2 item 2: TL 2026 pinned (loop)
 
 **Done.** `coder` agent pinned the rebase snapshot: texlive-source

@@ -27,8 +27,9 @@ authored as ESM for bundler consumption (tsc emits extensionless specifiers), so
 their `.js` files; if the runtime's internal module graph changes, module
 loading fails loudly in the smoke.
 
-The vendored `busytex_worker.js` / `busytex_pipeline.js` stay in `/dist` for
-provenance parity but are **no longer referenced by the page**.
+The vendored `busytex_worker.js` / `busytex_pipeline.js` glue is **no longer
+shipped** — it was dropped from `/dist` at M2 item 3 (the runtime replaced its
+role at M1, and M2 makes the build config ours).
 
 ## Requires the runtime to be built
 

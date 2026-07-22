@@ -136,18 +136,18 @@ export type PassPolicy = 'auto' | PassCount;
 export type AutoOff = 'auto' | 'off';
 
 /**
- * A role an asset plays in the pipeline. These eight literals are exactly the
+ * A role an asset plays in the pipeline. These six literals are exactly the
  * roles item 4's generator (`build/manifest/gen-assets.mjs`, schemaVersion 1)
  * emits — one per artifact kind in a built `dist/`. The `(string & {})` arm
  * keeps them as autocomplete hints while leaving the set OPEN: item 4 OWNS the
  * schema, this protocol only carries it, so M4's integrity manifest can add
- * roles (e.g. on-demand bundle tiers) without a protocol change.
+ * roles (e.g. on-demand bundle tiers) without a protocol change. (The
+ * `glue-pipeline` / `glue-worker` roles were retired at M2 item 3 when the
+ * vendored busytex worker/pipeline glue was dropped from `dist/`.)
  */
 export type AssetRole =
   | 'engine-wasm' // the multicall engine WebAssembly binary
   | 'engine-js' // the Emscripten JS loader paired with the engine wasm
-  | 'glue-pipeline' // vendored busytex pipeline glue (dist parity; not loaded by M1 demo)
-  | 'glue-worker' // vendored busytex worker glue (dist parity; not loaded by M1 demo)
   | 'format' // a preloaded engine `.fmt` format dump
   | 'bundle-js' // an Emscripten file_packager bundle loader
   | 'bundle-data' // an Emscripten file_packager bundle data blob

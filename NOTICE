@@ -29,7 +29,9 @@ section is the license statement of record, reproduced here verbatim:
   binaries (on the releases page). The binaries include linked TexLive code, so
   the respective TexLived/dependencies licenses apply.
 
-The MIT terms above cover the busytex build machinery vendored into this
-repository under build/upstream/busytex/. Each vendored file carries a
-provenance header naming this commit and license; the per-file manifest (origin
-path, upstream sha256, vendored sha256) is build/upstream/busytex/PROVENANCE.md.
+The MIT terms above cover WasmTeX's engine build config under build/engines/,
+which was forked from the busytex build machinery at the TL-2026 rebase (M2
+item 3). Each derived file carries a derived-work provenance header naming this
+commit and license (the headers are the provenance record; the M0 staging area
+build/upstream/busytex/ and its manifest were retired). See
+THIRD_PARTY_NOTICES.md and build/engines/README.md.

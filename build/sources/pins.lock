@@ -48,8 +48,9 @@ tools       = git 2.48.1, curl 8.7.1
 # pins a deterministic uncompressed tar of the checkout, produced by:
 #   git archive --format=tar --prefix=busytex-<short>/ <commit>
 # MIT per upstream README (upstream has no top-level LICENSE file); recorded in
-# THIRD_PARTY_NOTICES.md. Machinery vendored at M0 item 3 into
-# build/upstream/busytex/ (per-file manifest: build/upstream/busytex/PROVENANCE.md).
+# THIRD_PARTY_NOTICES.md. At M2 item 3 the machinery (vendored at M0) was forked
+# into build/engines/ as our maintained build config; the derived-work per-file
+# headers there name this commit, and license-audit.sh (a/b) enforces them.
 # archive_sha256 framing is git-version-sensitive (README "git integrity anchor").
 # Verified reproducible in the pinned container at M0 item 3: git 2.34.1 (the
 # [toolchain-image] git) produces this exact hash, identical to the authoring
@@ -61,7 +62,7 @@ commit         = f2bd7b11ee1b7b093638321c1f3e5d70389d307b
 archive        = busytex-f2bd7b11.tar
 archive_sha256 = f670beff2c3a5afb78ead20aa83d645a856513db68a0670155f0b6658df259f2
 license        = MIT
-comment        = upstream multicall WASM TeX build machinery; vendored at M0 item 3
+comment        = upstream multicall WASM TeX build machinery; forked into build/engines/ at M2 item 3
 
 # --- TeX Live 2023 engine sources ---------------------------------------------
 # What upstream busytex builds against (Makefile URL_texlive). GitHub serves

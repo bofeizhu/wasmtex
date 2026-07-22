@@ -9,15 +9,17 @@ the patches and scripts in this repository, which satisfies the
 source-availability obligations of the GPL-licensed members of that aggregate
 and preserves the separate-program boundary for host applications.
 
-This inventory is populated as components are vendored. **As of 2026-07-22, the
-upstream busytex build machinery is the only third-party code vendored into this
-repository (M0 item 3, inventoried below). The TeX Live programs and packages and
-the fetched build dependencies are pinned by hash but not vendored (see
-`build/sources/pins.lock`); their full per-package license enumeration is
-deferred to the TeX Live 2026 rebase (engines) and tiered-bundle generation
-(packages), per DESIGN.md §9. The M0 item-7 license audit — this milestone —
-verifies the vendored inventory and this deferral, and is enforced in CI by
-`build/audit/license-audit.sh`.**
+This inventory is populated as components are vendored. **As of the TL-2026
+rebase (M2 item 3), NO third-party code is vendored verbatim into this
+repository: the busytex build machinery was dissolved from its M0 staging area
+into `build/engines/` as our own maintained, MIT-licensed build config, each
+file carrying a derived-work or original-work provenance header (below). The
+TeX Live programs and packages and the fetched build dependencies are pinned by
+hash but not vendored (see `build/sources/pins.lock`); their full per-package
+license enumeration is deferred to the TeX Live 2026 rebase (engines) and
+tiered-bundle generation (packages), per DESIGN.md §9. The license audit
+verifies the per-file provenance headers and this deferral, and is enforced in
+CI by `build/audit/license-audit.sh`.**
 
 ## Upstream: busytex/busytex (MIT)
 
@@ -38,27 +40,35 @@ that established the multicall WASM TeX binary and its Emscripten build approach
 
   (busytex/busytex `README.md`, "License" section, at the pinned commit.)
 
-**What is vendored, and where.** The build machinery M0 needs is vendored,
-unmodified, into `build/upstream/busytex/` — each file with a prepended
-provenance header naming the commit and MIT license:
+**Build config derived from busytex (per-file derivation headers).** At M2 item
+3 the M0 staging area `build/upstream/busytex/` (which had held the machinery
+vendored unmodified) was dissolved into `build/engines/` as WasmTeX's own
+maintained build config. The **per-file headers are now the provenance record**
+(there is no `PROVENANCE.md` manifest anymore); `build/audit/license-audit.sh`
+checks (a/b) enforce that every file under `build/engines/` carries a derived-
+from-busytex header naming the pinned commit, or an original-work header:
 
-- `Makefile` — the build driver;
-- `busytex.c` — the multicall dispatcher;
-- `packfs.c`, `packfs.py` — pack-filesystem embedding;
-- `emcc_wrapper.py` — wasm-build helper wrapper;
-- `cosmo_getpass.h` — patched into `dvipdfm-x` during the standard TL patch step;
-- `ubuntu_package_preload.py` — data-package preload helper;
-- `busytex_pipeline.js`, `busytex_worker.js` — worker/pipeline JS glue the demo
-  page loads;
-- `README.md` — upstream README, as documentation of origin.
+- `Makefile` — derived; our engine build config (LuaTeX, bench/native-fat,
+  Ubuntu-bundle, `example`, and Cosmopolitan paths dropped; the format set
+  trimmed to the non-lua retained set);
+- `busytex.c` — derived; the multicall dispatcher (lua applet entries dropped);
+- `emcc_wrapper.py` — derived; the `CCSKIP_*_wasm` compiler-wrapper shim, body
+  unmodified;
+- `README.md` — original WasmTeX work describing this directory.
 
-The per-file manifest (origin path, upstream sha256, vendored sha256, modified
-flag) is `build/upstream/busytex/PROVENANCE.md`; the vendoring contract and the
-rationale for what was excluded (upstream texmf trees, prebuilt artifacts,
-example documents, CI workflow definitions, and the biber/cosmopolitan/benchmark
-paths) are in `build/upstream/README.md` and that manifest. `build/upstream/` is
-an M0-only staging area, dissolved into `build/engines/` etc. at the TeX Live
-2026 rebase (DESIGN.md §4).
+The upstream helpers that only served dropped paths are **no longer forked**:
+`packfs.c` / `packfs.py` (the bench native-fat binary), `cosmo_getpass.h`
+(Cosmopolitan-only, a no-op on our targets), and `ubuntu_package_preload.py`
+(the Ubuntu `.deb` bundle path).
+
+**Worker/pipeline glue no longer distributed.** The `busytex_pipeline.js` /
+`busytex_worker.js` glue that M0 shipped in `dist/` for faithful parity was
+**dropped from `dist/` at M2 item 3**: the WasmTeX runtime replaced its role at
+M1 (the demo drives our typed worker, not the glue), and M2 makes the build
+config ours, so `dist/` now carries only WasmTeX-authored/-consumed artifacts.
+The runtime worker sources cite the glue as a behavioural reference (MIT) in
+comments; the pinned upstream commit remains fetchable via
+`build/sources/pins.lock` `[busytex]` for anyone auditing that lineage.
 
 Upstream attribution is preserved here and in `LICENSE`/`NOTICE`.
 

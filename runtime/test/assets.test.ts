@@ -77,12 +77,12 @@ function pinEntryFields(
 // Runtime contract against the real generated file.
 // ---------------------------------------------------------------------------
 
-// The eight roles the generator emits (build/manifest/gen-assets.mjs ROLE TABLE).
+// The six roles the generator emits (build/manifest/gen-assets.mjs ROLE TABLE).
+// (glue-pipeline / glue-worker were retired at M2 item 3 when the vendored
+// busytex glue was dropped from dist/.)
 const KNOWN_ROLES: ReadonlySet<string> = new Set([
   'engine-wasm',
   'engine-js',
-  'glue-pipeline',
-  'glue-worker',
   'format',
   'bundle-js',
   'bundle-data',

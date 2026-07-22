@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # Provenance: original work authored in the WasmTeX repository (see LICENSE).
-#   Not derived from any third-party source. It *drives* the vendored busytex
-#   (MIT) Makefile at build/upstream/busytex/ without modifying it; the make
-#   targets and their order mirror upstream .github/workflows/build-wasm.yml
-#   (+ build-native.yml for the from-source native pass) at the pinned commit.
+#   Not derived from any third-party source. It drives a busytex-derived Makefile
+#   over a /machinery mount; the make targets and their order mirror the pinned
+#   upstream target graph.
+#
+# ============================================================================
+# !! PARKED (M3) — STALE PATH. This runs against a /machinery mount that
+#    build.sh populates from the M0 staging tree `build/upstream/busytex`, which
+#    was RETIRED at M2 item 3 (the config was forked into `build/engines/`). The
+#    MACHINERY_FILES list below (packfs.c/.py, cosmo_getpass.h,
+#    ubuntu_package_preload.py, the worker/pipeline glue) is likewise the M0 set,
+#    not the trimmed M2 set. It is intentionally left un-rewritten per the M2
+#    item-3 plan and is re-pinned + re-pointed at `build/engines/` on arm64 at
+#    M3 (DESIGN.md §9). Until then, use `build/artifacts/build-native.sh`.
+# ============================================================================
 #
 # WasmTeX M0 "faithful baseline" build — container side (M0 item 4).
 # =============================================================================

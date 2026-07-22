@@ -1,19 +1,18 @@
 # SPDX-License-Identifier: MIT
 # Provenance: original work authored in the WasmTeX repository (see LICENSE).
 #   Not derived from any third-party source. This is the top-level entry point;
-#   the artifact pipeline it drives runs the vendored busytex (MIT) build
-#   UNCHANGED (macOS fixes are make-variable overrides in the driver, never
-#   edits to build/upstream/).
+#   the artifact pipeline it drives builds OUR maintained engine config at
+#   build/engines/ (forked from busytex, MIT, at M2 item 3; macOS host fixes are
+#   make-variable overrides in the driver).
 #
 # WasmTeX top-level Makefile.
 # =============================================================================
-# `make artifacts` (NATIVE flow, M0 item 5N — the active dev path per the
-# DESIGN.md §9 native-first pivot): drives the vendored upstream busytex build
-# RAW on the arm64 macOS host, fully offline, against the verified cache
-# (~/.cache/wasmtex/sources), and lands the engine wasm/js, worker/pipeline
-# glue, engine .fmt formats, and the texlive-basic data bundle in dist/
-# (git-ignored). The build tree lives out of tree (~/.cache/wasmtex/build);
-# only dist/ enters the repo.
+# `make artifacts` (NATIVE flow — the active dev path per the DESIGN.md §9
+# native-first pivot): builds our engine config (build/engines/) RAW on the
+# arm64 macOS host, fully offline, against the verified cache
+# (~/.cache/wasmtex/sources), and lands the engine wasm/js, engine .fmt formats,
+# and the texlive-basic data bundle in dist/ (git-ignored). The build tree lives
+# out of tree (~/.cache/wasmtex/build); only dist/ enters the repo.
 #
 # Prerequisites (once):
 #   build/sources/fetch.sh                 # fetch + verify the pinned sources

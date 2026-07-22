@@ -13,8 +13,8 @@
 - **Target:** `libs/libpng/libpng-src/pngpriv.h` in the TeX Live 2023 source
   tree (`texlive-source-2023.0`, libpng 1.6.39). Applied with `patch -p1` from
   the staged `source/texlive/` root by `build/artifacts/build-native.sh`
-  (`do_prep` → `apply_macos_patches`, idempotent). `build/upstream/` is never
-  touched; this modifies the extracted work copy at build time.
+  (`do_prep` → `apply_macos_patches`, idempotent). This modifies only the
+  extracted TeX Live work copy at build time, never the source tree in-repo.
 - **Milestone:** M0 item 5N (native arm64 macOS build).
 
 ## What

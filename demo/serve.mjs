@@ -9,9 +9,10 @@
 // (this demo) resolve under the same origin — the same-origin, no-network
 // embedding profile from DESIGN.md §10.
 //
-// The one load-bearing detail is the MIME map: busytex.js compiles the engine
-// (busytex_pipeline.js) with WebAssembly.compileStreaming(fetch(...)), which REQUIRES the
-// wasm response to carry `application/wasm` or Chromium rejects the stream.
+// The one load-bearing detail is the MIME map: busytex.js instantiates the
+// engine (busytex.wasm) with WebAssembly.compileStreaming(fetch(...)), which
+// REQUIRES the wasm response to carry `application/wasm` or Chromium rejects
+// the stream.
 //
 // Dev:   node demo/serve.mjs           (then open http://127.0.0.1:8099/demo/)
 // Test:  launched automatically by playwright.config.mjs `webServer`.

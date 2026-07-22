@@ -2,8 +2,9 @@
 SPDX-License-Identifier: MIT
 Provenance: original work authored in the WasmTeX repository (see LICENSE).
   Not derived from any third-party source. Prerequisite enumeration consulted
-  only the vendored upstream busytex Makefile (MIT, build/upstream/busytex/)
-  and this repo's own container definition; no GPL/AGPL sources were opened.
+  only our engine build Makefile (MIT, build/engines/Makefile — forked from
+  busytex at M2 item 3) and this repo's own container definition; no GPL/AGPL
+  sources were opened.
 -->
 
 # Native host build contract (arm64 macOS)
@@ -86,10 +87,11 @@ gaps that matter (GNU `make`/`sed`; see §3).
 ## 3. Prerequisite translation: container apt set → macOS
 
 The container (`Dockerfile`) installs an apt set derived from busytex CI + the
-Makefile. This path was re-derived for macOS by static analysis of the vendored
-`build/upstream/busytex/Makefile` (the native + wasm targets only — not the
-`example`, `download-native`, or `ubuntu-wasm` shortcut paths). "Install only
-the missing pieces; verify need before installing."
+Makefile. This path was re-derived for macOS by static analysis of the engine
+Makefile (`build/engines/Makefile`; native + wasm targets only). The
+`example` / `download-native` / `ubuntu-wasm` shortcut paths it once mentioned
+were dropped from the config at M2 item 3. "Install only the missing pieces;
+verify need before installing."
 
 | Container apt package | macOS disposition | Rationale |
 | --- | --- | --- |
@@ -152,10 +154,13 @@ Static analysis flagged these host/container divergences. The two that block
 setup (`make`, `sed`) are handled by `native-env.sh`; the rest are recorded for
 item 5N (`make artifacts` native), which resolves genuine source
 incompatibilities via documented patches in `build/patches/` — never in-place
-edits of `build/upstream/`.
+edits of the extracted TeX Live source tree. (The build config in
+`build/engines/` is ours and edited directly.)
 
-- **`sed`** — GNU `sed -i` (Makefile lines 238, 241) is on the critical path.
-  Handled: `native-env.sh` puts GNU sed on PATH as `sed`.
+- **`sed`** — GNU `sed -i` (the ICU `common/Makefile.in` normalization in the
+  `source/texlive.patched` rule) is on the critical path. Handled:
+  `native-env.sh` puts GNU sed on PATH as `sed`. (The former cosmo_getpass `sed`
+  injection was dropped with Cosmopolitan support at M2 item 3.)
 - **`make`** — host GNU Make 3.81 vs container 4.x. Handled: `native-env.sh`
   puts GNU Make 4.x on PATH as `make`. (No 3.82/4.x-only *syntax* is used by
   the Makefile, so this is parity insurance, not a known parse failure.)

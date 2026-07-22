@@ -101,12 +101,6 @@ wasmtex/
   DESIGN.md  LICENSE  NOTICE  THIRD_PARTY_NOTICES.md  README.md
 ```
 
-> M0 staging: `build/upstream/` is a temporary M0-only staging area holding the
-> upstream busytex build machinery vendored unmodified at its pinned commit (see
-> `build/upstream/README.md`); it is dissolved into `build/engines/`,
-> `build/formats/`, `build/bundles/` and `build/patches/` at the TL 2026
-> rebase (M2 under the revised §9 numbering), then removed.
-
 Release artifacts (GitHub Releases, tag `assets-vX.Y.Z` in lockstep with the
 npm version):
 

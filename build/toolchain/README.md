@@ -1,5 +1,27 @@
 # build/toolchain/
 
+This directory holds two build paths:
+
+- **Native arm64 macOS host (active, M0 dev path)** — per the DESIGN.md §9
+  revision, bootstrap development builds run raw on the maintainer's host for
+  fast iteration toward the runtime MVP. See **[`native-host.md`](./native-host.md)**
+  (the host contract: what is pinned, prerequisite translation, setup, smoke)
+  and **[`native-env.sh`](./native-env.sh)** (`source` it to enter the build
+  environment). The pinned emsdk (Emscripten `3.1.43`, emsdk commit
+  `d9c66fa2…`) is the **same** value as the container below and as
+  `build/sources/pins.lock` — only the platform binaries differ (darwin-arm64).
+- **Pinned amd64 container (parked for M2)** — the canonical, reproducible
+  builder documented in the rest of this file. It is *parked, not discarded*:
+  the constitutional floor is that **only container-built, pin-verified
+  artifacts are ever released** (DESIGN.md §9); the native path is
+  development-only. The container becomes the canonical builder at M2 (build
+  logistics & CI), where the reproducibility gate and a native-vs-container
+  output-equivalence check live.
+
+---
+
+## The pinned build-toolchain container (parked for M2)
+
 The pinned build-toolchain container: a bare `ubuntu:22.04` plus the exact
 toolchain the busytex + TeX Live WebAssembly build needs. Everything that
 affects artifacts is pinned here and mirrored into `build/sources/pins.lock`

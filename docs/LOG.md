@@ -202,3 +202,37 @@ headers intact. The orphaned serial build container was stopped and
 removed (its driver agent died in a session restart). Constitutional
 floor preserved: only container-built, pin-verified artifacts are ever
 released; native host builds are dev-only.
+
+## 2026-07-22 — M0 item 4N: native host toolchain (loop, post-pivot)
+
+**Attempted / done.** `coder` agent set up the native arm64 toolchain:
+emsdk cloned out-of-tree (`~/.cache/wasmtex/toolchain/emsdk`),
+hard-detached and rev-parse-verified at the same pinned commit as the
+container (`d9c66fa2`, tag 3.1.43); `install`+`activate` pulled the
+darwin-arm64 binaries of the same emscripten-releases build
+(`bf3c1598…`) the container resolves. Homebrew footprint kept minimal
+by static analysis of the vendored Makefile: installed only cmake 4.4.0,
+gnu-sed 4.10 (GNU `sed -i` is on the critical texlive.patched path),
+GNU make 4.4.1 (host ships 3.81); verified-unneeded: p7zip, wget,
+autotools, pkg-config (never invoked on the native+wasm path);
+`/usr/bin/tar` already is bsdtar. New `build/toolchain/native-env.sh`
+(sourceable, idempotent, bash+zsh, nounset-safe) and `native-host.md`
+(host contract: hard pins vs documented-not-pinned, apt→macOS
+translation table, setup, smoke). Smoke passed end-to-end: emcc 3.1.43
+native arm64, hello.c → wasm → runs under emsdk node; independently
+re-verified from the main session.
+
+**Failed → fixed.** Review (request-changes): (1) emsdk_env.sh failure
+was swallowed — a cloned-but-never-activated emsdk yielded rc=0 with no
+emcc; added a post-activation guard (emcc present + version pinned to
+3.1.43, loud return 1). (2) native-host.md's setup snippet claimed
+"aborts otherwise" but ran sequentially; now `&&`-chained with a loud
+abort. Nit: THIRD_PARTY_NOTICES emsdk clause extended to cover the
+native path; GPL brew tools noted as host-only, outside the artifact
+provenance chain.
+
+**Deferred.** cmake 4.4.0 removed compat with `cmake_minimum_required
+< 3.5` — TL 2023 CMakeLists may trip it; remedies documented in
+native-host.md §5, handed to 5N. fontconfig-on-darwin build risk → 5N.
+Hard host pinning → M2. `_wt_rc` leaks into the sourcing shell
+(namespaced, harmless; noted by review, accepted).

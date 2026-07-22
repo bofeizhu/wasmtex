@@ -89,4 +89,8 @@ outside the TeX Live source tree; TeX Live vendors its other normal dependencies
 (among others: harfbuzz, icu, freetype, zlib, graphite2, teckit, pplib, zziplib,
 libpaper, lua53, xpdf), which are therefore covered by the `texlive-source` pin. The
 toolchain container (`ubuntu:22.04`, emsdk/Emscripten 3.1.43) is recorded in
-`pins.lock` `[toolchain-image]` and `build/toolchain/`.
+`pins.lock` `[toolchain-image]` and `build/toolchain/`; the same pinned emsdk
+is consumed by both the parked container and the native host path
+(`build/toolchain/native-host.md`), with darwin-arm64 platform binaries on
+the latter. GNU tools installed via Homebrew for the native path are host
+prerequisites only and never enter the artifact provenance chain.

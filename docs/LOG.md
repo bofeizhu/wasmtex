@@ -43,3 +43,24 @@ rotates — M0 must mirror the split-ISO cache.
 
 **Deferred.** GitHub remote + first push (user's call); local directory
 rename; npm-name squat dispute for `motex` (moot after rename).
+
+## 2026-07-22 — M0 plan (autonomous loop, iteration 1)
+
+**Attempted / done.** Added `.claude/commands/work.md` (the `/loop /work`
+iteration prompt driving autonomous sessions). Environment check: Docker
+29.6.1 running (engine platform linux/arm64 — Apple Silicon), 844 GiB
+free.
+Authored `docs/plans/M0.md`: pins table (busytex `f2bd7b1`, TL 2023 via
+historic mirror, emsdk 3.1.43, amd64 base image by digest), the four
+PROMPT.md acceptance checks, an 8-item commit-sized work list, and
+standing decisions — notably pinning `--platform linux/amd64` under
+Rosetta so local artifacts stay comparable with x86_64 CI.
+
+**Deferred.** Whether emulated amd64 build time is tolerable is unproven;
+revisit at work item 4 if needed (documented deviation path in the plan).
+CI execution of the M0 acceptance checks deferred to M4 per DESIGN.md §9
+(explicit deviation from PROMPT.md rule 3, recorded in the plan).
+
+**Review.** `code-reviewer` pass on this diff: request-changes (record the
+`build/upstream/` layout extension in DESIGN.md at creation time; label
+the CI-deferral deviation; three nits). All applied before commit.

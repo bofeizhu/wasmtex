@@ -25,9 +25,16 @@ import {
   type AssetsInventory,
   type WorkerMessage,
 } from '../src/protocol';
+import {
+  createTypesetter,
+  typesetterDiagnostics,
+  CancelledError,
+  type WorkerFactory,
+} from '../src/index';
 import { createWorkerCore } from '../worker/core';
 import { EmscriptenEngineHost } from '../worker/engine-host';
 import { createNodeModuleLoader } from './support/node-engine-loader';
+import { InProcessWorker } from './support/in-process-worker';
 
 // dist/ lives at the repo root; this file is runtime/test/, two levels down.
 const distDir = fileURLToPath(new URL('../../dist/', import.meta.url));
@@ -326,6 +333,102 @@ describe('typeset integration (real wasm engine, node)', () => {
       const tail = new TextDecoder().decode(pdf.slice(-1024));
       expect(tail).toContain('%%EOF');
       console.log(`[typeset-integration] bibtex8 e2e: ${result.stats.passes} passes, pdf ${pdf.length} B`);
+    },
+    120_000,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Full-stack PUBLIC API (M1 item 7): client + in-process worker-core adapter +
+// REAL engine host. This drives the actual §5.1 surface — createTypesetter /
+// typeset() / job.done / cancel() / dispose() — over the real busytex wasm, so
+// the whole stack (client correlation/serialization → core → sequencing →
+// engine-host → wasm) is exercised end to end, not a fake. Skips when dist/ is
+// absent, like the tests above.
+// ---------------------------------------------------------------------------
+
+/** A fresh in-process worker each call → a fresh EngineHost + wasm instance (what terminate() maps to). */
+function inProcessFactory(): WorkerFactory {
+  return () => new InProcessWorker(new EmscriptenEngineHost(createNodeModuleLoader()));
+}
+
+describe('public API over real wasm (createTypesetter, in-process adapter, node)', () => {
+  it.runIf(present)(
+    'compiles hello-world through the PUBLIC createTypesetter API to a valid PDF',
+    async () => {
+      const startedAt = Date.now();
+      const config = assetsFromDist();
+      const tex = await createTypesetter({
+        assetsBaseUrl: config.baseUrl,
+        bundles: config.bundles,
+        inventory: config.inventory,
+        workerFactory: inProcessFactory(),
+      });
+
+      const logLines: string[] = [];
+      const jobHandle = tex.typeset({ engine: 'xetex', entry: 'hello.tex', files: { 'hello.tex': HELLO } });
+      jobHandle.onLog((line) => logLines.push(line));
+      const result = await jobHandle.done;
+
+      expect(result.ok).toBe(true);
+      expect(result.exitCode).toBe(0);
+      expect(result.stats.passes).toBe(1);
+      expect(result.stats.bundlesLoaded).toEqual(['texlive-basic']);
+      expect(result.diagnostics).toEqual([]); // seam: item 8 wires the parser
+      expect(logLines.length).toBeGreaterThan(0); // the transcript streamed through onLog
+
+      const pdf = result.pdf;
+      expect(pdf).toBeInstanceOf(Uint8Array);
+      if (!(pdf instanceof Uint8Array)) throw new Error('no pdf');
+      expect(pdf.length).toBeGreaterThan(1000);
+      expect(Array.from(pdf.slice(0, 5))).toEqual([0x25, 0x50, 0x44, 0x46, 0x2d]);
+      const tail = new TextDecoder().decode(pdf.slice(-1024));
+      expect(tail).toContain('%%EOF');
+
+      await tex.dispose();
+      const elapsedMs = Date.now() - startedAt;
+      console.log(`[typeset-integration] public-API hello-world: pdf ${pdf.length} B, wall ${elapsedMs} ms`);
+      expect(elapsedMs).toBeLessThan(60_000);
+    },
+    120_000,
+  );
+
+  it.runIf(present)(
+    'public API: cancelling a just-dispatched compile rejects cleanly (terminate before the core receives it — in-process delivery is a microtask), and the next job compiles on a fresh instance',
+    async () => {
+      const config = assetsFromDist();
+      const tex = await createTypesetter({
+        assetsBaseUrl: config.baseUrl,
+        bundles: config.bundles,
+        inventory: config.inventory,
+        workerFactory: inProcessFactory(),
+      });
+
+      // Start a compile and cancel it while it is the active job. The in-process
+      // adapter's terminate() is a permanent DETACH (documented there): it cannot
+      // preempt a synchronous callMain, but it discards the detached core's I/O and
+      // the client builds a FRESH in-process instance for the next job — so the
+      // OBSERVABLE contract (clean rejection + next job clean) holds, exactly as a
+      // real Worker.terminate() would give.
+      const cancelled = tex.typeset({ engine: 'xetex', entry: 'hello.tex', files: { 'hello.tex': HELLO } });
+      cancelled.cancel();
+      const err: unknown = await cancelled.done.catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(CancelledError);
+      expect((err as CancelledError).reason).toBe('cancelled');
+
+      // The next job transparently re-initialises on a fresh in-process instance.
+      const followUp = tex.typeset({ engine: 'xetex', entry: 'hello.tex', files: { 'hello.tex': HELLO } });
+      const result = await followUp.done;
+      expect(result.ok).toBe(true);
+      const pdf = result.pdf;
+      expect(pdf).toBeInstanceOf(Uint8Array);
+      if (!(pdf instanceof Uint8Array)) throw new Error('no pdf');
+      expect(Array.from(pdf.slice(0, 5))).toEqual([0x25, 0x50, 0x44, 0x46, 0x2d]);
+      // Two workers spawned proves the transparent reinit actually happened.
+      expect(typesetterDiagnostics(tex).workerSpawns).toBe(2);
+
+      await tex.dispose();
+      console.log(`[typeset-integration] public-API cancel+reinit: follow-up pdf ${pdf.length} B`);
     },
     120_000,
   );

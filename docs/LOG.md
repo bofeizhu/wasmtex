@@ -505,6 +505,35 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-23 — M1 item 7: client API (loop)
+
+**Done.** `coder` agent delivered `runtime/src/client.ts` — the §5.1
+public surface, verbatim (options/job/result shapes reviewer-checked
+against the DESIGN code block): createTypesetter, job objects
+(done/onLog with late-subscriber replay/cancel), serialized jobs,
+cancel = terminate + transparent reinit, dispose, error taxonomy
+(Cancelled/WorkerCrashed/Fatal/TypesetInput). All four §8 acceptance
+cases proven with evidence (stale-A-result injected during B → dropped
++ B unaffected; workerSpawns===2 on cancel; queue serialization;
+dispose rejections) plus full-stack public-API tests over real wasm.
+locateAsset lands end-to-end (per-entry url override, validated at
+both boundaries); onAssetProgress is honestly coarse (real totals, no
+fabricated byte counts — importScripts exposes none). Also fixed a
+pre-existing gap the agent flagged: `npm run build` failed under the
+hardened ES2022-only lib (TextDecoder) — minimal ambient declaration
+added and CI now runs the build step so packability is gated.
+
+**Review: BLOCKER caught, fixed, and proven.** The dispatch pump's
+settled-head path used shift() while #cancelJob had already spliced
+the cancelled handle — cancelling a queued job during reinit silently
+dropped the NEXT job, whose done promise hung forever (reviewer
+reproduced the hang live). Fixed with identity-based removal + a
+regression test verified to FAIL on the unfixed code. Nits: integration
+test title now states the cancel lands pre-delivery in-process;
+workerUrl doc notes locateAsset does not cover the worker script.
+Gates: 148/148, build green, 28.6 KB bundle with zero client symbols,
+audit green.
+
 ## 2026-07-23 — M1 item 6: §5.3 sequencing state machine (loop)
 
 **Done.** `coder` agent delivered `sequencing.ts` — a pure reducer

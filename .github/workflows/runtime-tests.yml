@@ -26,5 +26,7 @@ jobs:
         run: npm ci
       - name: Typecheck (src + worker + test)
         run: npm run typecheck
+      - name: Build (library + worker bundle must stay packable)
+        run: npm run build
       - name: Unit tests
         run: npm test

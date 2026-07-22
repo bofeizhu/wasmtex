@@ -43,7 +43,7 @@ import {
   type EngineRunStep,
   type EngineStageInfo,
 } from './core';
-import type { AssetsConfig, AssetsInventory, LogStream } from '../src/protocol';
+import type { AssetEntry, AssetsConfig, AssetsInventory, LogStream } from '../src/protocol';
 
 // ---------------------------------------------------------------------------
 // The Emscripten module surface we touch (structural — no @types/emscripten;
@@ -150,37 +150,52 @@ function joinPath(dir: string, name: string): string {
   return `${dir.replace(/\/+$/, '')}/${name.replace(/^\/+/, '')}`;
 }
 
-/** The single inventory entry with `role`, or throw a clear init error. */
-function entryPathByRole(inventory: AssetsInventory, role: string): string {
-  const matches = inventory.assets.filter((a) => a.role === role);
-  if (matches.length === 0) throw new Error(`assets.json has no entry with role '${role}'`);
-  const path = matches[0]?.path;
-  if (typeof path !== 'string' || path.length === 0) {
-    throw new Error(`assets.json role '${role}' entry has no usable path`);
-  }
-  return path;
+/**
+ * Resolve one inventory entry to the absolute location the worker loads it from.
+ *
+ * Honors the client's `locateAsset(name)` override (DESIGN.md §5.1) — carried as
+ * `entry.url` — OVER the default `baseUrl` + `path`. The url is used verbatim
+ * (`importScripts`/`fetch`); same-origin is the host's concern (§10 permits
+ * custom schemes), so it is not enforced here — it is only ever a load location,
+ * never a filesystem key. Pure and total; exported for unit testing.
+ */
+export function resolveAssetLocation(base: string, entry: AssetEntry): string {
+  const url = entry.url;
+  if (typeof url === 'string' && url.length > 0) return url;
+  return joinLocation(base, entry.path);
 }
 
-/** Resolve a name Emscripten/the data package requests to its inventory path (data-driven). */
-function inventoryPathFor(inventory: AssetsInventory, requestedName: string): string {
+/** The single inventory entry with `role`, resolved to a load location (honors entry.url), or throw. */
+function entryLocationByRole(base: string, inventory: AssetsInventory, role: string): string {
+  const matches = inventory.assets.filter((a) => a.role === role);
+  if (matches.length === 0) throw new Error(`assets.json has no entry with role '${role}'`);
+  const entry = matches[0];
+  if (entry === undefined || typeof entry.path !== 'string' || entry.path.length === 0) {
+    throw new Error(`assets.json role '${role}' entry has no usable path`);
+  }
+  return resolveAssetLocation(base, entry);
+}
+
+/** Resolve a name Emscripten/the data package requests to its load location (data-driven, honors entry.url). */
+function locateNameLocation(base: string, inventory: AssetsInventory, requestedName: string): string {
   const match = inventory.assets.find(
     (a) => a.path === requestedName || basenameOf(a.path) === requestedName,
   );
-  return match ? match.path : requestedName;
+  return match ? resolveAssetLocation(base, match) : joinLocation(base, requestedName);
 }
 
-/** Resolve each preload bundle NAME to its `bundle-js` inventory path. */
-function preloadBundleJsPaths(assets: AssetsConfig): string[] {
+/** Resolve each preload bundle NAME to its `bundle-js` load location (honors entry.url). */
+function preloadBundleLocations(base: string, assets: AssetsConfig): string[] {
   const bundleJs = assets.inventory.assets.filter((a) => a.role === 'bundle-js');
   return assets.bundles.preload.map((name) => {
     const match = bundleJs.find((a) => {
-      const base = basenameOf(a.path);
-      return base === name || base === `${name}.js` || base.replace(/\.js$/, '') === name;
+      const b = basenameOf(a.path);
+      return b === name || b === `${name}.js` || b.replace(/\.js$/, '') === name;
     });
     if (!match) {
       throw new Error(`preload bundle '${name}' has no matching bundle-js asset in the inventory`);
     }
-    return match.path;
+    return resolveAssetLocation(base, match);
   });
 }
 
@@ -231,17 +246,17 @@ export class EmscriptenEngineHost implements EngineHost {
   async load(assets: AssetsConfig): Promise<void> {
     const base = assets.baseUrl;
     const inventory = assets.inventory;
-    const engineJsPath = entryPathByRole(inventory, 'engine-js');
-    const bundleJsPaths = preloadBundleJsPaths(assets);
+    const engineJsLocation = entryLocationByRole(base, inventory, 'engine-js');
+    const bundleJsLocations = preloadBundleLocations(base, assets);
 
-    const factory = await this.loader.loadFactory(joinLocation(base, engineJsPath));
+    const factory = await this.loader.loadFactory(engineJsLocation);
 
     // The options object Emscripten augments in place (options === instance).
     // Cast: FS/callMain/HEAPU8/HEAP32 are filled by the factory before preRun.
     const module = {
       thisProgram: BIN_BUSYTEX,
       noInitialRun: true,
-      locateFile: (name: string) => joinLocation(base, inventoryPathFor(inventory, name)),
+      locateFile: (name: string) => locateNameLocation(base, inventory, name),
       print: (text: string) => this.emit('stdout', text),
       printErr: (text: string) => this.emit('stderr', text),
       preRun: [
@@ -258,8 +273,8 @@ export class EmscriptenEngineHost implements EngineHost {
 
     // Register each preloaded bundle's runWithFS into module.preRun BEFORE the
     // factory runs; the factory then awaits the .data load as a run dependency.
-    for (const path of bundleJsPaths) {
-      this.loader.installDataPackage(module, joinLocation(base, path));
+    for (const location of bundleJsLocations) {
+      this.loader.installDataPackage(module, location);
     }
 
     const instance = await factory(module);

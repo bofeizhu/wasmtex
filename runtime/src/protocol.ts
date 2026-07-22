@@ -164,12 +164,22 @@ export type AssetRole =
  * hand-written minimal file still validates. The index signature keeps the shape
  * forward-compatible so a later schema (e.g. the M4 integrity manifest) can add
  * per-entry fields without churning the protocol.
+ *
+ * `url` is NOT a generator field: it is the client's `locateAsset(name)` override
+ * (DESIGN.md §5.1), injected per-entry by `createTypesetter` before the inventory
+ * crosses into the worker. When present it is an ABSOLUTE location the worker uses
+ * verbatim (`importScripts`/`fetch`) INSTEAD OF `baseUrl` + `path` — see
+ * `resolveAssetLocation` in `runtime/worker/engine-host.ts`. It is carried through
+ * the trust boundary as a validated non-empty string (same-origin is the host's
+ * concern, not enforced here — §10 custom schemes are legitimate), never used as a
+ * filesystem key, so it cannot widen the `isSafeProjectPath` attack surface.
  */
 export interface AssetEntry {
   readonly path: string;
   readonly bytes?: number;
   readonly sha256?: string;
   readonly role?: AssetRole;
+  readonly url?: string;
   readonly [field: string]: unknown;
 }
 
@@ -749,18 +759,23 @@ function parseProjectFiles(x: unknown): ProjectFiles | null {
   return out;
 }
 
-/** Rebuild one inventory entry: `path` required, known metadata carried when validly typed, extras dropped. */
+/** Rebuild one inventory entry: `path` required, known metadata + `url` carried when validly typed, extras dropped. */
 function parseAssetEntry(x: unknown): AssetEntry | null {
   if (!isPlainRecord(x)) return null;
   if (!isNonEmptyString(x['path'])) return null;
   const bytes = x['bytes'];
   const sha256 = x['sha256'];
   const role = x['role'];
+  const url = x['url'];
   return {
     path: x['path'],
     ...(isInt(bytes) && bytes >= 0 ? { bytes } : {}),
     ...(typeof sha256 === 'string' ? { sha256 } : {}),
     ...(typeof role === 'string' ? { role } : {}),
+    // The client's locateAsset override (DESIGN.md §5.1). Carried ONLY when a
+    // non-empty string — a blank/typed-wrong url is dropped so the worker falls
+    // back to baseUrl+path rather than fetching `''`. Not a filesystem key.
+    ...(isNonEmptyString(url) ? { url } : {}),
   };
 }
 

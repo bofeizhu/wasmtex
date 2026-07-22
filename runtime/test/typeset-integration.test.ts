@@ -374,7 +374,7 @@ describe('public API over real wasm (createTypesetter, in-process adapter, node)
       expect(result.exitCode).toBe(0);
       expect(result.stats.passes).toBe(1);
       expect(result.stats.bundlesLoaded).toEqual(['texlive-basic']);
-      expect(result.diagnostics).toEqual([]); // seam: item 8 wires the parser
+      expect(result.diagnostics).toEqual([]); // item 8: a clean compile parses to zero diagnostics
       expect(logLines.length).toBeGreaterThan(0); // the transcript streamed through onLog
 
       const pdf = result.pdf;
@@ -429,6 +429,72 @@ describe('public API over real wasm (createTypesetter, in-process adapter, node)
 
       await tex.dispose();
       console.log(`[typeset-integration] public-API cancel+reinit: follow-up pdf ${pdf.length} B`);
+    },
+    120_000,
+  );
+
+  // §8 acceptance (iii), M1 plan item 8: a deliberately broken MULTI-FILE
+  // document, compiled through the PUBLIC createTypesetter API over the real
+  // wasm engine, yields structured diagnostics whose file/line point at the
+  // \input'd SUBFILE — not the root — proving the whole stack (worker log →
+  // client parseDiagnostics) surfaces §5.1 diagnostics end to end.
+  it.runIf(present)(
+    'a deliberately broken document yields structured diagnostics with file and line (subfile attribution)',
+    async () => {
+      const config = assetsFromDist();
+      const tex = await createTypesetter({
+        assetsBaseUrl: config.baseUrl,
+        bundles: config.bundles,
+        inventory: config.inventory,
+        workerFactory: inProcessFactory(),
+      });
+
+      // Error \undefinedsubcmd is on line 4 of the \input'd subfile, not the root.
+      const job = tex.typeset({
+        engine: 'xetex',
+        entry: 'main.tex',
+        files: {
+          'main.tex':
+            '\\documentclass{article}\n\\begin{document}\nIntro in the root file.\n' +
+            '\\input{chapters/broken}\nAfter.\n\\end{document}\n',
+          'chapters/broken.tex':
+            'Some prose in the subfile.\n\nAnother paragraph, then a bad macro:\n' +
+            '\\undefinedsubcmd\ntrailing text.\n',
+        },
+      });
+      const result = await job.done;
+
+      // The compile failed (no PDF), and the raw transcript is present.
+      expect(result.ok).toBe(false);
+      expect(result.pdf).toBeUndefined();
+      expect(result.log).toContain('Undefined control sequence');
+
+      // The structured diagnostic: concrete severity / message / file / line,
+      // attributed to the SUBFILE (the case naive log scanners get wrong).
+      expect(result.diagnostics).toEqual([
+        { severity: 'error', message: 'Undefined control sequence.', file: 'chapters/broken.tex', line: 4 },
+      ]);
+
+      // Same typesetter (no re-init): a document missing \end{document} fails with
+      // ONLY `! Emergency stop.` in the transcript — the promoted-terminator path,
+      // proving a failed compile never surfaces an empty diagnostics array (§5.2).
+      const noEnd = await tex
+        .typeset({
+          engine: 'xetex',
+          entry: 'main.tex',
+          files: { 'main.tex': '\\documentclass{article}\n\\begin{document}\nHello, this document has no end.\n' },
+        })
+        .done;
+      expect(noEnd.ok).toBe(false);
+      expect(noEnd.log).toContain('! Emergency stop.');
+      expect(noEnd.log).not.toContain('Undefined control sequence'); // job 1 did not leak
+      expect(noEnd.diagnostics).toEqual([{ severity: 'error', message: 'Emergency stop.' }]);
+
+      await tex.dispose();
+      console.log(
+        `[typeset-integration] public-API broken-doc diagnostics: ${JSON.stringify(result.diagnostics)}; ` +
+          `no-end: ${JSON.stringify(noEnd.diagnostics)}`,
+      );
     },
     120_000,
   );

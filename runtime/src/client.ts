@@ -38,6 +38,7 @@
 // (not in ES2022) — scheduling is done with promises.
 // ---------------------------------------------------------------------------
 
+import { parseDiagnostics } from './diagnostics';
 import {
   PROTOCOL_VERSION,
   isForJob,
@@ -834,13 +835,14 @@ class TypesetterClient implements Typesetter {
 /**
  * Assemble the public {@link TypesetResult} from a worker `result` envelope.
  *
- * SEAM (M1 item 8): the diagnostics parser is not wired yet. Until it lands,
- * `diagnostics` is empty — the full transcript is in `log`. Item 8 replaces the
- * literal below with a call into a pure parser over `message.log`, already typed
- * `readonly Diagnostic[]`, so this is the only line that changes.
+ * The §5.1 `diagnostics` are derived HERE, client-side, from the raw `log` on
+ * the wire (item 8): `parseDiagnostics` is a pure, total parser (`./diagnostics`)
+ * — keeping it off the worker/protocol boundary means a TeX-Live rebase that
+ * changes transcript wording touches only the parser + its fixtures, never the
+ * worker bundle (M1 rebase-proofing rule 2).
  */
 function assembleResult(message: ResultMessage): TypesetResult {
-  const diagnostics: readonly Diagnostic[] = [];
+  const diagnostics: readonly Diagnostic[] = parseDiagnostics(message.log);
   return {
     ok: message.ok,
     exitCode: message.exitCode,

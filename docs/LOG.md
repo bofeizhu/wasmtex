@@ -505,6 +505,32 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-23 — M1 item 8: diagnostics parser (loop)
+
+**Done.** `coder` agent delivered `runtime/src/diagnostics.ts` — pure,
+zero-dep, client-side only (worker bundle byte-identical): TeX `!`
+errors with `l.N` lines, LaTeX/Package/Class warnings with
+continuation folding, kpathsea not-found kept verbatim for M4, file
+attribution via a paren-stack with null placeholders for prose parens
+(prose can't poison attribution — reviewer probed it), Overfull boxes
+excluded, global dedup + caps. 12 fixtures captured verbatim from the
+pinned engines (both engine variants where they differ). The
+subfile-attribution case — error inside an \input'd chapter — proven
+end-to-end through the public API over real wasm:
+{severity:'error', file:'chapters/broken.tex', line:4}. That closes
+§8 acceptance case (iii).
+
+**Review: request-changes, the catch mattered.** A document missing
+\end{document} — a highly likely LLM-authored error (§10) — produces
+`! Emergency stop.` as the transcript's ONLY error line; the
+terminator filter dropped it → failed compile, EMPTY diagnostics,
+breaking §5.2's promise. Fixed by promoting standalone terminators to
+errors (consequence-terminators still filtered), with a real captured
+no-end-document fixture and a public-API assertion. Nits: warning
+continuations can no longer swallow stack-close lines; dedup key now
+collision-proof (which surfaced and removed 3 stray NUL bytes); docs
+aligned. 186/186 tests, audit green.
+
 ## 2026-07-23 — M1 item 7: client API (loop)
 
 **Done.** `coder` agent delivered `runtime/src/client.ts` — the §5.1

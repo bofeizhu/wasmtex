@@ -1,0 +1,26 @@
+name: license-audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  license-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: License audit (skeleton)
+        run: |
+          set -euo pipefail
+          if [ ! -f THIRD_PARTY_NOTICES.md ]; then
+            echo "ERROR: THIRD_PARTY_NOTICES.md is missing" >&2
+            exit 1
+          fi
+          if [ -d runtime ]; then
+            if grep -rIn --exclude='*.md' --exclude='*.markdown' -E 'GNU General Public License|GPL-2\.0|GPL-3\.0|AGPL' runtime; then
+              echo "ERROR: copyleft marker found in runtime/" >&2
+              exit 1
+            fi
+          fi
+          echo "license-audit ok"

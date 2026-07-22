@@ -53,6 +53,9 @@ Live data bundles, and exposes a small, typed, job-oriented API designed for
 - One combined WASM binary carrying: `xetex`, `pdftex`, `luahbtex`,
   `bibtex8`, `xdvipdfmx`, `makeindex`, `kpsewhich` (multicall dispatch by
   argv[0], the upstream busytex technique).
+  *Amended 2026-07-22: LuaTeX is dropped from v1 scope — `luahbtex` is
+  built in M0's faithful baseline only and exits the build at M3 (§9);
+  the v1 binary carries XeTeX + pdfTeX + the tools.*
 - Pinned, reproducible builds: same inputs ⇒ byte-identical artifacts, with
   a CI check that builds twice and diffs hashes.
 - Tiered TeX Live bundles (`core` / `extended` / `full`) generated from TeX
@@ -129,7 +132,7 @@ const tex: Typesetter = await createTypesetter({
 })
 
 const job = tex.typeset({
-  engine: 'xetex',                           // 'xetex' | 'pdftex' | 'luatex'
+  engine: 'xetex',                           // 'xetex' | 'pdftex' (if near-free, §9) — 'luatex' reserved, not in v1
   entry: 'main.tex',
   files: {                                   // map, not array; Uint8Array ok
     'main.tex': source,
@@ -275,19 +278,40 @@ using a small open font checked into `conformance/fixtures`.
 > released**; native host builds are a development vehicle, never a
 > release source. Source *inputs* stay pinned and hash-verified via
 > `build/sources/pins.lock` on every path.
+>
+> **Amended 2026-07-22 (same day, two scope drops).** (1) The **amd64
+> requirement is dropped**: wasm artifacts are host-arch-independent by
+> construction, and free arm64 Linux CI runners void the "CI = amd64"
+> premise — the canonical builder becomes a pinned **arm64** Linux
+> container at M2, validated by a three-way artifact-hash equivalence
+> check; amd64 remains at most a free verification lane (see
+> docs/plans/M2-notes.md). (2) **LuaTeX is dropped from v1**: the M1
+> wrapper is XeTeX-first (pdfTeX if near-free; `'luatex'` enum value
+> reserved, unimplemented), and `luahbtex` exits the build at the M3
+> rebase — M0's faithful baseline is the last build *configuration* that
+> includes it (M2's equivalence rebuilds of that configuration aside).
 
 - **M0 — Faithful baseline (native).** Reproduce upstream busytex's build
   (its pinned TL 2023) raw on the arm64 macOS host from the hash-verified
   source cache; artifacts boot in the demo page and compile hello-world.
-  *Proves the toolchain with the fastest iteration loop.*
+  *Proves the toolchain with the fastest iteration loop.* Builds the full
+  upstream engine set (incl. `luahbtex`) as the control experiment.
 - **M1 — Runtime v1 (MVP core, formerly M2).** The §5 API over a
-  correlated worker protocol, with unit tests and the demo migrated to it.
+  correlated worker protocol, with unit tests and the demo migrated to
+  it. XeTeX-first: `'xetex'` fully supported end-to-end; `'pdftex'` if
+  near-free; `'luatex'` dropped from v1 scope (enum value reserved).
 - **M2 — Build logistics & CI (formerly M0's container scope + part of
-  M4).** GitHub CI; the pinned amd64 container becomes the canonical
-  builder; the build-twice reproducibility gate; a native-vs-container
-  wasm-output equivalence check.
+  M4).** GitHub CI; a pinned **arm64** Linux container becomes the
+  canonical builder (amd64 requirement dropped — the parked amd64
+  container's userland is re-pinned on arm64); the build-twice
+  reproducibility gate; a three-way artifact-hash equivalence check
+  (arm64 macOS / arm64 Linux container / amd64 Linux container) that
+  settles host-arch-independence with data — amd64 stays only as a free
+  verification lane if it earns its keep.
 - **M3 — Rebase to TL 2026 (formerly M1).** Port patches to the pinned
-  TL 2026 snapshot; all engines build; formats dump; corpus seeds pass.
+  TL 2026 snapshot; engines build; formats dump; corpus seeds pass.
+  `luahbtex` is dropped from the multicall link and formats here —
+  LuaTeX exits the build and the annual-rebase surface.
 - **M4 — Bundles + manifests (formerly M3).** tlpdb-driven tiering,
   per-bundle manifests, top-level integrity manifest, on-demand
   resolution with log feedback.

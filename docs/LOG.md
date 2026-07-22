@@ -236,3 +236,35 @@ provenance chain.
 native-host.md §5, handed to 5N. fontconfig-on-darwin build risk → 5N.
 Hard host pinning → M2. `_wt_rc` leaks into the sourcing shell
 (namespaced, harmless; noted by review, accepted).
+
+## 2026-07-22 — Roadmap amendments: drop amd64 requirement; drop LuaTeX from v1
+
+**Context.** User questions during the 5N build surfaced two scope cuts;
+both adopted by user direction and recorded as dated DESIGN.md
+amendments (§3 note, §5.1 enum, §9 addendum).
+
+**(1) amd64 requirement dropped.** wasm artifacts are wasm32 —
+host-arch-independent by construction; GitHub now provides free arm64
+Linux (2025-08 GA) and arm64 macOS standard runners for public repos,
+voiding the "CI = amd64 Linux" premise behind the original pin. M2's
+canonical builder becomes a pinned **arm64** Linux container; the
+three-way hash-equivalence check {arm64 macOS, arm64 Linux container,
+amd64 Linux container} is the validation gate; amd64 survives at most
+as a free CI verification lane. Analysis + runner-landscape findings in
+docs/plans/M2-notes.md (14 GB runner SSD is the binding CI constraint,
+not CPU). The parked amd64 container and its jobserver findings remain
+valid fallbacks.
+
+**(2) LuaTeX dropped from v1.** M1 wrapper is XeTeX-first ('pdftex' if
+near-free; 'luatex' enum reserved, unimplemented); `luahbtex` exits the
+multicall link and formats at the M3 rebase — removing the largest
+engine from wasm size, the annual-rebase surface, and the one
+arch-suspect artifact (luahblatex.fmt, possible wordsize-sensitive Lua
+state). M0's in-flight faithful baseline still builds the full upstream
+engine set unchanged, deliberately, as the toolchain control
+experiment.
+
+**Consistency sweep.** README milestone table, build/toolchain/README
+parked-container bullet, M0 plan risk bullet, and M2-notes updated in
+the same commit (lesson from the pivot review: the front-door docs
+drift first).

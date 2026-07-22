@@ -15,8 +15,9 @@ that drives the WasmTeX bootstrap build. Per the DESIGN.md §9 revision, dev
 builds run raw on this host (no container) to maximise iteration speed toward
 the runtime MVP. This path is **development-only**: the constitutional floor is
 unchanged — *only container-built, pin-verified artifacts are ever released*
-(DESIGN.md §9). The pinned amd64 container in this directory is the canonical
-builder from M2 onward.
+(DESIGN.md §9). Per the 2026-07-22 §9 amendment, the canonical builder from
+M2 onward is a pinned **arm64** Linux container; the parked amd64 image in
+this directory survives at most as a free CI verification lane.
 
 The companion sourceable script is [`native-env.sh`](./native-env.sh); the
 parked container contract is in [`README.md`](./README.md).

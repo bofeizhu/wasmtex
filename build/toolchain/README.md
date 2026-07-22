@@ -14,9 +14,10 @@ This directory holds two build paths:
   builder documented in the rest of this file. It is *parked, not discarded*:
   the constitutional floor is that **only container-built, pin-verified
   artifacts are ever released** (DESIGN.md §9); the native path is
-  development-only. The container becomes the canonical builder at M2 (build
-  logistics & CI), where the reproducibility gate and a native-vs-container
-  output-equivalence check live.
+  development-only. Per the 2026-07-22 §9 amendment the amd64 *requirement*
+  is dropped: at M2 this container's userland is re-pinned as an **arm64**
+  Linux container (the canonical builder), and this amd64 image survives at
+  most as a free CI verification lane in the three-way equivalence check.
 
 ---
 

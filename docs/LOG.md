@@ -505,6 +505,42 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-23 — M1 COMPLETE: Runtime v1 acceptance verified (item 10)
+
+**Verdict.** `tester` agent independently executed every acceptance
+check at HEAD e5b535f, clean tree: PASS on all seven. 186/186 runtime
+tests (typecheck + build + suite), the four named §8 cases read and
+confirmed to assert their claims (stale-result-cannot-resolve-newer-
+job; cancel terminates + fresh-worker reinit, proven over real wasm;
+broken-doc structured diagnostics with subfile attribution; 12-fixture
+exact-array parser corpus); demo smoke 4/4 with the network-level
+no-glue assertion and both content proofs + negative controls; 8
+real-wasm integration tests in ~23 s; CI green on HEAD with
+runtime-tests genuinely running ci/typecheck/build/test; XeTeX-first
+honored (luatex rejected at three layers, pdftex proven end-to-end);
+rebase-proofing rules audited (asset knowledge role-driven; fixtures
+regeneratable; no TL version strings in runtime code); license audit
+green. **M1 acceptance SATISFIED — the MVP core exists.**
+
+**Carry-forwards (tester's notes).** (1) CI proves the pure modules
+only until M3 wires artifacts in — wasm-path evidence is local (the
+documented deferral). (2) M4 acceptance should include manifest
+sha256-vs-bytes verification (assets.test.ts checks shape, not
+integrity). (3) The two FORMAT_* in-MEMFS TDS path constants in
+core.ts are the one code-constant format knowledge (no inventory field
+can express intra-bundle paths); judged acceptable, conformance corpus
+catches a TDS-layout change at rebase.
+
+**Milestone summary.** M1 delivered the §5 API in full: correlated
+protocol (hostile-input-hardened at both boundaries), worker with the
+snapshot/restore execution model, §5.3 sequencing machine
+(fixture-grounded), client with real cancellation, diagnostics parser,
+demo migrated off the vendored glue (proven at network level), 186
+node tests + 4 browser tests, everything reviewed with three
+blockers/five-catches-per-round caught and fixed along the way. Next
+per the roadmap: **M2 — Rebase to TL 2026** (plan next iteration;
+LuaTeX exits the build there).
+
 ## 2026-07-23 — M1 item 9: demo migrated to the runtime (loop)
 
 **Done.** `coder` agent rewrote demo/index.html to drive the §5

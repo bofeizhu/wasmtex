@@ -125,6 +125,71 @@ mirror       = TUG historic archive (TU-Chemnitz)
 license      = TeX Live aggregate (per-package; see THIRD_PARTY_NOTICES.md)
 comment      = frozen TL2023 image; historic mirror only, never a rotating CTAN 'current' URL
 
+# =============================================================================
+# TL 2026 rebase inputs (M2 item 2). ADDITIVE by design: the [texlive-source] and
+# [texlive-iso] 2023 blocks above stay BYTE-IDENTICAL so the pre-rebase build
+# remains reproducible until item 4 cuts the build over to these pins; a later M2
+# item then retires the 2023 blocks. Nothing outside this lock keys off the block
+# *id* (build scripts read the cache FILENAME; fetch.sh iterates ids generically
+# and only requires uniqueness), so the versioned `-2026` ids are safe.
+#
+# expat/fontconfig are deliberately NOT re-pinned for 2026: they are fetched by
+# the (busytex-derived) engine build, external to the TL source tree, have a
+# stable API, and TL 2026 does not require newer — the existing [expat] and
+# [fontconfig] blocks serve BOTH builds. (Bumping them would be speculative;
+# decision journaled in docs/plans/M2-journal.md. Revisit only if item 4's build
+# actually fails against them.)
+# =============================================================================
+
+# --- TeX Live 2026 engine sources ---------------------------------------------
+# GitHub git-svn mirror branch refs/heads/tags/texlive-2026.0 (a *branch*, NOT a
+# real git tag — the archive URL mirrors the [texlive-source] 2023 shape exactly;
+# fetch.sh follows the 302 to codeload). Resolves to commit
+# f26cc5ed05a1f784d1e694fe5b9cfc3ce992c03d ("texlive-2026.0 tag based on r78235",
+# 2026-03-01) — the initial annual release, SAME freeze date as the ISO below.
+# texlive-2026.1 (a later dvipdfmx psfile-quoting source-only fix) exists and is
+# deliberately NOT taken here (keeps source tree and texmf ISO coherent at one
+# freeze; see journal). GitHub on-the-fly archives are not guaranteed byte-stable;
+# a sha256 mismatch means "GitHub regenerated the tarball", not corruption (README
+# "Reproducibility caveats"). `commit`/`bytes` are informational (fetch.sh ignores
+# extra keys); sha256 over the .tar.gz bytes is the integrity anchor.
+[texlive-source-2026]
+kind    = file
+url     = https://github.com/TeX-Live/texlive-source/archive/refs/heads/tags/texlive-2026.0.tar.gz
+file    = texlive-source-2026.0.tar.gz
+sha256  = f92e1be0fe4b3ad4e596f8443c5e4e7315ecf0554c2fc153d7af52f854865e24
+bytes   = 149438403
+commit  = f26cc5ed05a1f784d1e694fe5b9cfc3ce992c03d
+license = mixed (TeX Live source tree: Knuth/LPPL/GPL/... see THIRD_PARTY_NOTICES.md)
+comment = TL2026 engine sources; branch tags/texlive-2026.0 @ r78235 (2026-03-01)
+
+# --- TeX Live 2026 full ISO (texmf repository for install-tl) -----------------
+# texlive2026-20260301.iso is the frozen TL 2026 image (same 20260301 freeze as
+# the source tag above). RELEASE-YEAR EXCEPTION to the README "historic archives
+# only" rule (sanctioned by the M2 ISO-availability risk): as of 2026-07 the TUG
+# *historic* 2026/ dir carries only the component .tar.xz tree, not a consolidated
+# ISO, so we pin the dated ISO from the CTAN release-area Images/ dir on the SAME
+# proven Chemnitz host (utah fails TLS through this environment). That Images/ dir
+# ROTATES when TL 2027 ships -> this url 404s then; the content hashes still fail
+# closed. RE-PIN-AT-M3: switch url + checksum_url back to
+# .../historic/systems/texlive/2026/texlive2026-20260301.iso once archived (the
+# sha256/sha512 stay identical, so the mirror swap self-verifies). See journal.
+#
+# sha512 is the mirror's own published value (.../texlive2026-20260301.iso.sha512),
+# recorded so fetch.sh cross-checks every download against TUG's published value.
+# sha256 is our content hash over the same bytes.
+[texlive-iso-2026]
+kind         = file
+url          = https://ftp.tu-chemnitz.de/pub/tex/systems/texlive/Images/texlive2026-20260301.iso
+file         = texlive2026-20260301.iso
+sha512       = 4a9071bb567c3bdd6443378dedc8e485aea4a2f1203ec8ed7c17f6787093b9c37636a037032c0be63352e3d0bf98cf5616dab19fdcd7cb83f766b3e085b620ff
+sha256       = a143d17759f08344b916ae38829b71e1ea5a2f7029e87798242a588c918469d2
+bytes        = 6784798720
+checksum_url = https://ftp.tu-chemnitz.de/pub/tex/systems/texlive/Images/texlive2026-20260301.iso.sha512
+mirror       = CTAN release area (TU-Chemnitz Images/); historic re-pin due at M3
+license      = TeX Live aggregate (per-package; see THIRD_PARTY_NOTICES.md)
+comment      = frozen TL2026 image; release-area fallback per M2 ISO-availability risk
+
 # --- Toolchain container (M0 item 1) ------------------------------------------
 # Recorded for provenance; NOT fetched by fetch.sh. The build runs inside the
 # image built by build/toolchain/build-image.sh. The artifact-reproducibility

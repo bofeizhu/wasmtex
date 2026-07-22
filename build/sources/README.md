@@ -18,6 +18,8 @@ downloaded that is not pinned with a hash, and any mismatch stops the build.
 | `expat` | file | `expat-2.5.0.tar.gz` + sha256 | fetched separately by the Makefile (`URL_expat`) |
 | `fontconfig` | file | `fontconfig-2.13.96.tar.gz` + sha256 | fetched separately by the Makefile (`URL_fontconfig`) |
 | `texlive-iso` | file | `texlive2023-20230313.iso` + sha512/sha256 | frozen TL 2023 texmf image, from a TUG **historic** mirror |
+| `texlive-source-2026` | file | `texlive-2026.0` tarball + sha256 | TL 2026 engine sources (M2 rebase; tag is a git-svn branch ref) |
+| `texlive-iso-2026` | file | `texlive2026-20260301.iso` + sha512/sha256 | frozen TL 2026 texmf image (release-area exception, see below; re-pin at M3) |
 | `toolchain-image` | container | ubuntu digest, emsdk commit, emscripten 3.1.43, built image id | M0 item 1; recorded, not fetched |
 
 `expat` and `fontconfig` are the **only** libraries the busytex Makefile
@@ -140,6 +142,17 @@ is overwritten when the next TL ships, so its bytes and any hash pinned to it
 die annually. `pins.lock` therefore points only at a TUG **historic** archive
 mirror, which keeps each year's frozen image permanently. `fetch.sh` encodes no
 "current" URL.
+
+**Release-year exception (sanctioned, M2 plan "ISO availability" risk).** In a
+TL release year the historic archive may not yet carry the consolidated ISO
+(2026: only the component `.tar.xz` files are archived). The lock may then pin
+the exact **dated** ISO (`texliveYYYY-YYYYMMDD.iso`, never a rotating symlink)
+from the CTAN release area, under three conditions: the publisher's checksum
+file is recorded (`checksum_url`) and three-way verified; the rotation failure
+mode is documented in the lock block itself (the URL 404s when the next TL
+ships — content hashes still fail closed); and the block carries an explicit
+re-pin instruction pointing at the historic path for when the ISO is archived
+there. See `[texlive-iso-2026]`.
 
 Well-known TUG historic mirrors carrying `systems/texlive/2023/`:
 

@@ -505,6 +505,33 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-23 — M2 item 2: TL 2026 pinned (loop)
+
+**Done.** `coder` agent pinned the rebase snapshot: texlive-source
+`texlive-2026.0` (git-svn branch ref, commit f26cc5ed recorded;
+`.1` deliberately skipped — freeze-date coherence with the ISO, its
+dvipdfmx fix available as a patch candidate) and
+`texlive2026-20260301.iso` (6.32 GiB, three-way sha512 agreement).
+Historic/2026 carries only component tarballs, no consolidated ISO
+yet — the plan's sanctioned release-area exception taken, dated
+filename only, rotation exposure + RE-PIN-AT-M3 documented in the
+lock block itself (and now the README, per review). 2023 + 2026 pins
+coexist, both verify, cache 4.9→11.4 GiB. expat/fontconfig kept (no
+speculative bumps).
+
+**Drift forecast (item 4's map).** harfbuzz 7.0.1→12.3.2 and icu
+70.1→78.2 are the emsdk-bump risks; zlib 1.2.13→1.3.2 and libpng
+1.6.39→1.6.55 land on our two TARGET_OS_MAC patches; texk/ reorg
+minimal (one new dir). ISO top-level shape identical to 2023 —
+prep stage needs only the filename swap.
+
+**Process note.** The agent's completion-waiter failed again after
+the ISO download (recurrence; nudged to finalize in-turn). Review:
+approve — reviewer independently re-fetched the published checksum,
+re-resolved both git refs, and confirmed historic/'s ISO absence;
+should-fix applied (README's absolute historic-only rule gained the
+sanctioned release-year exception + table rows).
+
 ## 2026-07-23 — M1 COMPLETE: Runtime v1 acceptance verified (item 10)
 
 **Verdict.** `tester` agent independently executed every acceptance

@@ -16,7 +16,7 @@ builds run raw on this host (no container) to maximise iteration speed toward
 the runtime MVP. This path is **development-only**: the constitutional floor is
 unchanged — *only container-built, pin-verified artifacts are ever released*
 (DESIGN.md §9). Per the 2026-07-22 §9 amendment, the canonical builder from
-M2 onward is a pinned **arm64** Linux container; the parked amd64 image in
+M3 onward is a pinned **arm64** Linux container; the parked amd64 image in
 this directory survives at most as a free CI verification lane.
 
 The companion sourceable script is [`native-env.sh`](./native-env.sh); the
@@ -53,7 +53,7 @@ fetch.sh source cache `~/.cache/wasmtex/sources`), never committed to the repo.
 The macOS SDK, the Xcode/Clang host compiler, and the Homebrew build tools are
 **documented here but not hard-pinned** on the native path. This is a
 deliberate M0 decision: hard host pinning (exact tool versions, a reproducible
-host bootstrap) is **deferred to M2** ("build logistics & CI"), where the
+host bootstrap) is **deferred to M3** ("build logistics & CI"), where the
 native-vs-container output-equivalence check and the reproducibility gate live.
 For M0 the native build only has to prove the toolchain, not reproduce bytes.
 
@@ -163,7 +163,7 @@ edits of `build/upstream/`.
   with `cmake_minimum_required(VERSION < 3.5)`. Some TL 2023 library
   `CMakeLists.txt` may declare old minimums. **Flag for 5N**: expect a possible
   cmake-4 compatibility error; resolve with `-DCMAKE_POLICY_VERSION_MINIMUM`
-  or a documented patch, or by pinning an older cmake (an M2 hard-pin question).
+  or a documented patch, or by pinning an older cmake (an M3 hard-pin question).
 - **`ldd`** — absent on macOS. Only used in the `smoke-native` target, prefixed
   with `-` (make ignores the error); not on the artifact path. No action.
 - **`objcopy`** — `OBJCOPY_native` is defined but never invoked; the wasm path
@@ -173,7 +173,7 @@ edits of `build/upstream/`.
 - **`python3` on PATH** — resolves to whatever is first (pyenv 3.12.9 or
   Homebrew 3.14.5); the Makefile's helper scripts are Python-3-version-agnostic
   and emcc uses the emsdk-bundled Python 3.9.2 (`EMSDK_PYTHON`), so this is
-  immaterial. Not pinned (M2).
+  immaterial. Not pinned (M3).
 
 ---
 

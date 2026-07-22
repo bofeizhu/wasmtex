@@ -18,7 +18,7 @@
 # rules are already satisfied. Enforcement: pre-staging plus URL-neutralizing
 # overrides (the URL_* make variables are blanked below, so a missed pre-stage
 # fails loud and closed instead of silently fetching an unverified source).
-# Hard network isolation (--network none) returns with the container at M2.
+# Hard network isolation (--network none) returns with the container at M3.
 # This is the host mirror of run-in-container.sh's offline strategy — but
 # native, no Docker, real jobserver parallelism.
 #
@@ -73,7 +73,7 @@ machinery="$repo/build/upstream/busytex"
 # SOURCE_DATE_EPOCH is the busytex pin commit date (f2bd7b11, 1781618797);
 # FORCE_SOURCE_DATE makes the TeX engines honour it when dumping .fmt formats.
 # native-env.sh already exports TZ=UTC and LC_ALL=LANG=C.UTF-8; re-assert for
-# safety under a caller that unset them. The M2 double-build is the real gate.
+# safety under a caller that unset them. The M3 double-build is the real gate.
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1781618797}"
 export FORCE_SOURCE_DATE="${FORCE_SOURCE_DATE:-1}"
 export TZ=UTC

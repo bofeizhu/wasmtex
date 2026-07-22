@@ -36,7 +36,7 @@
 #
 # NOT pinned here: the macOS / Xcode / Homebrew tool VERSIONS are documented,
 # not hard-pinned, for the native bootstrap path; hard host pinning is deferred
-# to M2 (DESIGN.md §9). See build/toolchain/native-host.md for the full contract.
+# to M3 (DESIGN.md §9). See build/toolchain/native-host.md for the full contract.
 # =============================================================================
 
 # --- idempotent PATH prepend (POSIX; identical behaviour in bash and zsh) -----

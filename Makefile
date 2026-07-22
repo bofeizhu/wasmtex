@@ -32,9 +32,9 @@
 #   make artifacts STAGE=verify    # execution gate alone (env imports + engine run)
 # STAGE defaults to `all`.
 #
-# `make artifacts-container` (PARKED for M2): the pinned-container flow built in
+# `make artifacts-container` (PARKED for M3): the pinned-container flow built in
 # the original M0. Superseded as the M0 path by the native-first pivot; it
-# returns as the canonical builder at M2 (build logistics & CI). See
+# returns as the canonical builder at M3 (build logistics & CI). See
 # build/artifacts/README.md.
 # =============================================================================
 
@@ -46,7 +46,7 @@ STAGE ?= all
 artifacts:
 	WASMTEX_STAGE=$(STAGE) build/artifacts/build-native.sh
 
-# Container flow (parked for M2). Kept reachable, unchanged.
+# Container flow (parked for M3). Kept reachable, unchanged.
 artifacts-container:
 	WASMTEX_STAGE=$(STAGE) build/artifacts/build.sh
 

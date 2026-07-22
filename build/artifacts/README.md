@@ -3,12 +3,12 @@
   Original work authored in the WasmTeX repository (see LICENSE).
 -->
 
-# build/artifacts/ — containerized `make artifacts` pipeline (PARKED for M2)
+# build/artifacts/ — containerized `make artifacts` pipeline (PARKED for M3)
 
 > PARKED 2026-07-22: superseded as the M0 path by the native-first pivot
 > (DESIGN.md §9 revision). Do not run this expecting the current dev flow —
 > M0 item 5N drives the native host build; this container flow becomes the
-> canonical builder at M2 (build logistics & CI).
+> canonical builder at M3 (build logistics & CI).
 
 Original WasmTeX (MIT) glue that runs the **vendored, unmodified** busytex build
 (`build/upstream/busytex/`) inside the pinned `wasmtex-toolchain` image, fully
@@ -62,4 +62,4 @@ make clean-artifacts               # remove dist/ and the work volume
 `formats/*.fmt` (pdflatex/xelatex/luahblatex format dumps), and `SHA256SUMS`.
 
 Reproducibility (`SOURCE_DATE_EPOCH`, stable ordering) is wired here; the
-byte-for-byte double-build gate lands at M2 (`build/repro-check.sh`).
+byte-for-byte double-build gate lands at M3 (`build/repro-check.sh`).

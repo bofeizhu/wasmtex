@@ -379,3 +379,35 @@ acceptance (a) and (c) are now both demonstrably satisfied.
 **Deferred.** PDF byte-determinism (xdvipdfmx stamps runtime
 /CreationDate + /ID in-browser) → M2 double-build gate. Remaining M0:
 7N notices audit, 8N acceptance run.
+*(Numbering note: "M2" here meant build logistics & CI as numbered at
+the time of writing; the same-day M2 ↔ M3 swap below renumbered it M3.)*
+
+## 2026-07-22 — Roadmap amendment: rebase and logistics swapped (M2 ↔ M3)
+
+**Decision (user-directed, third §9 amendment today).** New order:
+M0 → M1 Runtime v1 → **M2 Rebase to TL 2026** → **M3 Build logistics &
+CI** → M4 → M5. Rationale: (1) a rebase may bump emsdk, which would
+invalidate logistics-era container pins and repro baselines — building
+logistics once, against TL 2026, avoids paying the three-build
+equivalence check twice; (2) logistics/CI needs the GitHub remote,
+which still does not exist (user's call, parked since bootstrap) — the
+rebase needs nothing external; (3) established this session that the
+rebase barely touches M1 (runtime is TL-agnostic if asset lists stay
+data-driven, the diagnostics parser is fixture-tested, and no version
+banners are asserted in runtime code — rules to be baked into the M1
+plan). Trade-off recorded: the first fully CI-gated annual rebase
+becomes TL 2027; M2's acceptance rests on corpus seeds + execution
+gate + demo smoke, with M3's gates re-validating immediately after.
+
+**Mechanics.** Global renumber across live docs (logistics M2→M3,
+rebase M3→M2): DESIGN.md (§3/§4/§6.1 notes, §9 third amendment +
+swapped bullets), README table, Makefile/build-native.sh comments,
+build/artifacts + build/toolchain + build/engines docs,
+.github/workflows/build.yml, docs/plans/M0.md; docs/plans/M2-notes.md
+renamed **M3-notes.md**. LOG/journal history left append-only per the
+established rule, with one disclosed exception: a numbering note
+appended to the prior entry's Deferred line (its "M2" reference was
+written hours before the swap).
+THIRD_PARTY_NOTICES.md, NOTICE, and license-audit.yml deliberately
+untouched — the 7N audit agent owns them in flight; its output will be
+reconciled to the new numbering at 7N close-out.

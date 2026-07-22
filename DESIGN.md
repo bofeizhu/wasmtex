@@ -54,8 +54,8 @@ Live data bundles, and exposes a small, typed, job-oriented API designed for
   `bibtex8`, `xdvipdfmx`, `makeindex`, `kpsewhich` (multicall dispatch by
   argv[0], the upstream busytex technique).
   *Amended 2026-07-22: LuaTeX is dropped from v1 scope — `luahbtex` is
-  built in M0's faithful baseline only and exits the build at M3 (§9);
-  the v1 binary carries XeTeX + pdfTeX + the tools.*
+  built in M0's faithful baseline only and exits the build at the M2
+  rebase (§9); the v1 binary carries XeTeX + pdfTeX + the tools.*
 - Pinned, reproducible builds: same inputs ⇒ byte-identical artifacts, with
   a CI check that builds twice and diffs hashes.
 - Tiered TeX Live bundles (`core` / `extended` / `full`) generated from TeX
@@ -105,7 +105,7 @@ wasmtex/
 > upstream busytex build machinery vendored unmodified at its pinned commit (see
 > `build/upstream/README.md`); it is dissolved into `build/engines/`,
 > `build/formats/`, `build/bundles/` and `build/patches/` at the TL 2026
-> rebase (M3 under the revised §9 numbering), then removed.
+> rebase (M2 under the revised §9 numbering), then removed.
 
 Release artifacts (GitHub Releases, tag `assets-vX.Y.Z` in lockstep with the
 npm version):
@@ -213,7 +213,7 @@ any artifact-hash mismatch. `SOURCE_DATE_EPOCH` and stable file ordering in
 archives are mandatory.
 
 > Bootstrap-phase note (2026-07-22): this contract binds the canonical
-> container build path, activated at M2 (§9 revision). During the
+> container build path, activated at M3 (§9 revision). During the
 > native-first bootstrap, host builds consume the same pinned, verified
 > sources but are development-only — never committed or released.
 
@@ -283,13 +283,25 @@ using a small open font checked into `conformance/fixtures`.
 > requirement is dropped**: wasm artifacts are host-arch-independent by
 > construction, and free arm64 Linux CI runners void the "CI = amd64"
 > premise — the canonical builder becomes a pinned **arm64** Linux
-> container at M2, validated by a three-way artifact-hash equivalence
-> check; amd64 remains at most a free verification lane (see
-> docs/plans/M2-notes.md). (2) **LuaTeX is dropped from v1**: the M1
-> wrapper is XeTeX-first (pdfTeX if near-free; `'luatex'` enum value
-> reserved, unimplemented), and `luahbtex` exits the build at the M3
-> rebase — M0's faithful baseline is the last build *configuration* that
-> includes it (M2's equivalence rebuilds of that configuration aside).
+> container at the logistics milestone, validated by a three-way
+> artifact-hash equivalence check; amd64 remains at most a free
+> verification lane (see docs/plans/M3-notes.md). (2) **LuaTeX is
+> dropped from v1**: the M1 wrapper is XeTeX-first (pdfTeX if near-free;
+> `'luatex'` enum value reserved, unimplemented), and `luahbtex` exits
+> the build at the TL 2026 rebase — M0's faithful baseline is the last
+> build *configuration* that includes it (under the third amendment
+> below, no later milestone rebuilds that configuration).
+>
+> **Amended 2026-07-22 (third): rebase and logistics swapped (M2 ↔ M3).**
+> The TL 2026 rebase now precedes build logistics & CI, so the container
+> pin, repro baselines, and the three-way equivalence check are built
+> exactly once against TL 2026 (a rebase may bump emsdk, which would
+> have invalidated logistics-era container pins), and logistics/CI —
+> which needs the still-uncreated GitHub remote — no longer gates the
+> rebase. Trade-off accepted and recorded: the first fully CI-gated
+> annual rebase becomes TL 2027; the M2 rebase's acceptance rests on the
+> conformance corpus seeds, the execution gate, and the demo smoke, with
+> M3's gates re-validating the rebased tree immediately after.
 
 - **M0 — Faithful baseline (native).** Reproduce upstream busytex's build
   (its pinned TL 2023) raw on the arm64 macOS host from the hash-verified
@@ -300,18 +312,22 @@ using a small open font checked into `conformance/fixtures`.
   correlated worker protocol, with unit tests and the demo migrated to
   it. XeTeX-first: `'xetex'` fully supported end-to-end; `'pdftex'` if
   near-free; `'luatex'` dropped from v1 scope (enum value reserved).
-- **M2 — Build logistics & CI (formerly M0's container scope + part of
-  M4).** GitHub CI; a pinned **arm64** Linux container becomes the
-  canonical builder (amd64 requirement dropped — the parked amd64
-  container's userland is re-pinned on arm64); the build-twice
-  reproducibility gate; a three-way artifact-hash equivalence check
-  (arm64 macOS / arm64 Linux container / amd64 Linux container) that
-  settles host-arch-independence with data — amd64 stays only as a free
-  verification lane if it earns its keep.
-- **M3 — Rebase to TL 2026 (formerly M1).** Port patches to the pinned
+- **M2 — Rebase to TL 2026 (formerly M1 in the original charter;
+  swapped ahead of logistics 2026-07-22).** Port patches to the pinned
   TL 2026 snapshot; engines build; formats dump; corpus seeds pass.
   `luahbtex` is dropped from the multicall link and formats here —
-  LuaTeX exits the build and the annual-rebase surface.
+  LuaTeX exits the build and the annual-rebase surface. Acceptance runs
+  on the native flow's gates (corpus seeds, execution gate, demo smoke);
+  M3's gates re-validate the rebased tree immediately after.
+- **M3 — Build logistics & CI (formerly M0's container scope + part of
+  M4; runs after the rebase so it is built once, against TL 2026).**
+  GitHub CI; a pinned **arm64** Linux container becomes the canonical
+  builder (amd64 requirement dropped — the parked amd64 container's
+  userland is re-pinned on arm64); the build-twice reproducibility
+  gate; a three-way artifact-hash equivalence check (arm64 macOS /
+  arm64 Linux container / amd64 Linux container) that settles
+  host-arch-independence with data — amd64 stays only as a free
+  verification lane if it earns its keep.
 - **M4 — Bundles + manifests (formerly M3).** tlpdb-driven tiering,
   per-bundle manifests, top-level integrity manifest, on-demand
   resolution with log feedback.

@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Placeholder for containerized artifact pipeline
         run: |
-          echo "Placeholder: the containerized artifact pipeline lands at M2"
+          echo "Placeholder: the containerized artifact pipeline lands at M3"
           echo "(DESIGN.md §9 revision — build logistics & CI milestone)."
           echo "See DESIGN.md milestones and the build/ layout."
           exit 0
@@ -20,7 +20,7 @@ jobs:
   # M0 item 6N: run the demo hello-world -> PDF smoke ONLY when the dist/
   # artifacts are present in the checkout. dist/ is git-ignored and not
   # committed, so on a stock checkout this job skips every real step and stays
-  # green. When M2 wires artifact build/download into CI (the recorded
+  # green. When M3 wires artifact build/download into CI (the recorded
   # deferral), the guard below flips to `present=true` and the smoke runs.
   demo-smoke:
     runs-on: ubuntu-latest
@@ -40,7 +40,7 @@ jobs:
             echo "dist/ artifacts present -> running demo smoke."
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "dist/ artifacts absent -> skipping demo smoke (full CI build lands at M2)."
+            echo "dist/ artifacts absent -> skipping demo smoke (full CI build lands at M3)."
           fi
 
       - if: steps.guard.outputs.present == 'true'

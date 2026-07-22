@@ -1,7 +1,7 @@
-# M2 (build logistics & CI) — accumulated notes
+# M3 (build logistics & CI) — accumulated notes
 
-Findings parked here during M0/M1 so the M2 plan starts informed.
-Not a plan yet; the M2 plan is written when M2 starts.
+Findings parked here during M0–M2 so the M3 plan starts informed.
+Not a plan yet; the M3 plan is written when M3 starts.
 
 ## CI runner landscape (verified 2026-07-22)
 
@@ -12,7 +12,7 @@ Not a plan yet; the M2 plan is written when M2 starts.
   regardless of repo visibility.
 - Disk, not CPU, is the binding constraint for our build on hosted
   runners: ~5 GB source cache + ~6 GB work tree already crowds 14 GB.
-  M2 needs footprint engineering: stage only the archive packages
+  M3 needs footprint engineering: stage only the archive packages
   `texlive-basic` reads instead of extracting the full ISO; prune
   between stages; `actions/cache` the work tree.
 
@@ -35,11 +35,11 @@ Not a plan yet; the M2 plan is written when M2 starts.
 - **Decided at roadmap level 2026-07-22 (DESIGN.md §9 amendment):** the
   amd64 requirement is dropped; canonical builder = pinned arm64 Linux
   container. The three-way hash check {arm64 macOS, arm64 Linux
-  container, amd64 Linux container} remains as M2's *validation* gate:
+  container, amd64 Linux container} remains as M3's *validation* gate:
   if hashes diverge, the diff pinpoints what the arm64-canonical builder
   must additionally pin; amd64 survives only as a free verification
   lane if it earns its keep. Note: with LuaTeX dropped from v1 (same
   amendment), the most arch-suspect artifact (luahblatex.fmt with
-  possible Lua state) exits the shipped set at M3 anyway.
+  possible Lua state) exits the shipped set at the M2 rebase anyway.
 - The parked amd64 container + `-j1`/jobserver findings remain valid
   fallbacks either way (see docs/plans/M0-item4-journal.md).

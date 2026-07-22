@@ -40,7 +40,7 @@ ARG UBUNTU_DIGEST=sha256:0d779ea97881505f5ef0039336ee85edba27519bdba968c284c86ee
 # regardless of the build host (arm64 dev machine vs x86_64 CI), so the WASM
 # artifacts match upstream busytex CI. build-image.sh passes the same flag.
 # (Historical rationale, kept for the parked image. The 2026-07-22 DESIGN.md
-# §9 amendment drops the amd64 requirement — the M2 re-pin of this userland
+# §9 amendment drops the amd64 requirement — the M3 re-pin of this userland
 # targets arm64; see build/toolchain/README.md.)
 # BuildKit lints this as FromPlatformFlagConstDisallowed; the warning is
 # expected here — the constant is the point, not an accident.

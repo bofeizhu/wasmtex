@@ -10,18 +10,18 @@ This directory holds two build paths:
   environment). The pinned emsdk (Emscripten `3.1.43`, emsdk commit
   `d9c66fa2…`) is the **same** value as the container below and as
   `build/sources/pins.lock` — only the platform binaries differ (darwin-arm64).
-- **Pinned amd64 container (parked for M2)** — the canonical, reproducible
+- **Pinned amd64 container (parked for M3)** — the canonical, reproducible
   builder documented in the rest of this file. It is *parked, not discarded*:
   the constitutional floor is that **only container-built, pin-verified
   artifacts are ever released** (DESIGN.md §9); the native path is
   development-only. Per the 2026-07-22 §9 amendment the amd64 *requirement*
-  is dropped: at M2 this container's userland is re-pinned as an **arm64**
+  is dropped: at M3 this container's userland is re-pinned as an **arm64**
   Linux container (the canonical builder), and this amd64 image survives at
   most as a free CI verification lane in the three-way equivalence check.
 
 ---
 
-## The pinned build-toolchain container (parked for M2)
+## The pinned build-toolchain container (parked for M3)
 
 The pinned build-toolchain container: a bare `ubuntu:22.04` plus the exact
 toolchain the busytex + TeX Live WebAssembly build needs. Everything that

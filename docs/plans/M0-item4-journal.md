@@ -124,3 +124,180 @@ host-specific parallelism decision rather than fighting the emulated jobserver).
 parallelism does not change outputs. Also `build.sh` now names the container and
 drops `--rm` so a failed stage leaves logs for post-mortem, and
 `docker wait <name>` gives a clean blocking completion signal for babysitting.
+
+# Native build (5N)
+
+The native-first pivot (DESIGN.md §9 revision) drives the same vendored busytex
+`Makefile` **raw on the arm64 macOS host**, offline from the verified cache. This
+section is the 5N stage log. Driver: `build/artifacts/build-native.sh`; root
+`make artifacts` delegates here (container flow parked as `make artifacts-container`).
+
+## Design decisions (recorded before first native build)
+
+- **Work tree, out of tree.** `~/.cache/wasmtex/build/native/busytex` (override
+  `WASMTEX_WORK_DIR`), a sibling of the fetch.sh source cache and the toolchain
+  cache. Keeps the multi-GB TL source tree + 4.8 GB texmfrepo staging off the
+  repo volume; only `dist/` (git-ignored) lands in the repo. `build/upstream/`
+  stays pristine — the vendored machinery is COPIED into the work tree and
+  `make` runs there (same discipline as the parked container flow).
+- **Offline pre-staging** mirrors `run-in-container.sh`: each source is extracted
+  from the cached tarball into `source/<id>/` with the `source/<id>.txt` sentinel
+  the Makefile's `curl | tar` rule would have produced (a no-prereq sentinel that
+  already exists is up-to-date, so the download recipe never fires); `texmfrepo`
+  is unpacked from the frozen ISO with macOS `bsdtar -x` (reads ISO9660 directly).
+- **Repro hygiene** identical to the container flow: `SOURCE_DATE_EPOCH=1781618797`
+  (busytex pin commit date), `FORCE_SOURCE_DATE=1`, `TZ=UTC`, `LC_ALL=LANG=C.UTF-8`
+  (native-env.sh already sets TZ/LC_ALL), `umask 022`.
+- **Real parallelism.** Native arm64 GNU Make 4.4.1 — the jobserver works here
+  (the `-j1` constraint was Rosetta-only). Default `-j$(sysctl -n hw.ncpu)` = 8
+  via `MAKEFLAGS`, override `WASMTEX_JOBS`.
+- **macOS incompatibilities → make-variable overrides (no vendored-file patches
+  needed for the native pass).** Static analysis + host probes found four; each is
+  a `_native`-scoped (or native-only-tool) variable, overridden on the `make`
+  command line (which propagates to every recursive sub-make via MAKEOVERRIDES),
+  so the wasm/basic/bundle sub-builds are untouched:
+  - `NM_native=true` — the `busytexapplets` rule (Makefile:515) runs
+    `$(NM_native) -D …libkpathsea.a` inside an `&&` chain; macOS `nm` (llvm-nm)
+    **errors** on `-D` (`File format has no dynamic symbol table`), failing the
+    recipe. `NM_native` is otherwise only diagnostic (echo BEFORENM/AFTERNM), so
+    `true -D <path>` → exit 0 neutralises it with zero artifact impact.
+  - `CMAKE_native=cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5` — expat 2.5.0 declares
+    `cmake_minimum_required(VERSION 3.1.3)`; Homebrew cmake 4.4.0 removed
+    compatibility with `< 3.5` (fatal error). The policy floor is the documented
+    escape hatch (native-host.md §5 preferred remedy). expat is the ONLY CMake
+    build in the tree, so this is the whole cmake-4 exposure.
+  - `LDFLAGS_TEXLIVE_native=-lm -pthread` — upstream value is
+    `--static -static -static-libstdc++ -static-libgcc -ldl -lm -pthread -lpthread -lc -Wl,--unresolved-symbols=ignore-all`;
+    every Linux-only token breaks macOS (no static libSystem; no `-ldl`/separate
+    `-lpthread`; Apple ld rejects `--unresolved-symbols`). Reduced to the portable
+    core. Deliberately NO `-undefined,dynamic_lookup` here — this LDFLAGS also
+    drives `configure`'s link probes, which must stay honest.
+  - `OPTS_BUSYTEX_LINK_native=-lm -pthread -Wl,-undefined,dynamic_lookup` — the
+    final multicall link (Makefile:374) legitimately has undefined symbols by
+    design (the busytex nulling/redefine trick); `-Wl,-undefined,dynamic_lookup`
+    is the Apple-ld equivalent of GNU `--unresolved-symbols=ignore-all` (probed:
+    links and runs). The plain `busytex` link (unlike `busytexextra`, which we do
+    NOT build) has no duplicate-definition need, so no allow-multiple-definition
+    analogue is required.
+  Off the artifact path, confirmed no-ops: `OBJCOPY_native` (never invoked;
+  wasm stubs it to `echo`), `LDD_native` (only in `-`-prefixed `smoke-native`).
+
+## Native stage log
+
+| stage | target(s) | wall | outcome |
+| --- | --- | --- | --- |
+| prep | machinery copy + offline source staging + `build/versions.txt` | ~12 s | OK. ISO extraction (source/texmfrepo 4.8 G, 11524 archive pkgs, install-tl + tlpkg present) + texlive/expat/fontconfig tarballs staged offline from cache; sentinels written. macOS `bsdtar` + APFS extracted the ISO fast. No network. |
+| native (attempt 1) | `make -j8 native` | ~15 min, FAILED | `texlive.configured` (TL core + helper tools) OK; `texlivedependencies`: expat OK (cmake policy override worked), zziplib OK, then **libpng FAILED** on macOS — `<fp.h>` not found. Fix below; not killed by harness, a real source incompat. |
+| (interruption) | — | ~20 min gap | The driving agent's monitor-wait failed (4th such failure this project; monitors abandoned for in-turn polling thereafter): attempt 1's make had already exited with the libpng error at ~19:30 but sat unobserved until the main session resumed the agent at 19:33. No build state lost — make resumes incrementally. |
+| native (attempt 2) | `make -j8 native` (resume, libpng patched) | ~2 min, FAILED | libpng OK, libpaper OK, then **zlib FAILED** — `fdopen(fd,mode) NULL` macro clobbers the system `<stdio.h>` prototype. Same `TARGET_OS_MAC` root cause. Fix below. |
+| native (attempt 3) | `make -j8 native` (resume, zlib patched) | ~20 min | **OK** — full native build: all deps (incl. icu, fontconfig-on-darwin — no darwin fontconfig issue materialised), busytexapplets, and `build/native/busytex` (36.5 MB Mach-O arm64) linked. First link crashed at load (`NSFontManager` not found); fixed by linking Apple frameworks (below). After relink: `busytex {xetex,pdftex,luahbtex,bibtex8,xdvipdfmx} --version` all report TeX Live 2023. Helper tools for the wasm pass (ctangle/otangle/tangle/web2c/fixwrites/makecpool/splitup, icupkg, pkgdata, apinames) all present. |
+| basic | `make build/texlive-basic.txt` | ~6 min | **OK** — install-tl (offline repo, `--custom-bin` our native busytex wrappers) built the `texlive-basic` TDS and dumped/pruned formats via the native engines on macOS with no changes. Retained (full set): `xelatex.fmt` 8.7M, `pdflatex.fmt` 6.5M, `luahblatex.fmt` 11.9M, `dvilualatex.fmt` 4.6M, `dviluatex.fmt` 1.2M, `luatex.fmt` 1.2M, `optex.fmt` 0.7M, `tex.fmt` 0.3M — sizes match the container baseline. `build/texlive-basic.tar.gz` also produced. |
+| wasm | `make -j8 wasm` | ~29 min | **OK** — `build/wasm/busytex.wasm` 28.9 MB + `busytex.js` 349 KB. No source changes needed (the libpng/zlib patches are shared source; under emcc `TARGET_OS_MAC` is undefined so they are no-ops for wasm; `CMAKE_wasm` carries the same expat policy floor). Darwin-host libtool probes `-single_module`/`-force_load` (unsupported by wasm-ld) fail gracefully in configure and are never used (static-only build). Final link's undefined-symbol warnings (TECkit_*, zzip_*) are upstream-normal (`-sERROR_ON_UNDEFINED_SYMBOLS=0`, the multicall nulling). |
+| bundle | `make build/wasm/texlive-basic.js` | ~1 min | **OK** — `file_packager` (system python3, no import issue) packed the `texlive-basic` TDS: `texlive-basic.data` 79.5 MB (LZ4 125 MB→79.5 MB) + `texlive-basic.js` 1.7 MB (with `ProvidesPackage` index prepended). |
+| dist | `build-native.sh dist` | ~10 s | **OK** — assembled `dist/`: `busytex.{js,wasm}`, `busytex_{pipeline,worker}.js` (byte-identical to vendored MIT glue), `texlive-basic.{js,data}`, `formats/*.fmt` (all 8: xelatex, pdflatex, luahblatex, dvilualatex, dviluatex, luatex, optex, tex), `SHA256SUMS` (sorted, via macOS `shasum -a 256`). `dist/` git-ignored. Note for M2's three-way hash check: the native flow adds `CMAKE_POLICY_VERSION_MINIMUM=3.5` to `CMAKE_wasm` (cmake 4.x here vs the container's 3.x without it) — configure-behavior only, but the first suspect if expat-derived wasm objects diverge. |
+| **`make artifacts` STAGE=all** | end-to-end via root Makefile | ~1 min | **OK (ALL_EXIT=0)** — full pipeline through the real entry point on the already-built tree: patches idempotently skipped, **zero recompilation** (all cached), `dist/` reassembled identically. Proves Makefile → `build-native.sh` → prep/native/basic/wasm/bundle/dist chaining. |
+
+## Native build (5N): COMPLETE
+
+`make artifacts` produces the M0 faithful-baseline artifacts natively on arm64
+macOS. `dist/` (139 MB): `busytex.wasm` (28.9 MB, valid WebAssembly MVP) +
+`busytex.js` (349 KB); `busytex_pipeline.js` + `busytex_worker.js` (vendored MIT,
+byte-identical); `texlive-basic.js` (1.7 MB) + `texlive-basic.data` (79.5 MB);
+`formats/` = xelatex.fmt 8.7M, pdflatex.fmt 6.5M, luahblatex.fmt 11.9M (+ luatex
+variants + tex.fmt); `SHA256SUMS`.
+
+Net changes vs the parked container flow: **2 make-variable overrides became 4**
+(`NM_native`, `CMAKE_native`/`CMAKE_wasm` policy floor, `LDFLAGS_TEXLIVE_native`,
+`OPTS_BUSYTEX_LINK_native` incl. the 5 Apple frameworks) and **2 source patches**
+(`build/patches/libpng-macos-fp-h`, `build/patches/zlib-macos-fdopen` — both the
+`TARGET_OS_MAC` classic-Mac false-positive, both upstream-able, applied
+idempotently to the work copy in prep; `build/upstream/` untouched). Everything
+else (offline pre-staging, target order, repro hygiene) mirrors the container
+flow. The container flow's predicted risks that did NOT materialise: darwin
+fontconfig-from-source built cleanly; ICU built cleanly; the only cmake-4 exposure
+was expat (policy floor handled it). Reproducibility double-build remains deferred
+to M2 (DESIGN.md §9); this native path is development-only.
+
+### native attempt 1 failure -> fix (libpng `<fp.h>`)
+
+libpng 1.6.39 failed compiling every TU:
+
+```
+source/texlive/libs/libpng/libpng-src/pngpriv.h:524:16: fatal error: 'fp.h' file not found
+  524 | #      include <fp.h>
+make[5]: *** [Makefile:855: libpng-src/pngrio.o] Error 1
+...
+make: *** [Makefile:532: native] Error 2
+```
+
+Cause (probed, not guessed): pngpriv.h:517-518 selects the classic Mac OS
+`<fp.h>` header when `TARGET_OS_MAC` is defined. On a modern macOS SDK
+`TARGET_OS_MAC` is `1` on *every* Apple platform and is pulled in transitively by
+system headers libpng includes before this point (verified: `#include <stdlib.h>`
+alone → `TARGET_OS_MAC 1`). It is a false signal for pre-OSX Carbon, where
+`<fp.h>` lived; the header does not exist on modern macOS. Upstream busytex builds
+on Linux, where none of the guard macros are defined and the `#else` (`<math.h>`)
+branch is taken, so the bug is invisible there. No Makefile/CFLAGS knob redirects
+this (the libpng build has no per-lib CFLAGS injection point), so it is a genuine
+source-level fix → **patch** (not a make-variable override).
+
+Fix: `build/patches/libpng-macos-fp-h/` (patch + HEADER.md) removes
+`|| defined(TARGET_OS_MAC)` from the guard, so Apple clang takes the `<math.h>`
+branch. Applied to the staged work copy at build time by
+`build-native.sh do_prep → apply_macos_patches` (idempotent: skips if the patch
+already reverses cleanly; `build/upstream/` never touched). Verified: the patch
+applies `-p1` cleanly to a fresh pristine extraction, and rebuilding the libpng
+target alone produced `libpng.a` (304920 bytes). Upstream-able (HEADER.md).
+
+### native attempt 2 failure -> fix (zlib `fdopen`)
+
+```
+zutil.h:147:33: note: expanded from macro 'fdopen'
+  147 | #        define fdopen(fd,mode) NULL /* No fdopen() */
+_stdio.h:322:7: note: to match this '('
+4 warnings and 3 errors generated.  ->  make: *** [native] Error 2
+```
+
+Same `TARGET_OS_MAC` false-positive class as libpng. `libs/zlib/zlib-src/zutil.h:140`
+`#if defined(MACOS) || defined(TARGET_OS_MAC)` stubs `#define fdopen(fd,mode) NULL`
+(assuming pre-OSX Mac has no `fdopen`), which then mangles the system `<stdio.h>`
+`fdopen` prototype the full (non-`Z_SOLO`) zlib build also pulls in.
+
+Preemptive recon (`grep -rl TARGET_OS_MAC` over the TL tree) enumerated every
+occurrence so they weren't discovered one slow build at a time: libpng (fixed),
+zlib (this), freetype's *bundled* gzip zutil.h (identical block but compiled
+`Z_SOLO`, which guards out the stub + stdio — **safe, no patch**), freetype
+`mac-support.h` and ICU `platform.h` (both use `TARGET_OS_MAC` **correctly** for
+genuine macOS support — left intact). Only standalone zlib needed the fix.
+
+Fix: `build/patches/zlib-macos-fdopen/` removes `|| defined(TARGET_OS_MAC)` from
+zutil.h:140 → Unix default (`OS_CODE 3`, `fdopen` untouched). Verified: patch
+applies `-p1` to pristine; `libz.a` (104472 bytes) rebuilt. Upstream-able.
+
+### native attempt 3 fix (XeTeX macOS font backend — link, not source)
+
+The native link succeeded but the binary crashed at **load**:
+
+```
+dyld[]: symbol not found in flat namespace '_OBJC_CLASS_$_NSFontManager'
+```
+
+On darwin, TL's configure compiles XeTeX's native CoreText/AppKit font backend
+(`xetexdir/XeTeXFontMgr_Mac.mm`) instead of the fontconfig backend used on Linux.
+That object references CoreFoundation/CoreGraphics/CoreText + AppKit
+`NSFontManager` (402 undefined symbols; `nm -u` + the `.deps/…XeTeXFontMgr_Mac.Po`
+confirm the source). `-Wl,-undefined,dynamic_lookup` let them link, but the ObjC
+class ref binds eagerly at load and dyld can't find it → the binary won't even
+start. This is exactly the backend a normal MacTeX xetex uses; it just needs the
+Apple frameworks linked, which busytex's Linux-oriented `OPTS_BUSYTEX_LINK`
+omits.
+
+Fix (make-variable override, not a patch): append
+`-framework CoreFoundation -framework CoreGraphics -framework CoreText -framework Foundation -framework AppKit`
+to `OPTS_BUSYTEX_LINK_native`. Relinked (`rm build/native/busytex{,.o}` →
+`make build/native/busytex`); the binary now loads and all engines report their
+versions. The native busytex is a build-host-only tool (helper tools + install-tl
+format dumping); the shipped **wasm** engine uses its own fontconfig backend
+(emcc never compiles the Mac backend), so the font backend divergence does not
+reach the artifact. `.fmt` dumps are font-backend-independent. Benign link
+warnings only (duplicate-library de-dup; `__common` alignment reduced 0x8000→0x4000).

@@ -268,3 +268,41 @@ experiment.
 parked-container bullet, M0 plan risk bullet, and M2-notes updated in
 the same commit (lesson from the pivot review: the front-door docs
 drift first).
+
+## 2026-07-22 — M0 item 5N: native `make artifacts` COMPLETE (loop)
+
+**Done.** `coder` agent drove the full vendored busytex build raw on
+arm64 macOS, offline from the verified cache: **~70 min wall end to
+end** (prep 12 s; native ~37 min across three attempts; basic 6 min;
+wasm 29 min; bundle 1 min) vs. never finishing under Rosetta. `dist/`
+(139 MB, git-ignored): busytex.wasm 28.9 MB (`WebAssembly.validate` =
+true; hashes recorded in SHA256SUMS + the journal), busytex.js, the two
+byte-identical MIT glue files, 8 `.fmt` formats, texlive-basic bundle
+pair. `make artifacts` re-runs as an 11 s no-op. Vendored tree pristine
+throughout; macOS fixes = four make-variable overrides + two
+upstream-able patches in build/patches/ (libpng `<fp.h>` and zlib
+`fdopen` — both the same `TARGET_OS_MAC` false-positive root cause,
+each with HEADER.md).
+
+**Failed → fixed.** (1) libpng/zlib classic-Mac guards (patches above).
+(2) Native busytex dyld-crashed on load: darwin TL compiles XeTeX's
+CoreText/AppKit font backend; ObjC class refs bind eagerly despite
+`-undefined,dynamic_lookup` — fixed by linking the five Apple
+frameworks MacTeX's xetex links (build-host tool only; the wasm engine
+uses fontconfig, so this cannot reach artifact bytes). (3) The agent's
+monitor-wait failed a 4th time (attempt-1's make exited unobserved for
+~20 min); monitors are now abandoned project-wide for in-turn polling —
+recorded in the journal's stage log too. (4) Review (request-changes):
+offline claim was unenforced on the host (no `--network none` here) —
+added URL-blanking overrides so a missed pre-stage fails closed instead
+of fetching unpinned bytes; patch HEADER.md/notices wording made
+precise about diff context lines quoting permissively-licensed sources;
+journal gaps filled (interruption row, full 8-format inventory,
+CMAKE_wasm policy-floor note flagged for M2's hash check).
+
+**Predicted risks that did not bite.** darwin fontconfig and ICU built
+clean; expat was the only cmake-4 exposure; `-single_module` libtool
+probe failures harmless (static-only).
+
+**Deferred.** Reproducibility double-build → M2. Compile-to-PDF proof →
+6N (demo + Playwright), next.

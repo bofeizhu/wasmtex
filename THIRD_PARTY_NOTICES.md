@@ -64,7 +64,11 @@ in the M0 item-7 license audit) — no TeX Live program or package source is
 *vendored into this repository*. The engine sources (`texlive-source`,
 tag `texlive-2023.0`) and the texmf tree (the frozen `texlive2023-20230313.iso`)
 are fetched into an out-of-tree cache by `build/sources/fetch.sh` and consumed by
-the build; they are pinned by hash in `build/sources/pins.lock`. Expected license
+the build; they are pinned by hash in `build/sources/pins.lock`. One narrow
+exception: patch files under `build/patches/` carry small excerpts of the
+patched third-party sources (currently libpng and zlib, both permissively
+licensed) as diff context lines, under those sources' own licenses (see each
+patch's HEADER.md). Expected license
 families include the Knuth license, LPPL, GPL (some engines and tools), and OFL
 (fonts); each is enumerated per package when the tiered bundles are generated
 (DESIGN.md §5.4, §7).

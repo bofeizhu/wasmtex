@@ -1,3 +1,10 @@
+# SPDX-License-Identifier: MIT
+# WasmTeX original patch (see the sibling HEADER.md for what/why/upstream-able).
+# The diff's *changes* are original WasmTeX work, not derived from any GPL/AGPL
+# source. The context lines below necessarily quote small excerpts of the
+# patched zlib source, which remain under the zlib license — the
+# diff-context-excerpt licensing clause is stated in this patch's HEADER.md.
+# `patch` ignores this leading comment; it applies the diff from the '--- ' line.
 --- a/libs/zlib/zlib-src/zutil.h
 +++ b/libs/zlib/zlib-src/zutil.h
 @@ -137,7 +137,7 @@

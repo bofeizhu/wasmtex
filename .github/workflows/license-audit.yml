@@ -5,22 +5,14 @@ on:
     branches: [main]
   pull_request:
 
+# Provenance / license audit (DESIGN.md §2 + §7). The checks live in
+# build/audit/license-audit.sh so the audit is one command locally and in CI;
+# this job is a thin wrapper. The script needs only git + coreutils (already on
+# the runner), so there is nothing to install.
 jobs:
   license-audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: License audit (skeleton)
-        run: |
-          set -euo pipefail
-          if [ ! -f THIRD_PARTY_NOTICES.md ]; then
-            echo "ERROR: THIRD_PARTY_NOTICES.md is missing" >&2
-            exit 1
-          fi
-          if [ -d runtime ]; then
-            if grep -rIn --exclude='*.md' --exclude='*.markdown' -E 'GNU General Public License|GPL-2\.0|GPL-3\.0|AGPL' runtime; then
-              echo "ERROR: copyleft marker found in runtime/" >&2
-              exit 1
-            fi
-          fi
-          echo "license-audit ok"
+      - name: Run license / provenance audit
+        run: bash build/audit/license-audit.sh

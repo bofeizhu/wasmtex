@@ -411,3 +411,40 @@ written hours before the swap).
 THIRD_PARTY_NOTICES.md, NOTICE, and license-audit.yml deliberately
 untouched — the 7N audit agent owns them in flight; its output will be
 reconciled to the new numbering at 7N close-out.
+
+## 2026-07-22 — M0 item 7N: notices audit + real license-audit CI (loop)
+
+**Done.** `coder` agent delivered `build/audit/license-audit.sh`
+(original, portable BSD/GNU, one command, fail-closed) with five
+checks: (a) every vendored busytex file carries a header naming the
+pinned commit AND the disk set is bijective with PROVENANCE.md; (b)
+manifest vendored-sha256s match disk (tamper check); (c) every patch
+has a HEADER.md sibling and the context-excerpt licensing clause; (d)
+no GPL/AGPL SPDX identifier in runtime/ or demo/ sources; (e) all
+original build//demo/ sources carry SPDX MIT headers (exemptions
+enumerated inline). license-audit.yml is now a thin wrapper calling
+the script. Each check was de-risked by inducing its failure mode
+(tamper, unmanifested file, stripped clause, planted GPL SPDX,
+headerless script) — every one FAILs non-zero, restores to green.
+
+**Audit sweep findings.** Vendored tree pristine and hash-clean;
+NOTICE/THIRD_PARTY_NOTICES/README acknowledgments mutually consistent.
+Fixed: stale milestone numbers in the notices (rewritten to stable
+event names — the rebase number churned M1→M3→M2 in one day, so
+numbers don't belong in notices); item-7 over-claims (it verifies the
+vendored inventory + deferral, not a full TL enumeration); Playwright
+dev-tooling posture now stated explicitly. Real violation found: the
+two .patch files carried no licensing clause — fixed with a 7-line
+comment each; `patch --forward` and `--reverse --dry-run` empirically
+re-verified, and the 11 s no-op `make artifacts` re-run from the main
+session confirms idempotent apply/skip intact. Left deliberately: the
+vendored upstream README's frozen header says "at M1" — editing it
+would break pristine vendoring + the manifest hash; lesson recorded
+(never embed volatile milestone numbers in frozen vendoring headers).
+
+**Process note.** Committed on direct user instruction with
+main-session verification (audit run green + no-op build) in lieu of
+the usual code-reviewer pass; the script's documented negative-test
+de-risking substitutes for the adversarial half of that review.
+
+**Remaining M0.** 8N acceptance run only.

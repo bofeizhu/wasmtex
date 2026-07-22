@@ -33,8 +33,8 @@ silent layout deviations).
 
 ## Lifecycle
 
-`build/upstream/` exists **only during M0**. At **M1** (rebase to TL 2026) the
-vendored machinery is dissolved into its permanent homes under the DESIGN.md §4
+`build/upstream/` exists **only during M0**. At the **TeX Live 2026 rebase**
+(DESIGN.md §9) the vendored machinery is dissolved into its permanent homes under the DESIGN.md §4
 layout — `build/engines/` (per-program builds and the combined multicall link),
 `build/formats/`, `build/bundles/`, and `build/patches/` — at which point this
 staging directory is removed. Nothing outside M0 should depend on paths under

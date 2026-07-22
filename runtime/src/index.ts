@@ -7,9 +7,12 @@
 // Public entry point for the `wasmtex` package. DESIGN.md §5 is the API
 // contract this module implements; M1 items 3–7 grow it into
 // `createTypesetter` / `Typesetter` / job objects over the correlated worker
-// protocol. For the M1 item-2 scaffold it exports only the package version and
-// the engine-name union, so the surface is honest, type-checked, and tested
-// without pulling in the worker or wasm.
+// protocol. Today it re-exports the item-3 protocol surface — `PROTOCOL_VERSION`
+// and the wire/API TYPES (envelopes, payloads, `EngineName`) — so hosts and the
+// forthcoming client can type against the protocol. The validators/guards
+// (`parseWorkerMessage`, `isForJob`, `transferablesOf`, `newJobId`) stay
+// internal to the package: `runtime/worker` and the client import them directly
+// from `./protocol`, so they are not part of the published value surface yet.
 
 /**
  * Semantic version of the `wasmtex` package.
@@ -21,15 +24,12 @@
  */
 export const version = '0.0.0';
 
-/**
- * Engines selectable via `typeset({ engine })` (DESIGN.md §5.1).
- *
- * - `xetex` — primary engine, fully supported end to end in v1 (engine pass →
- *   `xdvipdfmx` → PDF).
- * - `pdftex` — exposed in v1 only if it costs nothing beyond driver/format
- *   selection (DESIGN.md §9; `docs/plans/M1.md`).
- * - `luatex` — **reserved**. The enum member exists so the public surface is
- *   stable, but LuaTeX is unimplemented in v1: a job requesting it is rejected
- *   with a clear error. Its presence here is not a claim of support.
- */
-export type EngineName = 'xetex' | 'pdftex' | 'luatex';
+// Protocol version is a value; re-exported explicitly (a `export type *` would
+// not carry it).
+export { PROTOCOL_VERSION } from './protocol';
+
+// The protocol TYPE surface — `EngineName`, the client/worker envelopes, and
+// their payload types — is the public subset hosts type against. `export type *`
+// re-exports exactly protocol.ts's exported types (its value exports, the
+// guards, are intentionally excluded).
+export type * from './protocol';

@@ -505,6 +505,32 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-23 — M1 item 3: correlated protocol module (loop)
+
+**Done.** `coder` agent delivered `runtime/src/protocol.ts` — the §5.2
+constitutional core, original design (envelopes `{type, v, jobId}`,
+discriminated unions both directions, recognizably divergent from the
+journaled upstream glue contract): branded JobId (counter+random, no
+Date.now), `isForJob` as the single correlation gate, total
+never-throwing `parseWorkerMessage` that rebuilds accepted messages as
+fresh literals, `transferablesOf` with dedup + SAB exclusion. No
+cancel message by design (cancel = worker termination, §5.2).
+Diagnostics deliberately off the wire (client-side parser, item 8 —
+rebase-proofing rule 2). 29 protocol tests incl. the concrete
+stale-result-vs-newer-job scenario and prototype-pollution suites.
+
+**Review: BLOCKER caught and fixed.** The parser-table lookup walked
+the prototype chain — `type:"constructor"` resolved to Object's
+constructor and `Object(data, jobId)` returned the HOSTILE OBJECT BY
+REFERENCE (reviewer proved it empirically), falsifying the module's
+fresh-literal invariant at the exact trust boundary it defends. Fixed
+with an `Object.hasOwn` own-key guard + a rejection test suite over
+inherited-member type values (constructor/toString/__proto__/…).
+Ride-alongs: transferablesOf now documents the subarray
+whole-buffer-detach hazard; fresh-literal claim scoped precisely
+(byte payloads referenced by design); SAB-exclusion branch now tested.
+Re-verified: typecheck clean, 29/29, audit green.
+
 ## 2026-07-22 — M1 opened: Runtime v1 plan
 
 **Done.** docs/plans/M1.md authored and committed: §5 API over a

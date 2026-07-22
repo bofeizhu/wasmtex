@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: MIT
+# Provenance: original work authored in the WasmTeX repository (see LICENSE).
+#   Not derived from any third-party source. The URLs, commits and digests
+#   recorded below point at upstream busytex (MIT) and official TeX Live / TUG
+#   distribution channels; the source *contents* they name carry their own
+#   licenses (see THIRD_PARTY_NOTICES.md and DESIGN.md 2/7).
+#
+# WasmTeX pinned external inputs (M0 item 2).
+# =============================================================================
+# Every external input the reproducible build depends on is pinned here. This
+# file is the single source of truth read by build/sources/fetch.sh; it is
+# machine-readable and hand-editable. The format and the rules for
+# adding/updating a pin are documented in build/sources/README.md.
+#
+# FORMAT (schema 1):
+#   * The file is a sequence of blocks. A block begins with a header line
+#     "[<id>]" and continues with "key = value" lines until the next header or
+#     end of file. Blank lines and lines beginning with "#" are ignored.
+#   * Whitespace around "=" and around values is trimmed. Values never span
+#     lines. Ids are unique.
+#   * "kind" selects how fetch.sh treats a block:
+#       file      - download <url> to <cache>/<file>; verify every hash present
+#                   (sha256 and/or sha512). At least one content hash required.
+#       git       - clone <url> into the cache, hard-verify HEAD == <commit>,
+#                   emit the deterministic archive <archive> and verify
+#                   <archive_sha256>. The commit hash is the integrity anchor.
+#       container - toolchain image pins; recorded for provenance, NOT fetched
+#                   (built locally by build/toolchain/build-image.sh).
+#       meta      - schema/bookkeeping; not fetched.
+#
+# Anything not pinned here is refused by fetch.sh. Do not hand-add a source
+# without a hash. See README.md "How verification failures present".
+# =============================================================================
+
+[meta]
+kind        = meta
+schema      = 1
+milestone   = M0
+description = Faithful-baseline inputs: upstream busytex (MIT) + TeX Live 2023.
+# Recorded so archive-hash reproducibility is interpretable (git archive framing
+# is git-version sensitive; see README). Tool versions used to compute the
+# hashes below on the authoring host:
+tools       = git 2.48.1, curl 8.7.1
+
+# --- Upstream build machinery -------------------------------------------------
+# busytex/busytex at the pinned commit. The commit hash is the integrity anchor
+# (fetch.sh hard-verifies `git rev-parse HEAD`). archive_sha256 additionally
+# pins a deterministic uncompressed tar of the checkout, produced by:
+#   git archive --format=tar --prefix=busytex-<short>/ <commit>
+# MIT per upstream README (upstream has no top-level LICENSE file); recorded in
+# THIRD_PARTY_NOTICES.md when the machinery is vendored at M0 item 3.
+[busytex]
+kind           = git
+url            = https://github.com/busytex/busytex.git
+commit         = f2bd7b11ee1b7b093638321c1f3e5d70389d307b
+archive        = busytex-f2bd7b11.tar
+archive_sha256 = f670beff2c3a5afb78ead20aa83d645a856513db68a0670155f0b6658df259f2
+license        = MIT
+comment        = upstream multicall WASM TeX build machinery; vendored at M0 item 3
+
+# --- TeX Live 2023 engine sources ---------------------------------------------
+# What upstream busytex builds against (Makefile URL_texlive). GitHub serves
+# this as an on-the-fly archive of the branch tags/texlive-2023.0; such
+# auto-archives are not guaranteed byte-stable across GitHub infra changes, so
+# a hash mismatch here means "GitHub re-generated the tarball", not corruption
+# (see README "Reproducibility caveats"). sha256 is over the .tar.gz bytes
+# upstream feeds to `tar -xz`.
+[texlive-source]
+kind    = file
+url     = https://github.com/TeX-Live/texlive-source/archive/refs/heads/tags/texlive-2023.0.tar.gz
+file    = texlive-source-2023.0.tar.gz
+sha256  = b14ec8c6873ae04d77cd1de239b660e30f3d6f0e97449aee67e3300ea4a259fd
+bytes   = 107708547
+license = mixed (TeX Live source tree: Knuth/LPPL/GPL/... see THIRD_PARTY_NOTICES.md)
+comment = Makefile URL_texlive; tag texlive-2023.0
+
+# --- Dependency tarballs fetched separately by the upstream Makefile ----------
+# These are the ONLY libraries the busytex Makefile downloads outside the TL
+# source tree (TL vendors harfbuzz/icu/freetype/zlib/graphite2/... itself).
+# Enumerated from the Makefile at the pinned commit: URL_expat, URL_fontconfig.
+[expat]
+kind    = file
+url     = https://github.com/libexpat/libexpat/releases/download/R_2_5_0/expat-2.5.0.tar.gz
+file    = expat-2.5.0.tar.gz
+sha256  = 6b902ab103843592be5e99504f846ec109c1abb692e85347587f237a4ffa1033
+bytes   = 719235
+license = MIT
+comment = Makefile URL_expat
+
+[fontconfig]
+kind    = file
+url     = https://www.freedesktop.org/software/fontconfig/release/fontconfig-2.13.96.tar.gz
+file    = fontconfig-2.13.96.tar.gz
+sha256  = dbabc038d41cfc3f14da1b173ae103ba7cc678efb17e091b9e801c6286b3f684
+bytes   = 2133746
+license = MIT-style (fontconfig)
+comment = Makefile URL_fontconfig
+
+# --- TeX Live 2023 full ISO (texmf repository for install-tl) -----------------
+# texlive2023-20230313.iso is the frozen TL 2023 image. Upstream fetches it as a
+# 5-part split cache from its own GitHub release (Makefile
+# URL_texlive_full_iso_cache) or, commented, from the rotating CTAN "current"
+# Images URL. Neither is pin-safe long term (the CTAN yearly URL dies when the
+# next TL ships). We fetch the single frozen ISO from a TUG *historic* archive
+# mirror instead, which keeps 2023 permanently. See README for the mirror list
+# and rotation rationale.
+#
+# sha512 is the mirror's own published checksum (…/texlive2023-20230313.iso.sha512),
+# recorded here so fetch.sh cross-checks every download against TUG's published
+# value. sha256 is our recorded content hash over the same bytes (added below).
+[texlive-iso]
+kind         = file
+url          = https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/2023/texlive2023-20230313.iso
+file         = texlive2023-20230313.iso
+sha512       = 3a78cc59d562a9224543b90318ecb28d3ae7f975c2a031e15304a20b8fb0abac6e0ed63012c0bdf8f5edd39380caf122a17c948c05b28ea38fe90f2f0b19bdba
+sha256       = 620923de5936ab315926e81de2cb8253a9c626fb7e03d8ffe0d424598eb32f94
+bytes        = 5123467264
+checksum_url = https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/2023/texlive2023-20230313.iso.sha512
+mirror       = TUG historic archive (TU-Chemnitz)
+license      = TeX Live aggregate (per-package; see THIRD_PARTY_NOTICES.md)
+comment      = frozen TL2023 image; historic mirror only, never a rotating CTAN 'current' URL
+
+# --- Toolchain container (M0 item 1) ------------------------------------------
+# Recorded for provenance; NOT fetched by fetch.sh. The build runs inside the
+# image built by build/toolchain/build-image.sh. The artifact-reproducibility
+# anchor is image_id (it covers apt resolution AND the un-checksummed emsdk
+# downloads that happen at image-build time). ubuntu_digest is the linux/amd64
+# platform digest consumed by the Dockerfile FROM; ubuntu_index_digest is the
+# multi-arch manifest-list digest, cross-reference only. Keep in sync with
+# build/toolchain/Dockerfile.
+[toolchain-image]
+kind                = container
+ubuntu_digest       = sha256:0d779ea97881505f5ef0039336ee85edba27519bdba968c284c86ee066a973c8
+ubuntu_index_digest = sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
+emscripten          = 3.1.43
+emsdk_commit        = d9c66fa2c2cd78daeb672967b2ef12bf18adf842
+image_id            = sha256:1b37eac1bc6f3ec5dd369aed5a65889451fe08fbe8b91f579717cb59b436dce6
+platform            = linux/amd64
+comment             = built locally; see build/toolchain/. image_id is the repro anchor.

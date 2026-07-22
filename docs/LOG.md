@@ -99,3 +99,39 @@ already produced, so deliberately left for a future re-pin commit.
 Item 1's "record build args in pins.lock" lands with item 2, which must
 carry `UBUNTU_DIGEST`, `EMSCRIPTEN_VERSION`, `EMSDK_COMMIT`, and the
 image ID above.
+
+## 2026-07-22 — M0 item 2: pins.lock + fetch.sh (loop, iterations 4–6)
+
+**Attempted / done.** `coder` agent authored `build/sources/pins.lock`
+(INI-style blocks, awk-parsed — macOS ships bash 3.2, no associative
+arrays), `fetch.sh` (atomic tmp-then-rename downloads, per-pin sha256
+and/or sha512, refuses unpinned or non-hex hashes, idempotent), and the
+real sources README. All six pins recorded: busytex `f2bd7b1` (git,
+commit-verified + archive hash), texlive-source 2023.0, expat 2.5.0 and
+fontconfig 2.13.96 (the only libs upstream fetches outside the TL tree),
+the 4.77 GiB TL 2023 ISO, and the item-1 container pins. Full fetch ran:
+~10 min cold (ISO at ~9 MB/s), 9 s idempotent re-verify of 4.90 GiB.
+ISO checksum three-way agreement: downloaded bytes == mirror's published
+.sha512 == lock. Review (request-changes): duplicate-block-id guard
+added (dup ids silently resolved to the first block — reproducibility
+hazard), remediation hints on mismatch paths, README notes upstream's
+unpinned example-asset wgets. Re-verified green after fixes.
+
+**Failed → fixed.** (1) The agent initially wrote a real-looking
+*invented* sha256 as the ISO placeholder; caught before landing —
+replaced with a non-hex `PENDING-FIRST-FETCH` sentinel that fetch.sh
+treats as unset. Lesson: never write hash-shaped placeholders. (2)
+`ftp.math.utah.edu` (the mirror M0.md suggested) fails TLS through this
+environment's proxy; switched to `ftp.tu-chemnitz.de/pub/tug/historic/`
+(range-capable, publishes .sha512). (3) Agent's completion-waiter
+failed to wake it after the ISO download; nudged from the main session.
+
+**Deferred.** `texlive-source` is pinned via a mutable git-svn branch
+ref URL (byte-matches upstream's own `URL_texlive`; sha256 fails
+closed) — switching to the underlying commit's codeload URL would drop
+the mutable-ref dependency; revisit at item 3/4. GitHub on-the-fly
+archives are not guaranteed byte-stable; a future hash mismatch means
+"GitHub regenerated the tarball" (loud fail is the intended signal).
+Upstream's `download-native` release binaries and rolling-`.deb` bundle
+path deliberately not pinned (documented in the README); busytex
+THIRD_PARTY_NOTICES entry lands with item 3 when code is vendored.

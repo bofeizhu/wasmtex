@@ -64,3 +64,38 @@ CI execution of the M0 acceptance checks deferred to M4 per DESIGN.md §9
 **Review.** `code-reviewer` pass on this diff: request-changes (record the
 `build/upstream/` layout extension in DESIGN.md at creation time; label
 the CI-deferral deviation; three nits). All applied before commit.
+
+## 2026-07-22 — M0 item 1: toolchain container (loop, iterations 2–3)
+
+**Attempted / done.** `coder` agent built `build/toolchain/`: Dockerfile
+(ubuntu:22.04 @ amd64 digest `0d779ea9…`, forced `--platform
+linux/amd64`; emsdk at commit `d9c66fa2` = tag 3.1.43; apt set = upstream
+busytex CI prerequisites ∪ what its Makefile invokes that a bare
+ubuntu:22.04 lacks, incl. `libarchive-tools` for the split-ISO bsdtar),
+`build-image.sh`, real README contract. Built image ID
+`sha256:1b37eac1…b436dce6` — the container pin for pins.lock (item 2).
+Smoke check passed and was re-verified from the main session: emcc 3.1.43,
+`uname -m` = x86_64. Provenance: only busytex (MIT) at the pinned commit
+was consulted; no GPL/AGPL source opened.
+
+**Failed → fixed.** (1) False alarm: main session declared the image build
+"died" because `docker images` showed nothing and no build process was
+found — in fact BuildKit tags the image only at the export stage, and the
+first probe raced the ~5.5 min Rosetta build (apt layer alone 253 s).
+Lesson: verify container builds via the build's exit code or log, never a
+point-in-time `docker images`. (2) Review (request-changes) caught the
+README attributing non-reproducibility to apt alone while `emsdk install`
+also fetches un-checksummed binaries from storage.googleapis.com at
+image-build time; fixed — the built-image digest is the pin covering
+both. Also fixed: misleading ARG comment; smoke check now also exercises
+the non-login-shell `ENV` path.
+
+**Timing.** Cold amd64-under-Rosetta image build ≈ 5.5 min (apt 254 s,
+emsdk 71 s). Warm rebuild fully cache-hit with identical image ID.
+
+**Deferred.** emsdk layer keeps its git history + download cache
+(hundreds of MB of image bloat); slimming it would change the image ID
+already produced, so deliberately left for a future re-pin commit.
+Item 1's "record build args in pins.lock" lands with item 2, which must
+carry `UBUNTU_DIGEST`, `EMSCRIPTEN_VERSION`, `EMSDK_COMMIT`, and the
+image ID above.

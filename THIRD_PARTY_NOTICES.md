@@ -118,3 +118,13 @@ the headless-browser hello-world PDF smoke; it is not vendored, is absent from
 `runtime/`, and ships in nothing WasmTeX distributes, so it carries no
 third-party-notice obligation. It is recorded here only so its omission from the
 inventory above is a stated posture rather than a gap.
+
+The `runtime/` package's own `devDependencies` — `typescript` and `vitest`
+(both MIT/Apache-family dev tooling) and, from M1 item 5, **`esbuild`**
+(MIT, `runtime/package.json` `devDependencies`, pinned exact) — are build/test
+tools, not distributed. `esbuild` bundles `runtime/worker/entry.ts` into the
+single self-contained classic-worker script `runtime/dist/worker.js`
+(`npm run build:worker`); it injects no runtime of its own, so that output is
+100% WasmTeX-authored MIT code and the tool itself ships in nothing WasmTeX
+distributes. Like the engine build toolchain, these carry no third-party-notice
+obligation and are recorded here only as a stated posture.

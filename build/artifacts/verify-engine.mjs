@@ -61,6 +61,31 @@ for (const p of [wasmPath, jsPath]) {
 }
 console.log(`   [verify] dist: ${distDir}`);
 
+// --- check 0: assets.json exists + parses (M0 item-4 deferral) ----------------
+// gen-assets.mjs emits dist/assets.json in the dist stage; the runtime consumes
+// ONLY this inventory (M1 rebase-proofing rule 1). A dist/ that runs the engine
+// but ships a missing/broken inventory is still broken for the runtime, so the
+// execution gate now also fails the build on a malformed assets.json.
+const assetsJsonPath = join(distDir, 'assets.json');
+if (!existsSync(assetsJsonPath)) {
+  fail(`missing artifact: ${assetsJsonPath} (run the dist stage / gen-assets.mjs first)`);
+}
+let assetsInventory;
+try {
+  assetsInventory = JSON.parse(readFileSync(assetsJsonPath, 'utf8'));
+} catch (e) {
+  fail(`assets.json did not parse as JSON: ${e && e.message ? e.message : e}`);
+}
+if (
+  !assetsInventory ||
+  typeof assetsInventory !== 'object' ||
+  !Array.isArray(assetsInventory.assets) ||
+  assetsInventory.assets.length === 0
+) {
+  fail('assets.json is not an object with a non-empty "assets" array');
+}
+pass(`assets.json parses (${assetsInventory.assets.length} inventory entries)`);
+
 // --- check 1: env-import sanity (cheap; catches the empty-archive class) ------
 const wasmBytes = readFileSync(wasmPath);
 const wasmModule = await WebAssembly.compile(wasmBytes).catch((e) =>

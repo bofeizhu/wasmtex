@@ -377,6 +377,83 @@ export type WorkerMessage =
 export type ProtocolMessage = ClientMessage | WorkerMessage;
 
 // ---------------------------------------------------------------------------
+// Worker → client envelope constructors
+//
+// The worker (`runtime/worker`) builds EVERY outbound envelope through these,
+// so the constitutional invariants — a correct `type`, the current protocol
+// `v`, and the request's `jobId` — are stamped in exactly one place and can
+// never be forgotten at a call site (DESIGN.md §5.2). Each returned literal is
+// shaped to pass {@link parseWorkerMessage} unchanged (asserted in the protocol
+// tests), so what the worker emits and what the client accepts cannot drift.
+// Optional byte/detail fields are included only when defined, honouring
+// `exactOptionalPropertyTypes`.
+// ---------------------------------------------------------------------------
+
+/** Build an {@link InitializedMessage} for `jobId`. */
+export function initializedMessage(jobId: JobId): InitializedMessage {
+  return { type: 'initialized', v: PROTOCOL_VERSION, jobId };
+}
+
+/** Build a {@link LogMessage} for one already line-buffered transcript line. */
+export function logMessage(
+  jobId: JobId,
+  stream: LogStream,
+  line: string,
+): LogMessage {
+  return { type: 'log', v: PROTOCOL_VERSION, jobId, stream, line };
+}
+
+/** Build a {@link ProgressMessage} for a §5.3 phase. */
+export function progressMessage(
+  jobId: JobId,
+  phase: ProgressPhase,
+): ProgressMessage {
+  return { type: 'progress', v: PROTOCOL_VERSION, jobId, phase };
+}
+
+/** The variable fields of a {@link ResultMessage} (its `v`/`type`/`jobId` are stamped by {@link resultMessage}). */
+export interface ResultFields {
+  readonly ok: boolean;
+  readonly exitCode: number;
+  readonly log: string;
+  readonly stats: CompileStats;
+  readonly pdf?: Uint8Array;
+  readonly synctex?: Uint8Array;
+}
+
+/** Build a terminal {@link ResultMessage}; `pdf`/`synctex` are carried only when present. */
+export function resultMessage(jobId: JobId, fields: ResultFields): ResultMessage {
+  return {
+    type: 'result',
+    v: PROTOCOL_VERSION,
+    jobId,
+    ok: fields.ok,
+    exitCode: fields.exitCode,
+    log: fields.log,
+    stats: fields.stats,
+    ...(fields.pdf !== undefined ? { pdf: fields.pdf } : {}),
+    ...(fields.synctex !== undefined ? { synctex: fields.synctex } : {}),
+  };
+}
+
+/** Build a structured {@link FatalMessage}; `detail` is carried only when provided. */
+export function fatalMessage(
+  jobId: JobId,
+  code: FatalCode,
+  message: string,
+  detail?: string,
+): FatalMessage {
+  return {
+    type: 'fatal',
+    v: PROTOCOL_VERSION,
+    jobId,
+    code,
+    message,
+    ...(detail !== undefined ? { detail } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The correlation gate (DESIGN.md §5.2, constitutional)
 // ---------------------------------------------------------------------------
 
@@ -594,6 +671,214 @@ export function parseWorkerMessage(data: unknown): WorkerMessage | null {
     // attacker's object BY REFERENCE. Object.hasOwn (ES2022) closes it.
     const parser = Object.hasOwn(WORKER_PARSERS, type)
       ? (WORKER_PARSERS as Record<string, WorkerMessageParser>)[type]
+      : undefined;
+    return parser ? parser(data, jobId) : null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Total validator for the client→worker trust boundary
+//
+// `parseClientMessage` mirrors `parseWorkerMessage` in the OTHER direction: the
+// worker cannot assume the two `init`/`compile` envelopes it receives are
+// well-formed just because our own client mints them (a hostile page in the
+// same realm can post to the Worker too — DESIGN.md §5.2/§10 defence in depth).
+// It is total (returns `null`, never throws) and rebuilds each accepted message
+// as a FRESH literal, so no attacker-controlled extra key or `__proto__` entry
+// survives. `Uint8Array` file payloads are referenced, not copied (the parser
+// never reads their bytes; structuredClone already stripped subclass identity).
+//
+// The validated inventory keeps only the fields the WORKER needs to locate
+// assets (`path`, plus `bytes`/`sha256`/`role` when validly typed); item 4's
+// forward-compat schema extras (M4 provided-package indexes, consumed
+// client-side) are intentionally dropped here rather than passed through.
+// ---------------------------------------------------------------------------
+
+/** The v1 engine identifiers, as data (keeps {@link isEngineName} and {@link EngineName} from drifting). */
+const ENGINE_NAMES = ['xetex', 'pdftex', 'luatex'] as const satisfies readonly EngineName[];
+
+function isEngineName(x: unknown): x is EngineName {
+  return typeof x === 'string' && (ENGINE_NAMES as readonly string[]).includes(x);
+}
+
+function isAutoOff(x: unknown): x is AutoOff {
+  return x === 'auto' || x === 'off';
+}
+
+function isPassPolicy(x: unknown): x is PassPolicy {
+  return x === 'auto' || (isInt(x) && x >= 1 && x <= 5);
+}
+
+function isProjectFile(x: unknown): x is ProjectFile {
+  return typeof x === 'string' || x instanceof Uint8Array;
+}
+
+function isNonEmptyString(x: unknown): x is string {
+  return typeof x === 'string' && x.length > 0;
+}
+
+/**
+ * A safe project-relative path: non-empty, and every `/`-segment is a plain
+ * name — no `..` (directory traversal that would escape the job dir and persist
+ * across jobs) and no empty segment (which signals an absolute path, a leading/
+ * trailing slash, or a `//`). This is the trust-boundary bar (item 3): staging
+ * or `chdir`-ing an unvalidated `../…`/`/…` path could write outside the
+ * remounted MEMFS job dir or steer the working directory into `/texlive`.
+ */
+function isSafeProjectPath(x: unknown): x is string {
+  if (typeof x !== 'string' || x.length === 0) return false;
+  for (const segment of x.split('/')) {
+    if (segment === '' || segment === '..') return false;
+  }
+  return true;
+}
+
+/** Rebuild a validated `path → contents` map; skip `__proto__`, reject unsafe paths. */
+function parseProjectFiles(x: unknown): ProjectFiles | null {
+  if (!isPlainRecord(x)) return null;
+  const out: Record<string, ProjectFile> = {};
+  for (const key of Object.keys(x)) {
+    if (key === '__proto__') continue; // never assign through the prototype slot
+    if (!isSafeProjectPath(key)) return null; // reject traversal / absolute / empty-segment keys
+    const value = x[key];
+    if (!isProjectFile(value)) return null;
+    out[key] = value; // bytes referenced, not copied (by design)
+  }
+  return out;
+}
+
+/** Rebuild one inventory entry: `path` required, known metadata carried when validly typed, extras dropped. */
+function parseAssetEntry(x: unknown): AssetEntry | null {
+  if (!isPlainRecord(x)) return null;
+  if (!isNonEmptyString(x['path'])) return null;
+  const bytes = x['bytes'];
+  const sha256 = x['sha256'];
+  const role = x['role'];
+  return {
+    path: x['path'],
+    ...(isInt(bytes) && bytes >= 0 ? { bytes } : {}),
+    ...(typeof sha256 === 'string' ? { sha256 } : {}),
+    ...(typeof role === 'string' ? { role } : {}),
+  };
+}
+
+function parseAssetsInventory(x: unknown): AssetsInventory | null {
+  if (!isPlainRecord(x)) return null;
+  const rawAssets = x['assets'];
+  if (!Array.isArray(rawAssets)) return null;
+  const assets: AssetEntry[] = [];
+  for (const raw of rawAssets) {
+    const entry = parseAssetEntry(raw);
+    if (entry === null) return null;
+    assets.push(entry);
+  }
+  const schemaVersion = x['schemaVersion'];
+  const generated = x['generated'];
+  return {
+    ...(isInt(schemaVersion) ? { schemaVersion } : {}),
+    ...(typeof generated === 'string' ? { generated } : {}),
+    assets,
+  };
+}
+
+function parseBundleSelection(x: unknown): BundleSelection | null {
+  if (!isPlainRecord(x)) return null;
+  const preload = x['preload'];
+  const onDemand = x['onDemand'];
+  if (!isStringArray(preload) || !isStringArray(onDemand)) return null;
+  return { preload: [...preload], onDemand: [...onDemand] };
+}
+
+function parseAssetsConfig(x: unknown): AssetsConfig | null {
+  if (!isPlainRecord(x)) return null;
+  if (!isNonEmptyString(x['baseUrl'])) return null;
+  const inventory = parseAssetsInventory(x['inventory']);
+  if (inventory === null) return null;
+  const bundles = parseBundleSelection(x['bundles']);
+  if (bundles === null) return null;
+  return { baseUrl: x['baseUrl'], inventory, bundles };
+}
+
+type ClientMessageParser = (
+  fields: Record<string, unknown>,
+  jobId: JobId,
+) => ClientMessage | null;
+
+function parseInit(
+  fields: Record<string, unknown>,
+  jobId: JobId,
+): InitMessage | null {
+  const assets = parseAssetsConfig(fields['assets']);
+  if (assets === null) return null;
+  return { type: 'init', v: PROTOCOL_VERSION, jobId, assets };
+}
+
+function parseCompile(
+  fields: Record<string, unknown>,
+  jobId: JobId,
+): CompileMessage | null {
+  const files = parseProjectFiles(fields['files']);
+  if (files === null) return null;
+  const entry = fields['entry'];
+  const engine = fields['engine'];
+  const passes = fields['passes'];
+  const bibliography = fields['bibliography'];
+  const index = fields['index'];
+  const synctex = fields['synctex'];
+  // `entry` steers the engine's chdir + jobname; hold it to the same safe-path
+  // bar as the file keys so `../x.tex` / `/etc/x` cannot escape the job dir.
+  if (!isSafeProjectPath(entry)) return null;
+  if (!isEngineName(engine)) return null;
+  if (!isPassPolicy(passes)) return null;
+  if (!isAutoOff(bibliography)) return null;
+  if (!isAutoOff(index)) return null;
+  if (typeof synctex !== 'boolean') return null;
+  return {
+    type: 'compile',
+    v: PROTOCOL_VERSION,
+    jobId,
+    files,
+    entry,
+    engine,
+    passes,
+    bibliography,
+    index,
+    synctex,
+  };
+}
+
+/**
+ * Per-`type` client parser table. `satisfies Record<ClientMessage['type'], …>`
+ * locks it to the client union — adding a client message variant without a
+ * parser (or vice versa) fails to typecheck.
+ */
+const CLIENT_PARSERS = {
+  init: parseInit,
+  compile: parseCompile,
+} satisfies Record<ClientMessage['type'], ClientMessageParser>;
+
+/**
+ * Validate and normalise a value received by the worker from the client.
+ *
+ * Total (returns `null` for every non-conforming input, never throws) with the
+ * same guarantees as {@link parseWorkerMessage}: a wrong/missing `v`, a
+ * missing/blank `jobId`, an unknown `type`, a worker→client `type`
+ * (`initialized`/`log`/`progress`/`result`/`fatal`), a prototype-inherited
+ * `type` (`Object.hasOwn` guard), and any per-type shape violation are all
+ * rejected; accepted messages are rebuilt as fresh literals.
+ */
+export function parseClientMessage(data: unknown): ClientMessage | null {
+  try {
+    if (!isPlainRecord(data)) return null;
+    if (data['v'] !== PROTOCOL_VERSION) return null;
+    const jobId = data['jobId'];
+    if (!isJobIdString(jobId)) return null;
+    const type = data['type'];
+    if (typeof type !== 'string') return null;
+    const parser = Object.hasOwn(CLIENT_PARSERS, type)
+      ? (CLIENT_PARSERS as Record<string, ClientMessageParser>)[type]
       : undefined;
     return parser ? parser(data, jobId) : null;
   } catch {

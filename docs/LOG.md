@@ -505,6 +505,40 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-23 — M1 item 5: worker entry (loop)
+
+**Done.** `coder` agent built the worker: `core.ts` (orchestration over
+an injected EngineHost; every outbound message via protocol
+constructors, jobId-correlated; luatex → unsupported-engine; item-6
+seam marked at planCompile), `engine-host.ts` (real emscripten host),
+`entry.ts` (thin classic-worker binding), `parseClientMessage` +
+outbound constructors added to the protocol at the item-3 trust bar,
+esbuild (exact-pinned devDep) bundling a 21 KB self-contained IIFE
+classic worker (zero imports/node builtins — grep-gated).
+
+**Execution model (empirical, journaled in M1-item5-journal.md).** One
+persistent MODULARIZE instance + 64 MiB linear-memory snapshot/restore
+after every callMain — REQUIRED (without reset the second run OOMs;
+with it reruns are byte-identical); MEMFS lives in the JS heap so the
+79 MB bundle and intermediates survive resets. Snapshot trick credited
+to upstream busytex_pipeline.js as behavioral reference (MIT).
+
+**Review: request-changes, five real catches, all fixed + tested.**
+(1) Failing xetex compiles had NO error text in result.log
+(batchmode) — switched to nonstopmode; integration test now asserts
+"Undefined control sequence" surfaces. (2) _flush_streams never
+called — TTY half-lines survived the memory reset and would surface
+under the NEXT job's id (§5.2 content violation); now flushed per run,
+3-job isolation test proves no bleed. (3) `..` path traversal escaped
+the job dir and persisted across jobs — rejected at the trust boundary
+with hostile tests. (4) Upstream's zero-past-header load assertion was
+dropped — restored (112 ms once/session); a rebase outgrowing the
+64 MiB header now fails loud. (5) Inherited always-on IndexedDB bundle
+cache (upstream --use-preload-cache) deviates from §5.2's
+optional-adapter stance — journaled; drop planned at the M2 bundle
+rebuild. 66/66 tests; hello-world through real wasm under node in
+2.7 s; multi-job isolation ~4 s.
+
 ## 2026-07-23 — M1 item 4: assets.json generator (loop)
 
 **Done.** `coder` agent delivered `build/manifest/gen-assets.mjs`

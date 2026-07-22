@@ -20,12 +20,14 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run build:worker",
+    "build:worker": "esbuild worker/entry.ts --bundle --format=iife --target=es2022 --platform=browser --outfile=dist/worker.js --sourcemap",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
+    "esbuild": "0.28.1",
     "typescript": "5.9.3",
     "vitest": "3.2.7"
   }

@@ -50,3 +50,13 @@ Repository code is licensed [MIT](LICENSE). The compiled release artifacts are
 an aggregate distribution of TeX Live programs under their own respective
 licenses; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the full
 inventory.
+
+## Acknowledgments
+
+WasmTeX's build machinery derives from
+[**busytex**](https://github.com/busytex/busytex) by Vadim Kantorov and
+contributors (MIT) — the upstream project that established the multicall
+WebAssembly TeX binary and its Emscripten build approach. WasmTeX would not
+exist without that work. See [`NOTICE`](NOTICE) and
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for full attribution and the
+vendored-file manifest.

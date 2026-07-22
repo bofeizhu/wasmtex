@@ -306,3 +306,36 @@ probe failures harmless (static-only).
 
 **Deferred.** Reproducibility double-build → M2. Compile-to-PDF proof →
 6N (demo + Playwright), next.
+
+## 2026-07-22 — M0 item 6N infrastructure: demo + Playwright; 5N REOPENED
+
+**Done.** `coder` agent built the 6N smoke vehicle: `demo/index.html`
+(minimal, no-DOCTYPE fixed in review, drives the vendored worker glue
+per its real message contract), `serve.mjs` (localhost static server;
+`application/wasm` MIME is load-bearing for `compileStreaming`;
+traversal-safe, verified by review probes), Chromium-only Playwright
+smoke (strict: ok flag, `%PDF-` header, `%%EOF` trailer, >1 KB, zero
+console/page errors; text probe non-gating due to xdvipdfmx stream
+compression), guarded `demo-smoke` CI job (skips cleanly without
+dist/ — review hardened the guard to all six artifacts and switched CI
+to `npm ci`). The glue's init/compile postMessage contract — including
+worker-relative asset resolution and the misleading
+init-failure-as-compile-error quirk — is documented in the journal's 6N
+notes as the reference for what M1's runtime replaces.
+
+**The catch: 5N reopened.** First-ever execution of `dist/busytex.wasm`
+aborted at `_png_get_header_ver`: the binary has 363 unresolved `env`
+imports stubbed to `abort(-1)` (harfbuzz 147, libpng 38, graphite2 22,
+zlib, TECkit, …). Root cause: on macOS the per-library objects compiled
+but the archive step produced **empty 96-byte `ar` files**, and the
+final link's `--unresolved-symbols=ignore-all` +
+`ERROR_ON_UNDEFINED_SYMBOLS=0` swallowed the emptiness silently.
+`WebAssembly.validate` is true for such a binary — 5N's acceptance was
+structurally satisfiable by a hollow artifact, which is exactly the gap
+6N exists to close. 5N is reopened with an added **execution gate**
+(engine `--version` under node) so this class of defect can never pass
+again. Review independently reproduced the import counts and approved
+the RED smoke as correct gate behavior.
+
+**Deferred.** The wasm archive/link fix is the reopened 5N unit, next
+iteration. 6N acceptance flips green unchanged once a sound wasm lands.

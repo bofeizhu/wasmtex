@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+# Demo-scoped ignores (root .gitignore also covers these globally). The npm
+# package and its lockfile arrive at M1; nothing under demo/ is committed as a
+# build artifact.
+
+# Installed by `npm install` in demo/ (Playwright browsers live in the shared
+# ms-playwright cache outside the repo and are never committed). package-lock.json
+# is committed so CI's `npm ci` installs the exact pinned tree.
+node_modules/
+
+# Playwright run outputs (reports, traces, screenshots).
+playwright-report/
+test-results/

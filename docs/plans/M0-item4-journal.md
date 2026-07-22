@@ -301,3 +301,94 @@ format dumping); the shipped **wasm** engine uses its own fontconfig backend
 (emcc never compiles the Mac backend), so the font backend divergence does not
 reach the artifact. `.fmt` dumps are font-backend-independent. Benign link
 warnings only (duplicate-library de-dup; `__common` alignment reduced 0x8000→0x4000).
+
+## 6N demo notes
+
+Item 6N (`demo/` + Playwright hello-world PDF proof) is the first time the
+item-5N **wasm** is actually *executed*. It documents the vendored-glue contract
+that M1's own runtime replaces, and — critically — it caught a latent 5N build
+defect that `WebAssembly.validate` + size checks could not.
+
+### Glue API contract (drives `dist/busytex_worker.js`; needed by M1)
+
+The demo drives the vendored worker/pipeline glue via its own `postMessage`
+protocol (learned from the vendored source + upstream busytex's MIT
+`example/example.html`; no GPL/AGPL wrapper opened). Two message shapes:
+
+- **init** — `{ busytex_js, busytex_wasm, preload_data_packages_js,
+  data_packages_js, texmf_local }`. The worker branches on
+  `busytex_wasm && busytex_js && preload_data_packages_js` being truthy and
+  constructs `BusytexPipeline`. Replies: `{ print }` log lines (many), then
+  `{ initialized: appletVersions }` once ready. `preload` omitted ⇒ `undefined`
+  ⇒ `preload !== false` ⇒ preloads. `verbose`/`driver` are *not* read at init.
+- **compile** — `{ files:[{path,contents}], main_tex_path, bibtex, verbose,
+  driver, data_packages_js }`. Reply: `{ pdf: Uint8Array|null, log: string,
+  exit_code: number, logs: [...] }`. `bibtex:false` (no `\bibliography`) selects
+  the 2-step `xetex → xdvipdfmx` sequence; `data_packages_js:null` = auto-resolve.
+  Exceptions arrive as `{ exception: string }`.
+
+**Asset-path contract (M1 must honour):** the worker resolves `busytex_js`
+(via `importScripts`), `busytex_wasm` (via `fetch`+`compileStreaming`), and each
+data-package `.js` — *and its `.data` sibling* — **relative to the worker's own
+URL**, not the page. The emscripten data-package loader falls back to
+`REMOTE_PACKAGE_BASE='texlive-basic.data'` (busytex.js/texlive-basic.js line
+~398) unless `Module.locateFile` is set, which it isn't. We serve the **repo
+root** on one origin and pass **absolute `/dist/...`** paths, so `/dist/…js`,
+`/dist/busytex.wasm`, `/dist/texlive-basic.data` all resolve regardless of where
+the page lives. `busytex.wasm` **requires `Content-Type: application/wasm`**
+(compileStreaming) — `demo/serve.mjs`'s MIME map is load-bearing. Classic worker
+(`importScripts`), no SharedArrayBuffer / COOP-COEP (matches DESIGN §10).
+
+**Init quirk (bites M1):** when preloading, the ctor's init path runs
+`report_applet_versions` — it invokes **every applet with `--version`**
+(pipeline.js:442-445). `compile()` then does `await this.Module`, so **any init
+failure surfaces as an "Exception during compilation"**, masking its true origin.
+The upstream source even flags it (`// TODO: exception here not caught?`).
+
+### Artifact defect found by 6N — item-5N wasm is functionally hollow (DEFERRED to 5N)
+
+The hello-world compile **aborts**, not in TeX but in the pipeline's init-time
+`xdvipdfmx --version` probe: `RuntimeError: Aborted(-1)` at
+`_png_get_header_ver` (busytex.js:8642), an emscripten *missing-function stub*
+(`err('missing function: png_get_header_ver'); abort(-1)`).
+
+Root cause (confirmed against `dist/busytex.wasm` + the 5N work tree):
+
+- `WebAssembly.Module.imports(busytex.wasm)` = **363 unresolved `env` imports**:
+  harfbuzz ×147, libpng ×38, graphite2 ×22, zziplib ×13, zlib
+  (deflate/inflate/gz/crc32/adler32), TECkit ×3, poppler C++ (`_ZN…`) ×27,
+  libpaper — i.e. **every third-party C/C++ dependency library**.
+- In the 5N work tree (`~/.cache/wasmtex/build/native/busytex/build/wasm/`), the
+  per-library **objects compiled fine** (zlib 15 `.o`, libpng 15, harfbuzz 58,
+  graphite2 29, zziplib 9, teckit 4, libpaper 2) but the **archives are empty
+  96-byte BSD `ar` files** (`__.SYMDEF SORTED`, zero members):
+  `libharfbuzz.a`, `libgraphite2.a`, `libTECkit.a`, `libpng.a`, `libz.a`,
+  `libzzip.a`, `libpaper.a`. freetype (4 MB), pplib (254 KB), icu (2.5 MB) built
+  real — those go through a different (working) archive path.
+- The archive step is `Makefile:287-288` (`$(MAKE_$*) -C <libdir>`, delegating to
+  each library's TeX-Live-generated Makefile). On macOS the objects were *not*
+  archived into the `.a`. The final multicall link (`Makefile:371-374`) carries
+  `-Wl,--unresolved-symbols=ignore-all -sERROR_ON_UNDEFINED_SYMBOLS=0`, so the
+  empty archives passed **silently** and emscripten stubbed all 363 symbols to
+  `abort(-1)`. `WebAssembly.validate` is true for such a binary, and 5N never
+  ran an engine — so the defect slipped 5N's acceptance and surfaced only here.
+
+**Impact:** the current `dist/` wasm cannot compile anything (XeTeX needs
+harfbuzz; xdvipdfmx needs libpng/zlib/poppler; even `--version` touches libpng).
+No demo-side workaround exists (the abort is inside the vendored glue's
+unconditional init probe, and a real xdvipdfmx run needs zlib anyway).
+
+**Ownership:** this is an **item-5N build defect**, out of 6N scope (6N must not
+modify `dist/` or vendored files). The `.o` files already exist, so the fix is
+likely a targeted archive-rule correction + relink rather than a full rebuild —
+but it belongs to the build milestone, and 5N/M2 must add an **execution** check
+(engine actually emits a PDF) so a hollow-but-valid binary can never pass again.
+
+**6N deliverables stand:** `demo/` (page + `serve.mjs`), the Playwright smoke,
+and the guarded CI job are complete and correct. The smoke is deliberately kept
+**strict** (asserts a real `%PDF-…%%EOF` > 1 KB) and therefore RED against the
+hollow artifact — it did its job as the M0 compile-to-PDF gate. It goes green
+unchanged once 5N produces a correctly-linked wasm. Everything up to the engine
+abort is proven working: page load, classic worker, `application/wasm` streaming
+instantiation, 79 MB `.data` fetch, package resolution, and the compile
+invocation (screenshot in the 6N run shows the full log through `Running…`).

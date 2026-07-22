@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<!--
+  SPDX-License-Identifier: MIT
+  SPDX-FileCopyrightText: 2026 WasmTeX contributors
+
+  Provenance: original work authored in the WasmTeX repository (see LICENSE).
+    Not derived from any third-party source code. It DRIVES the vendored
+    busytex (MIT) worker/pipeline glue in /dist via that glue's own
+    postMessage protocol; the message shapes were learned by reading the
+    vendored glue and upstream busytex's MIT example/example.html (consulted
+    per DESIGN.md §2, which permits busytex-MIT provenance). No GPL/AGPL
+    wrapper was opened.
+
+  M0 item 6N: a deliberately minimal CI smoke vehicle, not a product. It
+    loads the faithful-baseline artifacts from /dist, compiles a hello-world
+    LaTeX document with XeTeX (-> xdvipdfmx), and shows the PDF. The typed
+    §5 runtime that replaces this glue arrives at M1.
+
+  Engine choice: the glue's default (and only non-commented) driver is
+    'xetex_bibtex8_dvipdfmx' (see example.html + BusytexPipeline.compile).
+    XeTeX is also the M1-first engine (DESIGN.md §5.3, §9). We drive that
+    path directly: xelatex -> .xdv, then xdvipdfmx -> .pdf.
+
+  Same-origin only: every asset (/dist/... and this page) is served from one
+    origin by demo/serve.mjs. No CDN, no network after asset load
+    (DESIGN.md §10). The inline data: favicon suppresses a favicon request.
+-->
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="data:," />
+<title>WasmTeX demo (M0 faithful baseline)</title>
+
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    color: #1a1a1a;
+    background: #f6f6f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e6e6e6; background: #17181a; }
+  }
+  header {
+    padding: 14px 20px;
+    border-bottom: 1px solid rgba(128,128,128,.3);
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  header .sub { opacity: .65; font-size: 12px; }
+  #badge {
+    margin-left: auto;
+    font-weight: 650;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    background: #ddd; color: #333;
+  }
+  #badge.ok  { background: #1f9d55; color: #fff; }
+  #badge.err { background: #d64545; color: #fff; }
+  #badge.busy{ background: #d69e2e; color: #1a1a1a; }
+  main {
+    display: grid;
+    grid-template-columns: minmax(300px, 1fr) minmax(300px, 1.2fr);
+    gap: 14px;
+    padding: 16px 20px;
+  }
+  @media (max-width: 820px) { main { grid-template-columns: 1fr; } }
+  section { min-width: 0; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; opacity: .6; margin: 0 0 6px; }
+  textarea, pre, iframe {
+    width: 100%;
+    border: 1px solid rgba(128,128,128,.35);
+    border-radius: 8px;
+    background: rgba(128,128,128,.06);
+  }
+  textarea {
+    height: 190px;
+    padding: 10px;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    resize: vertical;
+    color: inherit;
+  }
+  pre#log {
+    height: 260px; margin: 0; padding: 10px; overflow: auto;
+    font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  iframe#preview { height: 460px; background: #fff; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 8px 0; flex-wrap: wrap; }
+  button {
+    font: inherit; font-weight: 600;
+    padding: 6px 16px; border-radius: 8px;
+    border: 1px solid rgba(128,128,128,.4);
+    background: #2563eb; color: #fff; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  a#download { font-weight: 600; }
+  a#download[aria-disabled="true"] { pointer-events: none; opacity: .4; }
+  code.k { font-family: ui-monospace, monospace; opacity: .8; }
+</style>
+
+<header>
+  <h1>WasmTeX &middot; demo</h1>
+  <span class="sub">M0 faithful baseline &middot; XeTeX &rarr; xdvipdfmx, in-browser</span>
+  <span id="badge" class="busy">loading&hellip;</span>
+</header>
+
+<main>
+  <section>
+    <h2>hello.tex (source)</h2>
+    <textarea id="tex" spellcheck="false">\documentclass[11pt]{article}
+\begin{document}
+Hello, WasmTeX!
+
+This PDF was typeset entirely in the browser by XeTeX, then converted
+to PDF with xdvipdfmx --- no server, no network after asset load.
+
+\[ E = mc^2 \qquad \sum_{n=1}^{\infty}\frac{1}{n^2} = \frac{\pi^2}{6} \]
+\end{document}
+</textarea>
+    <div class="row">
+      <button id="compile" disabled>Compile</button>
+      <span id="elapsed" class="sub">&mdash;</span>
+      <a id="download" aria-disabled="true" download="hello.pdf" href="#">Download PDF</a>
+    </div>
+    <h2>engine log</h2>
+    <pre id="log"></pre>
+  </section>
+
+  <section>
+    <h2>output.pdf</h2>
+    <iframe id="preview" title="compiled PDF"></iframe>
+  </section>
+</main>
+
+<script>
+// ---- Asset paths: absolute, same-origin. The worker resolves busytex.js /
+// ---- busytex.wasm / the data package (and its .data sibling) relative to its
+// ---- own URL (/dist/busytex_worker.js), so absolute /dist/... is robust
+// ---- regardless of where this page lives. See M0-item4-journal "6N demo notes".
+const PATHS = {
+  worker:       '/dist/busytex_worker.js',
+  busytex_js:   '/dist/busytex.js',
+  busytex_wasm: '/dist/busytex.wasm',
+  texlive_basic:'/dist/texlive-basic.js',
+};
+const DRIVER = 'xetex_bibtex8_dvipdfmx'; // glue default; XeTeX path (DESIGN §5.3)
+const BODY_MARKER = 'Hello, WasmTeX!';   // literal probed by the smoke test
+
+// ---- Test-observable state (the Playwright smoke reads these on window). ----
+window.__wasmtexStatus = 'loading';
+window.__wasmtexResult = null;   // set once, when compilation settles
+window.__wasmtexLog = '';
+
+const $ = (id) => document.getElementById(id);
+const badge = $('badge'), logEl = $('log'), elapsedEl = $('elapsed');
+const previewEl = $('preview'), downloadEl = $('download'), compileBtn = $('compile');
+
+function setStatus(status, label, cls) {
+  window.__wasmtexStatus = status;
+  badge.textContent = label;
+  badge.className = cls;
+}
+function appendLog(line) {
+  window.__wasmtexLog += line + '\n';
+  logEl.textContent += line + '\n';
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function toBase64(u8) {
+  let s = '';
+  const CH = 0x8000;
+  for (let i = 0; i < u8.length; i += CH) {
+    s += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+  }
+  return btoa(s);
+}
+
+let worker = null;
+let tic = 0;
+
+function startCompile() {
+  setStatus('initializing', 'initializing…', 'busy');
+  window.__wasmtexResult = null;
+  window.__wasmtexLog = '';
+  logEl.textContent = '';
+  elapsedEl.textContent = '—';
+  compileBtn.disabled = true;
+  downloadEl.setAttribute('aria-disabled', 'true');
+
+  const source = $('tex').value;
+
+  // A classic worker: busytex_worker.js does importScripts('busytex_pipeline.js').
+  worker = new Worker(PATHS.worker);
+
+  worker.onerror = (e) => {
+    appendLog('WORKER ERROR: ' + (e.message || e.toString()));
+    fail('worker error: ' + (e.message || String(e)));
+  };
+
+  worker.onmessage = ({ data }) => {
+    if ('exception' in data) {
+      appendLog(data.exception);
+      fail(data.exception);
+      return;
+    }
+    if ('initialized' in data) {
+      // Pipeline ready (applet versions reported). Compilation was already
+      // queued (postMessage below); the pipeline serializes internally.
+      appendLog('# engines initialized: ' +
+        Object.keys(data.initialized || {}).join(', '));
+      setStatus('compiling', 'compiling…', 'busy');
+      return;
+    }
+    if ('print' in data) {
+      appendLog(data.print);
+      return;
+    }
+    if ('exit_code' in data) {           // <- compile result
+      onResult(data, source);
+      return;
+    }
+  };
+
+  // 1) init the pipeline; 2) queue the compile. Both are posted back-to-back
+  //    exactly as upstream's example does — the worker sets self.pipeline
+  //    synchronously, and compile() awaits initialization internally.
+  worker.postMessage({
+    busytex_js: PATHS.busytex_js,
+    busytex_wasm: PATHS.busytex_wasm,
+    texmf_local: ['./texmf', './.texmf'],
+    preload_data_packages_js: [PATHS.texlive_basic],
+    data_packages_js: [PATHS.texlive_basic],
+    // `preload` omitted -> undefined -> pipeline preloads (preload !== false)
+  });
+
+  tic = performance.now();
+  worker.postMessage({
+    files: [{ path: 'hello.tex', contents: source }],
+    main_tex_path: 'hello.tex',
+    bibtex: false,                 // no \bibliography -> 2-step xetex+xdvipdfmx
+    verbose: 'silent',
+    driver: DRIVER,
+    data_packages_js: null,        // auto-resolve (no \usepackage here anyway)
+  });
+}
+
+function onResult(data, source) {
+  const exitCode = data.exit_code;
+  const pdf = data.pdf instanceof Uint8Array ? data.pdf
+            : (data.pdf ? new Uint8Array(data.pdf) : null);
+  const elapsedMs = Math.round(performance.now() - tic);
+  elapsedEl.textContent = (elapsedMs / 1000).toFixed(2) + ' s';
+
+  const ok = exitCode === 0 && pdf && pdf.length > 0;
+  if (ok) {
+    const blob = new Blob([pdf], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    previewEl.src = url;
+    downloadEl.href = url;
+    downloadEl.removeAttribute('aria-disabled');
+    setStatus('done', 'PDF ' + pdf.length.toLocaleString() + ' B', 'ok');
+  } else {
+    setStatus('error', 'compile failed', 'err');
+  }
+
+  window.__wasmtexResult = {
+    ok: !!ok,
+    exitCode: exitCode,
+    size: pdf ? pdf.length : 0,
+    pdfBase64: ok ? toBase64(pdf) : null,
+    sourceText: source,
+    bodyMarker: BODY_MARKER,
+    elapsedMs: elapsedMs,
+    log: data.log || '',
+  };
+  compileBtn.disabled = false;
+}
+
+function fail(message) {
+  setStatus('error', 'error', 'err');
+  if (!window.__wasmtexResult) {
+    window.__wasmtexResult = {
+      ok: false, exitCode: -1, size: 0, pdfBase64: null,
+      sourceText: $('tex').value, bodyMarker: BODY_MARKER,
+      elapsedMs: Math.round(performance.now() - tic),
+      log: window.__wasmtexLog, error: message,
+    };
+  }
+  compileBtn.disabled = false;
+}
+
+compileBtn.addEventListener('click', () => {
+  if (worker) { worker.terminate(); worker = null; }
+  startCompile();
+});
+
+// Auto-start on load so the smoke test is deterministic (no click needed).
+startCompile();
+</script>

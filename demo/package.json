@@ -1,0 +1,16 @@
+{
+  "name": "wasmtex-demo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "M0 faithful-baseline demo + Playwright hello-world PDF smoke (CI vehicle, not the npm package).",
+  "license": "MIT",
+  "scripts": {
+    "serve": "node serve.mjs",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}

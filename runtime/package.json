@@ -1,12 +1,32 @@
 {
   "name": "wasmtex",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.0.1",
   "type": "module",
-  "description": "Typed, framework-free ESM runtime that typesets TeX to PDF in a Worker (DESIGN.md §5). Scaffold — not yet published.",
+  "description": "Typed, framework-free ESM runtime that typesets TeX (current TeX Live, WebAssembly) to PDF in a Worker: job objects, streaming logs, structured diagnostics, real cancellation.",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bofeizhu/wasmtex.git",
+    "directory": "runtime"
+  },
+  "homepage": "https://github.com/bofeizhu/wasmtex#readme",
+  "bugs": "https://github.com/bofeizhu/wasmtex/issues",
+  "keywords": [
+    "tex",
+    "latex",
+    "xetex",
+    "pdftex",
+    "texlive",
+    "wasm",
+    "webassembly",
+    "pdf",
+    "typesetting"
+  ],
   "engines": {
-    "node": ">=24"
+    "node": ">=18"
   },
   "exports": {
     ".": {
@@ -17,7 +37,9 @@
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "!dist/node-harness.mjs",
+    "!dist/node-harness.mjs.map"
   ],
   "scripts": {
     "build": "tsc && npm run build:worker && npm run build:node-harness",

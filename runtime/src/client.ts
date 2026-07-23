@@ -196,8 +196,10 @@ export interface TypesetResult {
   /** The full engine transcript (all streamed log lines joined). */
   readonly log: string;
   /**
-   * Parsed diagnostics (DESIGN.md §5.1). Empty in M1 — see the seam in
-   * `assembleResult`; item 8 wires the pure log parser over `log`.
+   * Parsed diagnostics (DESIGN.md §5.1): errors and warnings extracted from
+   * the transcript by the pure log parser (`parseDiagnostics` over `log`),
+   * with file/line attribution where TeX reports them. Empty for a clean
+   * compile.
    */
   readonly diagnostics: readonly Diagnostic[];
   /** Compile statistics (passes run, wall time, bundles loaded). */

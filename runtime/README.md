@@ -8,20 +8,45 @@ and automatic bibliography / index / rerun passes over a **correlated worker
 protocol** (every message carries a `jobId`). No DOM, no network after asset
 load, no required browser storage (§5.2).
 
-## Status: scaffold
+## Status: 0.0.x — early, real, but assets not yet released
 
-This package is being built out over M1 (see `docs/plans/M1.md`). Today it
-exports only the package `version` and the `EngineName` union
-(`'xetex' | 'pdftex' | 'luatex'`, with `luatex` **reserved** — the enum value
-exists but LuaTeX is unimplemented in v1). The typesetter, worker, protocol,
-engine sequencing (§5.3), bundle resolution (§5.4), and the diagnostics parser
-land in M1 items 3–8, replacing this scaffold.
+The runtime itself is **fully implemented and tested** (186 node tests + a
+real-browser Playwright suite; XeTeX and pdfTeX proven end to end against
+TeX Live 2026 engines, including bibliography via bibtex8 and makeindex).
+This 0.0.x release exists primarily to claim the package name while release
+engineering completes.
 
-## Not published yet
+**What is NOT yet available:** the engine assets (`busytex.wasm`, formats,
+the `texlive-basic` data bundle) that this library loads at runtime have **no
+official release channel yet** — versioned, integrity-manifested asset
+archives arrive with the project's release-engineering milestone. Until then,
+using this package requires building the assets from source (see the
+repository's `docs/rebase.md` Phase 0 + `make artifacts`; the native dev
+build is documented but development-only).
 
-`"private": true` in `package.json`. The package is not on npm, and publishing
-is a **user-only** action performed at M5's publish dry-run — no CI job and no
-agent publishes it.
+Expect breaking changes before 1.0. `'luatex'` in the `EngineName` union is
+**reserved** — LuaTeX is not implemented in v1 (a job requesting it is
+rejected with a clear error).
+
+## Quickstart (once you have assets)
+
+```js
+import { createTypesetter } from 'wasmtex';
+
+const tex = await createTypesetter({
+  assetsBaseUrl: '/dist/',                      // where your assets live
+  workerUrl: '/node_modules/wasmtex/dist/worker.js',
+  bundles: { preload: ['texlive-basic'], onDemand: [] },
+});
+
+const job = tex.typeset({
+  engine: 'xetex',
+  entry: 'main.tex',
+  files: { 'main.tex': source },
+});
+job.onLog((line) => console.log(line));
+const result = await job.done;   // { ok, exitCode, pdf, log, diagnostics, stats }
+```
 
 ## Layout
 

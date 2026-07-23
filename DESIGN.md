@@ -101,6 +101,12 @@ wasmtex/
   DESIGN.md  LICENSE  NOTICE  THIRD_PARTY_NOTICES.md  README.md
 ```
 
+> Note (2026-07-23): npm `wasmtex` 0.0.x versions are name-reservation
+> releases of the runtime library only, published before any asset release
+> exists (a recorded deviation; motivated by the bootstrap's `motex`
+> squatting precedent). The lockstep rule below binds from the first real
+> `assets-vX.Y.Z` release (M5 release engineering) onward.
+
 Release artifacts (GitHub Releases, tag `assets-vX.Y.Z` in lockstep with the
 npm version):
 

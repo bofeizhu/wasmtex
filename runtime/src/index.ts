@@ -21,7 +21,7 @@
  * a runtime read of `package.json`) so the value survives bundling and needs no
  * filesystem or JSON-import support in the consumer.
  */
-export const version = '0.0.0';
+export const version = '0.0.1';
 
 // Protocol version is a value; re-exported explicitly (a `export type *` would
 // not carry it).

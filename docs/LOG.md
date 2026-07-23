@@ -505,6 +505,28 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-23 — npm 0.0.1 name-reservation release prepared (user-directed)
+
+**Decision.** Publish the runtime library to npm as 0.0.1 BEFORE M3 —
+a deliberate name-reservation release (the bootstrap lost `motex` to a
+squatter; `wasmtex` verified still free). Constitutional floor
+untouched: the tarball ships ONLY the MIT library (no engine
+artifacts); the §4 lockstep rule binds from the first real
+assets-vX.Y.Z release, recorded as a dated DESIGN note. The USER runs
+`npm publish` (user-only action); this session only prepared it.
+
+**Prepared.** package.json: 0.0.1, private removed, publishConfig/
+repository/keywords; version const synced (drift-guard test);
+runtime/LICENSE (MIT copy); npm-facing README (assets-not-released
+stated up front; accurate §5.1 quickstart). Review caught three
+pre-publish improvements to the immutable artifact: the internal
+node-harness excluded from the tarball (193→117 KB — it was
+unreachable via the exports map anyway), engines relaxed >=24→>=18
+(24 is the dev requirement, not the consumption floor), and a stale
+"diagnostics empty in M1" doc comment that would have shipped in
+every consumer's editor hover corrected. Tarball verified: 37 files,
+LICENSE/README/dist, no engine bytes. 186/186, audit green.
+
 ## 2026-07-24 — M2 COMPLETE: TL 2026 rebase acceptance verified (item 9)
 
 **Named-owner step first.** TL 2023 pins retired from pins.lock (the

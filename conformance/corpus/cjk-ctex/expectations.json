@@ -1,0 +1,21 @@
+{
+  "title": "cjk-ctex",
+  "description": "A Chinese XeTeX document via \\documentclass{ctexart} with NO host font supplied — it falls back to the BUNDLED fandol font (§6.3 exception). Because the §5.4(a) scan reads \\usepackage/\\RequirePackage and NOT \\documentclass, ctexart is INVISIBLE to it: pass 1 fails 'ctexart.cls not found' against core alone (streamed LIVE), the §5.4(b) missing-file retry mounts academic, and the re-run compiles. This drives the retry path INDEPENDENTLY of the scan (the sci-paper covers the scan). The Chinese is verified STRUCTURALLY (no pixel comparison, §8): the embedded FandolSong CID subset + its embedded font program + the CID glyph run prove the Chinese rendered with fandol — the CJK subset carries no ToUnicode CMap, so recoverText reconstructs only the Latin runs (WasmTeX/fandol), which is why the text snippets are the Latin words and the Chinese is asserted via the font/glyph structure.",
+  "engine": "xetex",
+  "entry": "doc.tex",
+  "bibliography": "off",
+  "index": "off",
+  "expect": {
+    "ok": true,
+    "exitCode": 0,
+    "minPages": 1,
+    "textSnippets": ["WasmTeX", "fandol"],
+    "absentSnippets": ["Wittgenstein"],
+    "embeddedFonts": ["FandolSong"],
+    "requireEmbeddedFontFile": true,
+    "minCidGlyphs": 30,
+    "bundlesLoaded": ["core", "academic"]
+  },
+  "resolution": "retry",
+  "phases": ["engine", "xdvipdfmx"]
+}

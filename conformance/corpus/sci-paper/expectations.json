@@ -1,0 +1,18 @@
+{
+  "title": "sci-paper",
+  "description": "A scientific-journal-style pdfTeX paper: siunitx + mathtools + pgfplots (all ONLY in the academic tier) drive the §5.4(a) static \\usepackage scan to preselect + mount academic BEFORE pass 1, while natbib + bibtex8 against the plainnat .bst (both in core) resolve \\citet/\\citep through the full journal pipeline (engine -> bibtex8 -> engine -> engine). The rendered author surnames (Zhang/Rossi from \\citet, Nakamura/Okonkwo from \\citep) prove the .bbl reached the PDF = citations resolved. This is BOTH the academic-scan proof and the citation acceptance criterion.",
+  "engine": "pdftex",
+  "entry": "paper.tex",
+  "bibliography": "auto",
+  "index": "off",
+  "expect": {
+    "ok": true,
+    "exitCode": 0,
+    "minPages": 1,
+    "textSnippets": ["Thermal", "relaxation", "activation", "Zhang", "Rossi", "Nakamura", "Okonkwo"],
+    "absentSnippets": ["Wittgenstein"],
+    "bundlesLoaded": ["core", "academic"]
+  },
+  "resolution": "scan",
+  "phases": ["engine", "bibtex8", "engine", "engine"]
+}

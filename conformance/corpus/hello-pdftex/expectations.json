@@ -11,7 +11,8 @@
     "minPages": 1,
     "textSnippets": ["pdfTeX", "WasmTeX"],
     "absentSnippets": ["LibreOffice"],
-    "diagnostics": []
+    "diagnostics": [],
+    "bundlesLoaded": ["core"]
   },
   "phases": ["engine"]
 }

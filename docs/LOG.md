@@ -5,6 +5,46 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M4 item 8: beyond-basic corpus + integration (target-driven)
+
+**Done, reviewer-approved (no blockers).** The conformance corpus now
+exercises the tiers + both §5.4 paths against the real target. Runner
+(`conformance/run.mjs`) configures `preload:[core]` + `onDemand:[academic]`,
+reads `manifest.json` (the provides index the scan needs), keeps the
+whole-run green-skip, adds per-entry skip when a tier's files are absent,
+and preflights `verify-manifest.mjs` (recompute sha256/bytes per shipped
+file + provides present/disjoint/alias — catches a corrupt/truncated
+download loud). Three new entries + `bundlesLoaded:[core]` on the 4 basic
+ones. 7/7 corpus + 267 runtime green; deterministic.
+
+- **`sci-paper`** — siunitx/mathtools/pgfplots + natbib/plainnat/bibtex8.
+  §5.4(a) SCAN (no "not found" in the live log) + the full journal
+  pipeline + the M4 CITATION acceptance (\citet/\citep surnames
+  Zhang/Rossi/Nakamura/Okonkwo recovered from the PDF). Discovery:
+  natbib/plainnat are in CORE, so citation resolves from preload;
+  academic is driven by siunitx/mathtools/pgfplots.
+- **`cjk-ctex`** — \documentclass{ctexart} + bundled fandol, no host
+  font. §5.4(b) RETRY proven INDEPENDENTLY (the scan reads \usepackage
+  not \documentclass → ctexart.cls is a miss → academic mounts → retry;
+  live log has "not found", result.log spliced clean). CJK verified
+  STRUCTURALLY via a new `fontProbe` (FandolSong + FontFile embedded +
+  a 54-glyph CID run, floor 30) — honest: xdvipdfmx CID subsets carry
+  no ToUnicode CMap, so the Chinese isn't text-extractable.
+- **`pkg-core-only`** — \usepackage{longtable} → bundlesLoaded=[core],
+  no academic download (corpus-level lock of the unknown-name policy).
+
+Assertions proven to discriminate (injected wrong expectations → FAIL),
+per the §8 never-weaken bar. **Review fix folded:** the CI conformance
+presence-assert (artifacts-build.yml) named texlive-basic/assets.json but
+NOT core.{js,data}/academic.{js,data} — a partial dist could pass it then
+silently green-skip the whole/academic corpus; realigned to the tiered
+set. Nits deferred: verify-manifest alias `files` check + multi-level
+alias; the `/not found/i` live-log breadth (safe fail-direction).
+
+**Note:** item 8 (conformance/) does NOT trigger artifacts-build.yml, so
+the new corpus runs in CI only on a build-input change / dispatch —
+folded into item 9's acceptance CI run (a full tiered build + all gates).
+
 ## 2026-07-24 — M4 items 6+7: §5.4 automatic bundle resolution
 
 **Done, reviewer-approved (after 2 should-fixes).** Both halves of §5.4,

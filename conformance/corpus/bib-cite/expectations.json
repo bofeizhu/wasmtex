@@ -16,7 +16,8 @@
       { "severity": "warning", "message": "LaTeX Warning: Citation `lamport1994' on page 1 undefined on input line 3.", "file": "main.tex", "line": 3 },
       { "severity": "warning", "message": "LaTeX Warning: There were undefined references.", "file": "main.tex" },
       { "severity": "warning", "message": "LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.", "file": "main.tex" }
-    ]
+    ],
+    "bundlesLoaded": ["core"]
   },
   "phases": ["engine", "bibtex8", "engine", "engine"]
 }

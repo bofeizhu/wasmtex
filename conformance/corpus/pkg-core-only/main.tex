@@ -1,0 +1,18 @@
+\documentclass[11pt]{article}
+% longtable.sty ships in `core`, but "longtable" is NOT a provided-package name in
+% ANY tier's manifest `provides` index (it comes from the `tools` package). So the
+% §5.4(a) scan resolves it to NOTHING and does nothing; core serves longtable.sty;
+% the first pass succeeds; no missing-file retry fires. This LOCKS the unknown-name
+% policy at the corpus level: a core-served \usepackage must NOT pull the ~472 MB
+% academic tier. Expected bundlesLoaded = [core].
+\usepackage{longtable}
+\begin{document}
+This document loads longtable from the core tier and must compile without mounting
+the academic tier.
+
+\begin{longtable}{ll}
+alpha & beta \\
+gamma & delta \\
+epsilon & zeta \\
+\end{longtable}
+\end{document}

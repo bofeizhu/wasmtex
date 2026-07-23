@@ -1,0 +1,12 @@
+\documentclass[11pt]{ctexart}
+% ctexart.cls is served ONLY by the `academic` tier. The §5.4(a) scan reads
+% \usepackage / \RequirePackage, NOT \documentclass, so ctexart is INVISIBLE to
+% it: pass 1 fails "ctexart.cls not found" against core alone, the §5.4(b)
+% missing-file retry mounts `academic`, and the re-run compiles. No host CJK font
+% is supplied — ctex falls back to the BUNDLED fandol font, so this renders out of
+% the box.
+\begin{document}
+你好，世界。这是由 WasmTeX 排版的中文文档。
+
+本页使用捆绑的 fandol 字体渲染中文，无需宿主提供字体。
+\end{document}

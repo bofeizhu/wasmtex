@@ -30,7 +30,8 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { countPages, recoverText, stripSpaces } from './pdf-probe.mjs';
+import { countPages, fontProbe, recoverText, stripSpaces } from './pdf-probe.mjs';
+import { verifyManifest } from './verify-manifest.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..');
@@ -40,9 +41,26 @@ const DIST = process.env.WASMTEX_DIST ? resolve(process.env.WASMTEX_DIST) : join
 const CORPUS = join(HERE, 'corpus');
 const HARNESS = join(REPO, 'runtime', 'dist', 'node-harness.mjs');
 
-// Engine artifacts the runtime needs to actually compile (mirrors the runtime
-// integration test's REQUIRED list). Their absence is a clean skip, not a fail.
-const REQUIRED = ['manifest.json', 'assets.json', 'busytex.js', 'busytex.wasm', 'texlive-basic.js', 'texlive-basic.data'];
+// Bundle tiers (M4 item 8). `core` is always preloaded; `academic` (the
+// scientific-journal + CJK working set) is ON-DEMAND — the §5.4 static \usepackage
+// scan and the missing-file retry mount it lazily at compile time. The basic
+// entries never trigger it and stay entirely inside core.
+const PRELOAD = ['core'];
+const ONDEMAND = ['academic'];
+
+// Engine artifacts the runtime needs to actually compile the CORE corpus (mirrors
+// the runtime integration test's REQUIRED list). Their absence is a clean skip of
+// the WHOLE run, not a fail. `manifest.json` (schemaVersion 2) is REQUIRED because
+// the §5.4(a) scan resolves \usepackage names against its per-bundle `provides`
+// index (the v1 `assets.json` alias lacks it), and the runner reads it as the
+// inventory. The on-demand `academic.{js,data}` are NOT required here: an entry
+// that needs academic is skipped PER-ENTRY when it is absent (below), so a
+// core-only dist still runs the basic corpus. (Mirrors the integration test's
+// two-tier guard: base REQUIRED gates the run; the academic tier gates its entries.)
+const REQUIRED = ['manifest.json', 'busytex.js', 'busytex.wasm', 'core.js', 'core.data'];
+
+/** Files an on-demand tier needs on disk to actually mount (its file_packager pair). */
+const bundleFiles = (name) => [`${name}.js`, `${name}.data`];
 
 // Extensions read as UTF-8 text; anything else (e.g. a future CJK seed's font)
 // is passed to the runtime as raw bytes.
@@ -70,7 +88,34 @@ if (!existsSync(HARNESS)) {
 }
 
 const { createTypesetter, createNodeWorkerFactory } = await import(pathToFileURL(HARNESS).href);
-const inventory = JSON.parse(readFileSync(join(DIST, 'assets.json'), 'utf8'));
+
+// ---------------------------------------------------------------------------
+// Preflight: SHIPPED-manifest integrity (M4 item 8). Before compiling anything,
+// verify dist/manifest.json is internally consistent with the artifacts on disk —
+// every PRESENT file matches its recorded bytes+sha256, and the per-bundle
+// `provides` index is present + disjoint. A corrupt/truncated download (the real
+// CI hazard) fails HERE, loud, instead of surfacing as a confusing compile error.
+// ---------------------------------------------------------------------------
+{
+  const report = verifyManifest(DIST);
+  const failed = report.checks.filter((c) => !c.pass);
+  console.log(
+    `[conformance] manifest integrity: ${report.checks.length} checks, ${report.present} files verified` +
+      `${report.absent.length ? `, ${report.absent.length} listed-but-absent (partial dist): ${report.absent.join(', ')}` : ''}.`,
+  );
+  if (!report.ok) {
+    for (const c of failed) console.error(`      FAIL: ${c.label} — ${c.detail}`);
+    console.error(`\n[conformance] dist/manifest.json is INCONSISTENT (${failed.length} check(s)); aborting before the corpus.`);
+    process.exit(1);
+  }
+  console.log('[conformance] manifest integrity OK.\n');
+}
+
+// The runner reads `manifest.json` (schemaVersion 2), NOT `assets.json`: the
+// §5.4(a) static \usepackage scan resolves package names against the manifest's
+// per-bundle `provides` index (absent from the v1 `assets.json` alias), so a
+// scientific paper's \usepackage{siunitx} preselects the academic tier.
+const inventory = JSON.parse(readFileSync(join(DIST, 'manifest.json'), 'utf8'));
 
 // ---------------------------------------------------------------------------
 // Helpers.
@@ -146,8 +191,16 @@ console.log(`[conformance] TL 2026 seed corpus: ${entries.length} entries agains
 
 // ---------------------------------------------------------------------------
 // Run each entry.
+//
+// Every entry gets a FRESH typesetter (create → typeset → dispose): the §8 cold,
+// storage-less contract. No IndexedDB/localStorage, no warm state carried between
+// entries — an on-demand tier is re-fetched + re-mounted per academic entry (the
+// honest cold cost), and a basic entry can never be tainted by a prior mount.
+// The tier config is uniform (preload core, academic on-demand); only an entry
+// whose \usepackage scan or missing-file retry needs academic actually mounts it.
 // ---------------------------------------------------------------------------
 let failed = 0;
+let skipped = 0;
 const summary = [];
 
 for (const name of entries) {
@@ -156,14 +209,36 @@ for (const name of entries) {
   const files = readProjectFiles(dir);
   const want = spec.expect;
 
+  // Per-entry academic-tier guard: an entry that expects an on-demand tier to load
+  // (bundlesLoaded includes it) needs that tier's file_packager pair on disk. If a
+  // partial dist lacks it (core-only build), GREEN-SKIP just this entry — the basic
+  // corpus still runs. (Whole-run engine/core absence was already gated above.)
+  const neededOnDemand = (want.bundlesLoaded ?? []).filter((b) => ONDEMAND.includes(b));
+  const missingTierFiles = neededOnDemand.flatMap(bundleFiles).filter((f) => !existsSync(join(DIST, f)));
+  if (missingTierFiles.length > 0) {
+    skipped += 1;
+    console.log(`skip  ${name}  (${spec.engine})`);
+    console.log(`      needs on-demand tier(s) [${neededOnDemand.join(', ')}] but dist/ lacks ${missingTierFiles.join(', ')} — green skip (partial dist).`);
+    console.log('');
+    summary.push({ name, engine: spec.engine, skip: true });
+    continue;
+  }
+
   const tex = await createTypesetter({
     assetsBaseUrl: DIST + '/',
-    bundles: { preload: ['texlive-basic'], onDemand: [] },
+    bundles: { preload: PRELOAD, onDemand: ONDEMAND },
     inventory,
     workerFactory: createNodeWorkerFactory(),
   });
 
   const t0 = Date.now();
+  // Capture the LIVE log stream (via the public Job.onLog) SEPARATELY from the
+  // final result.log. The two differ by design when the §5.4(b) retry fires: a
+  // failed probe pass streams "File `x' not found" LIVE, but the worker SPLICES
+  // that probe out of the authoritative result.log. So liveLog-has-"not found" vs
+  // result.log-clean is exactly what distinguishes the retry path from the scan
+  // path at the public-API level (see the resolution check below).
+  const liveLines = [];
   let result;
   try {
     const job = tex.typeset({
@@ -174,11 +249,13 @@ for (const name of entries) {
       ...(spec.bibliography ? { bibliography: spec.bibliography } : {}),
       ...(spec.index ? { index: spec.index } : {}),
     });
+    job.onLog((line) => liveLines.push(line));
     result = await job.done;
   } finally {
     await tex.dispose();
   }
   const wallMs = Date.now() - t0;
+  const liveLog = liveLines.join('\n');
 
   // --- assertions ---
   const checks = [];
@@ -223,37 +300,96 @@ for (const name of entries) {
     check('phases', arrEqual(phases, spec.phases), `got [${phases}], want [${spec.phases}]`);
   }
 
+  // --- which bundles actually mounted (M4 item 8) ---
+  const bundlesLoaded = [...(result.stats?.bundlesLoaded ?? [])];
+  if (want.bundlesLoaded != null) {
+    check('bundlesLoaded', arrEqual(bundlesLoaded, want.bundlesLoaded), `got [${bundlesLoaded}], want [${want.bundlesLoaded}]`);
+  }
+
+  // --- §5.4 resolution PATH (scan vs retry vs none) ---
+  // Distinguished by the live-vs-final log signature (see the liveLog note above):
+  //   scan  → academic preselected before pass 1: NO failed probe, so liveLog has
+  //           no "not found", and an on-demand tier IS in bundlesLoaded.
+  //   retry → a pass failed "File `x' not found" (streamed LIVE) then the tier
+  //           mounted + re-ran: liveLog HAS "not found" but result.log is SPLICED
+  //           clean, and an on-demand tier IS in bundlesLoaded.
+  //   none  → no on-demand tier mounted (core served everything) and no probe:
+  //           liveLog has no "not found", bundlesLoaded == preload only.
+  const liveNotFound = /not found/i.test(liveLog);
+  const finalNotFound = /not found/i.test(result.log);
+  const mountedOnDemand = bundlesLoaded.some((b) => ONDEMAND.includes(b));
+  if (spec.resolution === 'scan') {
+    check('resolution:scan', mountedOnDemand && !liveNotFound,
+      `mountedOnDemand=${mountedOnDemand}, liveLog "not found"=${liveNotFound} (scan preselects → no failed probe pass)`);
+  } else if (spec.resolution === 'retry') {
+    check('resolution:retry', mountedOnDemand && liveNotFound && !finalNotFound,
+      `mountedOnDemand=${mountedOnDemand}, liveLog "not found"=${liveNotFound} (expect true — probe streamed), result.log "not found"=${finalNotFound} (expect false — spliced)`);
+  } else if (spec.resolution === 'none') {
+    check('resolution:none', !mountedOnDemand && !liveNotFound,
+      `mountedOnDemand=${mountedOnDemand} (expect false), liveLog "not found"=${liveNotFound} (expect false)`);
+  }
+
+  // --- embedded fonts / CJK glyph run (M4 item 8, the CJK entry) ---
+  // A XeTeX-set CJK PDF embeds the CJK font as a CID subset WITHOUT a ToUnicode
+  // CMap, so recoverText cannot reconstruct the Chinese as Unicode (only the Latin
+  // runs). We verify the Chinese STRUCTURALLY instead (no pixel comparison, §8):
+  // the bundled font is embedded and a run of CID glyphs was emitted.
+  let fonts = null;
+  if (want.embeddedFonts != null || want.minCidGlyphs != null || want.requireEmbeddedFontFile != null) {
+    fonts = hasPdf ? fontProbe(pdf) : { baseFonts: [], embeddedFontFile: false, cidGlyphs: 0 };
+    for (const wantFont of want.embeddedFonts ?? []) {
+      const hit = fonts.baseFonts.some((bf) => bf.toLowerCase().includes(wantFont.toLowerCase()));
+      check(`font:${wantFont}`, hit, `embedded /BaseFont names: [${fonts.baseFonts.join(', ')}]`);
+    }
+    if (want.requireEmbeddedFontFile) {
+      check('embeddedFontFile', fonts.embeddedFontFile, 'no /FontFile* — font not embedded (PDF not self-contained)');
+    }
+    if (want.minCidGlyphs != null) {
+      // Total 2-byte CID glyphs emitted (Identity-H). For the CJK entry this is
+      // dominated by the Chinese; a threshold above the Latin-only glyph count
+      // proves real CJK glyphs were set (not just the doc's few Latin words).
+      check('minCidGlyphs', fonts.cidGlyphs >= want.minCidGlyphs, `cidGlyphs ${fonts.cidGlyphs} >= ${want.minCidGlyphs}`);
+    }
+  }
+
   const entryFailed = checks.some((c) => !c.pass);
   if (entryFailed) failed += 1;
 
   // --- per-entry report ---
+  const resLabel = spec.resolution ? `  resolution=${spec.resolution}` : '';
   console.log(`${entryFailed ? 'FAIL' : 'ok  '}  ${name}  (${spec.engine})`);
-  console.log(`      pages=${pages ? pages.count : 'n/a'}  passes=${result.stats?.passes}  phases=[${phases.join(' -> ')}]  diagnostics=${result.diagnostics.length}  wall=${wallMs}ms  pdf=${hasPdf ? pdf.length + 'B' : 'none'}`);
+  console.log(`      pages=${pages ? pages.count : 'n/a'}  passes=${result.stats?.passes}  bundlesLoaded=[${bundlesLoaded.join(', ')}]${resLabel}  phases=[${phases.join(' -> ')}]  diagnostics=${result.diagnostics.length}  wall=${wallMs}ms  pdf=${hasPdf ? pdf.length + 'B' : 'none'}`);
+  if (fonts) console.log(`      fonts=[${fonts.baseFonts.join(', ')}]  embeddedFontFile=${fonts.embeddedFontFile}  cidGlyphs=${fonts.cidGlyphs}`);
   for (const c of checks) {
     if (!c.pass) console.log(`      FAIL: ${c.label} — ${c.detail}`);
   }
   const foundSnips = (want.textSnippets ?? []).filter((s) => recovered.includes(stripSpaces(s)));
   console.log(`      snippets found: [${foundSnips.join(', ')}]${(want.absentSnippets ?? []).length ? `  (neg-control absent: [${(want.absentSnippets ?? []).join(', ')}])` : ''}`);
 
-  summary.push({ name, engine: spec.engine, ok: !entryFailed, pages: pages ? pages.count : '-', passes: result.stats?.passes, phases: phases.join('>'), wallMs });
+  summary.push({ name, engine: spec.engine, ok: !entryFailed, pages: pages ? pages.count : '-', passes: result.stats?.passes, bundles: bundlesLoaded.join('+'), resolution: spec.resolution ?? '-', phases: phases.join('>'), wallMs });
   console.log('');
 }
 
 // ---------------------------------------------------------------------------
 // Summary.
 // ---------------------------------------------------------------------------
-console.log('---------------------------------------------------------------------');
-console.log('entry            engine  pages passes  wall   phases');
+console.log('-------------------------------------------------------------------------------------');
+console.log('entry            engine  pages passes bundles       reso   wall    phases');
 for (const s of summary) {
+  if (s.skip) {
+    console.log(`skip ${s.name.padEnd(15)} ${s.engine.padEnd(7)} (on-demand tier absent from dist/)`);
+    continue;
+  }
   console.log(
-    `${(s.ok ? 'ok  ' : 'FAIL')} ${s.name.padEnd(15)} ${s.engine.padEnd(7)} ${String(s.pages).padEnd(5)} ${String(s.passes).padEnd(6)} ${String(s.wallMs + 'ms').padEnd(6)} ${s.phases}`,
+    `${(s.ok ? 'ok  ' : 'FAIL')} ${s.name.padEnd(15)} ${s.engine.padEnd(7)} ${String(s.pages).padEnd(5)} ${String(s.passes).padEnd(6)} ${String(s.bundles).padEnd(13)} ${String(s.resolution).padEnd(6)} ${String(s.wallMs + 'ms').padEnd(7)} ${s.phases}`,
   );
 }
-console.log('---------------------------------------------------------------------');
+console.log('-------------------------------------------------------------------------------------');
 
+const ran = entries.length - skipped;
 if (failed > 0) {
-  console.error(`\n[conformance] FAILED: ${failed}/${entries.length} entries had failing assertions.`);
+  console.error(`\n[conformance] FAILED: ${failed}/${ran} run entries had failing assertions${skipped ? ` (${skipped} green-skipped)` : ''}.`);
   process.exit(1);
 }
-console.log(`\n[conformance] all ${entries.length} corpus entries passed.`);
+console.log(`\n[conformance] all ${ran} run corpus entries passed${skipped ? ` (${skipped} green-skipped — on-demand tier absent)` : ''}.`);
 process.exit(0);

@@ -11,7 +11,8 @@
     "minPages": 2,
     "textSnippets": ["Index", "nebula", "pulsar", "quasar"],
     "absentSnippets": ["Wittgenstein"],
-    "diagnostics": []
+    "diagnostics": [],
+    "bundlesLoaded": ["core"]
   },
   "phases": ["engine", "makeindex", "engine", "engine", "xdvipdfmx"]
 }

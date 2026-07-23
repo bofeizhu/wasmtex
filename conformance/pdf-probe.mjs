@@ -158,3 +158,41 @@ export function countPages(pdf) {
   const count = viaPagesCount ?? leafPageObjects;
   return { count, viaPagesCount, leafPageObjects };
 }
+
+/**
+ * Structural font/glyph probe (M4 item 8, for the CJK corpus entry).
+ *
+ * WHY this exists alongside {@link recoverText}: a XeTeX-set CJK document embeds
+ * the CJK font as a CID-keyed subset (CIDFontType0/2, `Identity-H`) that xdvipdfmx
+ * often ships WITHOUT a ToUnicode CMap — so the glyphs render (they are visually
+ * present and copy as glyph indices) but are NOT reverse-mappable to Unicode.
+ * `recoverText` therefore recovers only the Latin runs (which get a ToUnicode
+ * CMap), never the CJK. That is honest PDF reality, not a probe defect. To verify
+ * "the Chinese is present" WITHOUT a pixel comparison (DESIGN.md §8), we assert the
+ * STRUCTURE instead: the bundled CJK font is embedded (its subset `/BaseFont` name)
+ * and a run of CID glyphs was emitted. When a document uses the CJK font for
+ * nothing but its CJK text (the Latin runs use a separate Latin font), the CJK
+ * font's presence is itself proof the CJK text was typeset with it.
+ *
+ * Returns:
+ *   - `baseFonts`: the de-duplicated `/BaseFont` names (subset prefix included,
+ *     e.g. `JRZBJV+FandolSong-Regular`).
+ *   - `embeddedFontFile`: whether ANY font program is embedded (`/FontFile[123]`),
+ *     i.e. the PDF is self-contained (no host font dependency).
+ *   - `cidGlyphs`: total 2-byte glyph codes emitted in `TJ`/`Tj` content streams
+ *     (Identity-H CID fonts index glyphs as 2 bytes each). A corroborating count —
+ *     a CJK paragraph emits one per character.
+ */
+export function fontProbe(pdf) {
+  const raw = Buffer.from(pdf).toString('latin1');
+  const inflated = inflateStreams(pdf).map((s) => s.toString('latin1'));
+  const hay = [raw, ...inflated].join('\n');
+  const baseFonts = [...new Set([...hay.matchAll(/\/BaseFont\s*\/([A-Za-z0-9+\-_.]+)/g)].map((m) => m[1]))];
+  const embeddedFontFile = /\/FontFile[0-9]?\b/.test(hay);
+  let cidGlyphs = 0;
+  for (const t of inflated) {
+    if (!/(TJ|Tj)/.test(t)) continue;
+    for (const hs of t.matchAll(/<([0-9A-Fa-f]{4,})>/g)) cidGlyphs += Math.floor(hs[1].length / 4);
+  }
+  return { baseFonts, embeddedFontFile, cidGlyphs };
+}

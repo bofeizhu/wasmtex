@@ -447,23 +447,26 @@ jobs:
           name: wasmtex-dist-${{ needs.artifacts-build.outputs.pins_short }}
           path: dist
 
-      # Safety assert: run.mjs GREEN-SKIPS (exit 0) when ANY required engine
-      # artifact is absent, so a broken/partial download would masquerade as a
-      # passing gate. Assert the SAME five files run.mjs requires (not just the
-      # wasm) — a partial dist that dropped e.g. assets.json must fail loud here.
+      # Safety assert: run.mjs GREEN-SKIPS (whole-run OR per-entry) when a
+      # required artifact is absent, so a broken/partial download would
+      # masquerade as a passing gate. Assert what the runner ACTUALLY needs
+      # (M4 item 8): the runner's whole-run REQUIRED set (manifest.json +
+      # core.{js,data} + busytex.{js,wasm}) AND the academic tier — else the new
+      # sci-paper/cjk-ctex entries (the §5.4 scan/retry coverage this gate exists
+      # to exercise) would per-entry green-skip while CI stays green.
       - name: Assert the engine artifact is real (no silent green-skip)
         run: |
           missing=0
-          for f in busytex.wasm busytex.js texlive-basic.js texlive-basic.data assets.json manifest.json; do
+          for f in busytex.wasm busytex.js core.js core.data manifest.json academic.js academic.data; do
             [ -f "dist/$f" ] || { echo "!! dist/$f missing after download" >&2; missing=1; }
           done
           if [ "$missing" -ne 0 ]; then
-            echo "!! partial/empty dist — the conformance corpus would green-skip;" >&2
-            echo "   failing the gate instead of passing silently." >&2
+            echo "!! partial/empty dist — the conformance corpus would green-skip" >&2
+            echo "   (whole-run or per-entry); failing the gate instead." >&2
             ls -la dist dist/formats 2>/dev/null || true
             exit 1
           fi
-          echo "all five required engine artifacts present -> conformance runs the real corpus."
+          echo "required tiered artifacts present (core + academic + manifest) -> conformance runs the real corpus."
 
       - uses: actions/setup-node@v5
         with:

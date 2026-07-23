@@ -504,3 +504,167 @@ not `\documentclass`), so the CJK path drives the retry, not the scan — a real
 - **The item-6/7 corpus entries (M4 item 8)** — a scientific paper (siunitx+mathtools+tikz +
   natbib/bibtex8) and a CJK doc as CONFORMANCE entries — remain item 8's scope; items 6–7 land
   the mechanism + its unit/integration coverage.
+
+---
+
+## Item 8 — Beyond-basic conformance corpus + integration (target-driven)
+
+Dated 2026-07-24. Goal: turn the conformance corpus from a wholly-inside-basic seed
+into one that EXERCISES the tiers end-to-end through the PUBLIC runtime — the
+scientific-journal + CJK target — plus a shipped-manifest integrity check. Until
+now the corpus preloaded the `texlive-basic` alias and every entry stayed in core;
+item 8 makes it preload `core`, list `academic` on-demand, and adds entries that
+drive BOTH §5.4 paths, the citation pipeline, and the bundled-fandol CJK path.
+Validated against the on-disk native tiered `dist/` (core + academic +
+manifest.json); no container build.
+
+Provenance: the corpus `.tex`/`.bib` are ORIGINAL authored content (fictional
+authors/data — not copied from any paper); `plainnat.bst` is a TeX Live file already
+in the `core` bundle (REFERENCED by `\bibliographystyle{plainnat}`, not vendored into
+the repo). `verify-manifest.mjs` + the `fontProbe` helper are original work. No
+GPL/AGPL or other WASM-TeX wrapper opened.
+
+### The runner change — from one preload tier to the real tiers
+
+`conformance/run.mjs` now configures the typesetter with
+`bundles: { preload: ['core'], onDemand: ['academic'] }` (was
+`preload: ['texlive-basic']`) and reads **`manifest.json`** (schemaVersion 2), NOT
+`assets.json`, as the inventory — the §5.4(a) scan resolves `\usepackage` names
+against the manifest's per-bundle `provides` index, which the v1 `assets.json` alias
+lacks. `REQUIRED` shifts from `texlive-basic.*`/`assets.json` to `core.{js,data}` +
+`manifest.json` + engine; the whole-run green-skip is preserved. A **two-tier guard**
+mirrors the integration test: base `REQUIRED` gates the whole run; an entry that
+expects an on-demand tier (`bundlesLoaded` names it) is green-skipped PER-ENTRY when
+that tier's `.js`/`.data` are absent (a core-only build still runs the basic corpus).
+
+Each entry still gets a FRESH `createTypesetter`→`typeset`→`dispose` — the §8 cold,
+storage-less contract. So each academic entry RE-mounts academic from scratch (the
+honest cold cost, ~4–6 s/entry), and no basic entry can be tainted by a prior mount.
+
+### New expectations surface (superset — old entries unchanged in meaning)
+
+- **`bundlesLoaded`** — exact `result.stats.bundlesLoaded`. The basic entries now pin
+  `["core"]` (the unknown-name policy at the corpus level); academic entries pin
+  `["core","academic"]`.
+- **`resolution`: `scan` | `retry` | `none`** — the §5.4 path, distinguished at the
+  PUBLIC API by the LIVE log (`Job.onLog`) vs. the FINAL `result.log`. A scan
+  preselects before pass 1 → no `not found` anywhere. A retry fails a probe pass
+  (`not found` streamed LIVE) then the worker SPLICES it from `result.log` → live has
+  `not found`, final is clean. `none` → no on-demand mount, no probe. This is the
+  corpus-level, public-API proof that the two §5.4 halves are INDEPENDENT (the
+  integration test proves it through the core; this proves it through `createTypesetter`).
+- **`embeddedFonts` / `requireEmbeddedFontFile` / `minCidGlyphs`** — the CJK
+  structural assertion (below).
+
+### The three new entries
+
+1. **`sci-paper`** (pdftex) — `\usepackage{siunitx,mathtools,pgfplots}` (all
+   `academic`) + `natbib`/`\bibliographystyle{plainnat}`/`\bibliography{refs}`.
+   Observed: `ok`, exit 0, 1 page, 114 KB, `passes=3`,
+   `phases=[engine,bibtex8,engine,engine]`, `bundlesLoaded=[core,academic]`,
+   `resolution=scan` (live log has NO `not found` — academic preselected). The
+   rendered surnames **Zhang/Rossi** (`\citet{zhang2019}`) and **Nakamura/Okonkwo**
+   (`\citep{nakamura2021}`) recover from the PDF ⇒ the `.bbl` reached the page ⇒
+   citations resolved. This is SIMULTANEOUSLY the §5.4(a) scan proof, the full
+   journal-pipeline proof, and the M4 citation acceptance criterion.
+   - **`natbib`/`plainnat` are in `core`, not `academic`** (verified against the real
+     manifest `provides`). So the citation pipeline resolves from the preloaded tier;
+     the academic mount is driven purely by `siunitx`/`mathtools`/`pgfplots`. `tikz`
+     is not a `provides` name, but `pgfplots` IS and pulls tikz in — so the scan still
+     preselects academic. (A benign `epstopdf` "shell escape not enabled" warning
+     appears — graphicx→epstopdf, no `.eps` to convert; `diagnostics` is not pinned
+     for this entry, so it is noise-tolerant.)
+2. **`cjk-ctex`** (xetex) — `\documentclass{ctexart}`, real Chinese, bundled fandol,
+   no host font. Observed: `ok`, exit 0, 1 page, `passes=1`,
+   `phases=[engine,xdvipdfmx]`, `bundlesLoaded=[core,academic]`, `resolution=retry`
+   (live log HAS `ctexart.cls not found`; `result.log` is SPLICED clean). Because the
+   scan reads `\usepackage`/`\RequirePackage` and NOT `\documentclass`, ctexart is
+   invisible to it — so this drives §5.4(b) INDEPENDENTLY of the scan (the key
+   independent-path proof). **fandol embedding is the "Chinese present" proof** (see
+   the honesty note below): the PDF embeds `JRZBJV+FandolSong-Regular` (a
+   CIDFontType0 subset) with an embedded `FontFile3` and a 54-glyph CID run.
+3. **`pkg-core-only`** (pdftex) — `\usepackage{longtable}`. Observed: `ok`, exit 0,
+   1 page, `passes=1`, `phases=[engine]`, `bundlesLoaded=[core]`, `resolution=none`.
+   `longtable` is core-served but is NOT a `provides` name in any tier, so the scan
+   does nothing and no retry fires — the corpus-level LOCK of the unknown-name policy
+   (a core-served `\usepackage` must never pull the ~472 MB academic tier). The
+   public-API counterpart to the integration test's longtable case. The 4 existing
+   basic entries also gained `bundlesLoaded=["core"]`, so the guard is corpus-wide.
+
+### Honesty note — the CJK text is verified STRUCTURALLY, not by extraction
+
+The Chinese does NOT recover through `recoverText`. Inspecting the PDF: xdvipdfmx
+embeds fandol as a CID-keyed CFF subset (`CIDFontType0`, `Identity-H`) WITHOUT a
+ToUnicode CMap — only the Latin font (LMRoman10, used for `WasmTeX`/`fandol`) gets a
+ToUnicode CMap. So the 37 CJK glyphs render (they are in the content stream as
+2-byte CIDs `0b46 077a 0111 …` = 你好世界…) but are NOT reverse-mappable to Unicode.
+This is honest PDF reality, not a probe defect. Rather than weaken the assertion (or
+add a font-parsing dependency to chase the glyph→Unicode mapping), the `cjk-ctex`
+entry asserts the STRUCTURE (DESIGN §8: "no pixel comparisons"): the bundled
+`FandolSong` is embedded, its program is embedded (self-contained PDF), and a CID
+glyph run was emitted. Since fandol is used for nothing but the CJK here (Latin uses
+LMRoman10), fandol's embedding IS proof the Chinese was set with it. The Latin
+snippets (`WasmTeX`, `fandol`) that DO recover keep the probe honest for that entry,
+and the `Wittgenstein` negative control still discriminates. Recorded as a corpus
+convention; a follow-up could add a CID→Unicode path to the probe if a later CJK
+font ships a ToUnicode CMap (making direct extraction possible).
+
+### Manifest verification — the shipped bytes, not just the parse contract
+
+New `conformance/verify-manifest.mjs` (`verifyManifest(distDir)` + a standalone CLI):
+for the shipped `dist/manifest.json`, every PRESENT asset's recorded `{bytes,sha256}`
+is checked against the ACTUAL file (recomputed SHA-256 over the bytes), and the
+per-bundle `provides` index is verified present, alias-correct (`texlive-basic`→
+`core` carries no independent provides), and DISJOINT across real tiers. `run.mjs`
+runs it as a PREFLIGHT (hard-fail before any compile — a truncated/corrupt download
+is the real CI hazard). Guarded (manifest absent → green skip); a listed-but-absent
+file is a skip (a partial dist is legitimate), a PRESENT-but-mismatched file is a
+hard fail. Complements `runtime/test/manifest.test.ts` (parse/type contract + a shape
+check); THIS checks the shipped BYTES.
+
+### Verification (all green, deterministic)
+
+- `node conformance/run.mjs`: manifest integrity **30 checks, 11 files verified**;
+  **all 7 corpus entries pass** (4 basic + sci-paper + cjk-ctex + pkg-core-only).
+  Re-run byte-for-byte identical structural results (pages/passes/bundlesLoaded/
+  resolution/phases stable; only wall-times vary). Per-entry (native dist, node):
+
+  | entry | engine | pages | passes | bundlesLoaded | resolution | phases | pdf |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | hello-pdftex | pdftex | 1 | 1 | core | none | engine | 15 KB |
+  | hello-xetex | xetex | 1 | 1 | core | none | engine→xdvipdfmx | 4 KB |
+  | bib-cite | pdftex | 1 | 3 | core | none | engine→bibtex8→engine→engine | 42 KB |
+  | idx-makeindex | xetex | 2 | 3 | core | none | engine→makeindex→engine→engine→xdvipdfmx | 8 KB |
+  | pkg-core-only | pdftex | 1 | 1 | **core** | **none** | engine | 16 KB |
+  | **sci-paper** | pdftex | 1 | 3 | **core+academic** | **scan** | engine→bibtex8→engine→engine | 114 KB |
+  | **cjk-ctex** | xetex | 1 | 1 | **core+academic** | **retry** | engine→xdvipdfmx | 15 KB |
+
+- **Discrimination proven (the "never weaken an assertion" bar):** injecting WRONG
+  expectations makes the harness FAIL with the right message —
+  `cjk-ctex resolution=scan` fails (`liveLog "not found"=true` ⇒ it's a retry);
+  `cjk-ctex embeddedFonts=[NotoSerifCJK]` fails (not among the embedded BaseFonts);
+  `sci-paper bundlesLoaded=[core]` fails (`got [core,academic]`);
+  `sci-paper resolution=retry` fails (`liveLog "not found"=false` ⇒ it's a scan).
+  `verify-manifest` against a corrupted faux manifest fails on a wrong `sha256`, a
+  wrong `bytes`, AND an injected `provides` overlap (exit 1). The assertions are real.
+- **Runtime regression:** full `runtime` suite **267 tests pass** (12 files) —
+  unchanged; item 8 touched only `conformance/`.
+- `license-audit.sh`: all checks pass.
+
+### CI note + the ~472 MB academic download (flagged)
+
+The CI conformance gate (`.github/workflows/artifacts-build.yml` job `conformance`)
+downloads the WHOLE `dist/` artifact (`path: dist`) built by `artifacts-build`, which
+INCLUDES `academic.{js,data}` (academic.data ≈ 496 MB on disk / ~472 MB budgeted).
+So in CI the new academic entries **run** (not per-entry-skip) and mount academic —
+adding the ~500 MB download plus ~4–6 s/academic-entry of mount+compile; well inside
+the job's `timeout-minutes: 20`. Two follow-ups for the orchestrator (NOT changed
+here — out of item-8 scope + no-commit):
+1. The gate's presence check still asserts `texlive-basic.js texlive-basic.data
+   assets.json` (line ~457), which the runner no longer reads; it should assert
+   `core.{js,data}` (+ optionally `academic.{js,data}` to prove the academic entries
+   run rather than silently per-entry-skip). Harmless today (the alias + assets.json
+   are still shipped), but it drifts when the alias is dropped at M5.
+2. Consider whether the conformance gate needs the full academic tier or could run a
+   core-only slice for speed — but exercising academic end-to-end IS the point of the
+   new entries, so keeping the full download is the right call for the gate.

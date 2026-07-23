@@ -1,0 +1,18 @@
+{
+  "title": "pkg-core-only",
+  "description": "The unknown-name policy LOCK at the corpus level (M4 item 8 / §5.4). A \\usepackage{longtable} document: longtable.sty ships in core, but 'longtable' is NOT a provided-package name in ANY tier's manifest 'provides' index (it comes from the 'tools' package). So the §5.4(a) scan resolves it to nothing and does nothing; core serves longtable.sty; the first pass succeeds; the missing-file retry never fires. Proves a core-served \\usepackage must NOT pull the ~472 MB academic tier (bundlesLoaded=['core'], resolution=none). This is the public-API corpus counterpart to the runtime integration test's longtable case.",
+  "engine": "pdftex",
+  "entry": "main.tex",
+  "bibliography": "off",
+  "index": "off",
+  "expect": {
+    "ok": true,
+    "exitCode": 0,
+    "minPages": 1,
+    "textSnippets": ["longtable", "alpha", "gamma", "epsilon"],
+    "absentSnippets": ["Wittgenstein"],
+    "bundlesLoaded": ["core"]
+  },
+  "resolution": "none",
+  "phases": ["engine"]
+}

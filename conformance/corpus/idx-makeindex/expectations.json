@@ -1,0 +1,17 @@
+{
+  "title": "idx-makeindex",
+  "description": "A XeTeX document with \\makeindex + three \\index entries + \\printindex: the first real-wasm exercise of the sequencing machine's makeindex path (engine -> makeindex -> incorporate -> xdvipdfmx). The three index terms appear in NO body paragraph, so their presence proves the index actually rendered.",
+  "engine": "xetex",
+  "entry": "main.tex",
+  "bibliography": "off",
+  "index": "auto",
+  "expect": {
+    "ok": true,
+    "exitCode": 0,
+    "minPages": 2,
+    "textSnippets": ["Index", "nebula", "pulsar", "quasar"],
+    "absentSnippets": ["Wittgenstein"],
+    "diagnostics": []
+  },
+  "phases": ["engine", "makeindex", "engine", "engine", "xdvipdfmx"]
+}

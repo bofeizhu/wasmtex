@@ -34,7 +34,8 @@ jobs:
           if [ -f dist/busytex.wasm ] \
              && [ -f dist/busytex.js ] \
              && [ -f dist/texlive-basic.js ] \
-             && [ -f dist/texlive-basic.data ]; then
+             && [ -f dist/texlive-basic.data ] \
+             && [ -f dist/assets.json ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
             echo "dist/ artifacts present -> building runtime + running demo smoke."
           else
@@ -84,3 +85,53 @@ jobs:
           name: playwright-report
           path: demo/playwright-report
           if-no-files-found: ignore
+
+  # Conformance seed corpus (M2 item 7: the DESIGN.md §8 corpus gate). Drives the
+  # PUBLIC wasmtex runtime (createTypesetter, via the bundled Node harness)
+  # against the dist/ engine artifacts for every corpus entry, asserting exit
+  # code / page count / text snippets / diagnostics shape. Like demo-smoke, it
+  # runs ONLY when the git-ignored dist/ artifacts are present; on a stock
+  # checkout run.mjs itself green-skips, so this job stays green. M3 flips the
+  # guard to build/download artifacts in CI.
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: guard
+        name: Detect dist/ artifacts
+        run: |
+          if [ -f dist/busytex.wasm ] \
+             && [ -f dist/busytex.js ] \
+             && [ -f dist/texlive-basic.js ] \
+             && [ -f dist/texlive-basic.data ] \
+             && [ -f dist/assets.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "dist/ artifacts present -> building runtime + running conformance corpus."
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "dist/ artifacts absent -> skipping conformance corpus (full CI build lands at M3)."
+          fi
+
+      - if: steps.guard.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          # Node 24 matches runtime/package.json `engines` and the other jobs.
+          node-version: 24
+
+      # The runner imports runtime/dist/node-harness.mjs (a git-ignored build
+      # product), so build the runtime first — the same explicit step demo-smoke
+      # uses. conformance/ has no external deps, so no npm ci there.
+      - if: steps.guard.outputs.present == 'true'
+        name: Install runtime dependencies (clean, from committed lockfile)
+        working-directory: runtime
+        run: npm ci
+
+      - if: steps.guard.outputs.present == 'true'
+        name: Build the runtime (ESM client + worker + node harness)
+        working-directory: runtime
+        run: npm run build
+
+      - if: steps.guard.outputs.present == 'true'
+        name: Run the conformance seed corpus
+        run: node conformance/run.mjs

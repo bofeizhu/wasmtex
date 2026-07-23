@@ -1,0 +1,17 @@
+{
+  "title": "hello-pdftex",
+  "description": "hello-world through pdfTeX writing the PDF directly (the §9 M2 pdftex seed).",
+  "engine": "pdftex",
+  "entry": "hello.tex",
+  "bibliography": "off",
+  "index": "off",
+  "expect": {
+    "ok": true,
+    "exitCode": 0,
+    "minPages": 1,
+    "textSnippets": ["pdfTeX", "WasmTeX"],
+    "absentSnippets": ["LibreOffice"],
+    "diagnostics": []
+  },
+  "phases": ["engine"]
+}

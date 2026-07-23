@@ -192,7 +192,7 @@ exact bodies below are the pinned, deterministic input.
 
 ## How to regenerate (at a TL rebase)
 
-Drive the real `EmscriptenEngineHost` (via `test/support/node-engine-loader.ts`)
+Drive the real `EmscriptenEngineHost` (via `node/node-engine-loader.ts`)
 against a freshly built `dist/`, compiling each document above through the
 worker core (`createWorkerCore`, so the §5.3 sequencing runs) and writing the
 `result` message's `log` field (prefixed with the existing `# generator:` note,

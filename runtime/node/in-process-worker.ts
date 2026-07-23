@@ -5,13 +5,14 @@
 //   Not derived from any third-party source.
 //
 // ---------------------------------------------------------------------------
-// TEST-ONLY in-process adapter: makes the worker orchestration core look like a
+// In-process adapter: makes the worker orchestration core look like a
 // {@link WorkerLike} so the client (`src/client.ts`) can drive it — plus a REAL
 // {@link EngineHost} — end to end under Node, without a Web Worker. This is the
 // full-stack cousin of the fake-worker unit suite: it exercises client →
 // (parse) → core → sequencing → engine-host → wasm and back, through the PUBLIC
-// §5.1 API. Never imported by production code (the shipped worker uses
-// `runtime/worker/entry.ts`); lives under test/support like the node loader.
+// §5.1 API. Never imported by production/browser code (the shipped worker uses
+// `runtime/worker/entry.ts`); it is Node-only glue, alongside the node loader
+// (`node-engine-loader.ts`) and the harness (`harness.ts`) that combines them.
 //
 // It mirrors `entry.ts`: validate each inbound message at the boundary
 // (`parseClientMessage`) then hand it to the core; deliver correlated responses
@@ -24,9 +25,9 @@
 // callMain), which still satisfies the client's cancellation CONTRACT.
 // ---------------------------------------------------------------------------
 
-import { parseClientMessage, type WorkerMessage } from '../../src/protocol';
-import { createWorkerCore, type EngineHost, type WorkerCore } from '../../worker/core';
-import type { WorkerLike } from '../../src/client';
+import { parseClientMessage, type WorkerMessage } from '../src/protocol';
+import { createWorkerCore, type EngineHost, type WorkerCore } from '../worker/core';
+import type { WorkerLike } from '../src/client';
 
 export class InProcessWorker implements WorkerLike {
   onmessage: ((event: { readonly data: unknown }) => void) | null = null;

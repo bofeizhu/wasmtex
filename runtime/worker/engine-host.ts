@@ -29,8 +29,9 @@
 // `createWorkerModuleLoader`, importScripts + the worker's own fetch — lives
 // here and is bundle-safe (only worker globals). The Node loader
 // (createRequire + fs, mirroring build/artifacts/verify-engine.mjs) is a
-// TEST-ONLY helper (runtime/test/support/) that is NEVER imported by the worker
-// entry, so `node:*` built-ins never reach the shipped IIFE bundle — a
+// Node-only helper (runtime/node/node-engine-loader.ts, shared by the
+// integration test and the conformance runner) that is NEVER imported by the
+// worker entry, so `node:*` built-ins never reach the shipped IIFE bundle — a
 // deliberate split so the bundle stays self-contained (grep-clean of imports).
 // ---------------------------------------------------------------------------
 

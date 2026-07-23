@@ -172,7 +172,7 @@ echo "== (d) copyleft tripwire (runtime/ + demo/) =="
 # --exclude-standard): build outputs (dist/, build/out/), node_modules, and
 # playwright reports are all git-ignored and excluded by construction, while a
 # not-yet-committed new source is still audited by a pre-commit local run.
-src=$(git ls-files --cached --others --exclude-standard runtime demo 2>/dev/null \
+src=$(git ls-files --cached --others --exclude-standard runtime demo conformance 2>/dev/null \
   | grep -E '\.(sh|mjs|js|cjs|py|ts|tsx|html|c|h)$' || true)
 copyleft=""
 if [ -n "$src" ]; then
@@ -200,7 +200,7 @@ echo "== (e) SPDX MIT headers (build/ + demo/ originals) =="
 #   .editorconfig pins.lock*   convention (pins.lock does carry one, not required).
 #   *.patch                    covered by check (c) (SPDX + clause), not here.
 #   *.c / Makefile             carried by (a/b) provenance headers, not this scan.
-req=$(git ls-files --cached --others --exclude-standard build demo runtime 2>/dev/null \
+req=$(git ls-files --cached --others --exclude-standard build demo runtime conformance 2>/dev/null \
   | grep -E '(\.sh|\.mjs|\.py|\.html|\.ts)$|(^|/)Dockerfile$' || true)
 missing_e=0
 for f in $req; do

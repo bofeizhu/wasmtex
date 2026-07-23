@@ -8,11 +8,12 @@
 //   busytex build's own loader contract — behavioural reference only.
 //
 // ---------------------------------------------------------------------------
-// TEST-ONLY Node loader for EmscriptenEngineHost. This is deliberately NOT part
-// of the worker bundle: it uses `node:module` / `node:fs`, which the shipped
-// classic-worker IIFE must never carry. The worker uses
+// Node-only loader for EmscriptenEngineHost. This is deliberately NOT part of
+// the worker bundle: it uses `node:module` / `node:fs`, which the shipped
+// classic-worker IIFE must never carry. The browser worker uses
 // `createWorkerModuleLoader` (importScripts) instead; this file lets the Node
-// integration test drive the SAME real host offline from dist/.
+// consumers (the integration test AND the conformance runner, both via
+// `harness.ts`) drive the SAME real host offline from dist/.
 //
 // Loading the engine under Node:
 //   * factory:      createRequire(...)(busytex.js) — the CJS MODULARIZE export.
@@ -23,7 +24,7 @@
 //     injected so the IDB probe takes the worker branch and fails GRACEFULLY to
 //     the Node `fs` read (the file_packager's own `preloadFallback`), and pass a
 //     filtered `console` so that expected fallback chatter stays out of test
-//     output. Nothing here is reachable from production code.
+//     output. Nothing here is reachable from production/browser code.
 // ---------------------------------------------------------------------------
 
 import { readFileSync } from 'node:fs';
@@ -32,7 +33,7 @@ import type {
   BusytexFactory,
   EngineModule,
   EngineModuleLoader,
-} from '../../worker/engine-host';
+} from '../worker/engine-host';
 
 const require = createRequire(import.meta.url);
 
@@ -61,8 +62,9 @@ function quietConsole(): Console {
 
 /**
  * Build a Node {@link EngineModuleLoader}. `locations` are absolute filesystem
- * paths (the host joins `assets.baseUrl` — set to the dist dir in the test —
- * with each inventory path), so `require`/`readFileSync` resolve them directly.
+ * paths (the host joins `assets.baseUrl` — set to the dist dir by the Node
+ * consumers — with each inventory path), so `require`/`readFileSync` resolve
+ * them directly regardless of where this bundle is loaded from.
  */
 export function createNodeModuleLoader(): EngineModuleLoader {
   return {

@@ -33,8 +33,7 @@ import {
 } from '../src/index';
 import { createWorkerCore } from '../worker/core';
 import { EmscriptenEngineHost } from '../worker/engine-host';
-import { createNodeModuleLoader } from './support/node-engine-loader';
-import { InProcessWorker } from './support/in-process-worker';
+import { createNodeModuleLoader, createNodeWorkerFactory } from '../node/harness';
 
 // dist/ lives at the repo root; this file is runtime/test/, two levels down.
 const distDir = fileURLToPath(new URL('../../dist/', import.meta.url));
@@ -347,9 +346,14 @@ describe('typeset integration (real wasm engine, node)', () => {
 // absent, like the tests above.
 // ---------------------------------------------------------------------------
 
-/** A fresh in-process worker each call → a fresh EngineHost + wasm instance (what terminate() maps to). */
+/**
+ * A fresh in-process worker each call → a fresh EngineHost + wasm instance (what
+ * terminate() maps to). Delegates to the shared node-harness factory — the SAME
+ * definition the conformance runner (`conformance/run.mjs`, via the bundled
+ * `dist/node-harness.mjs`) drives, so there is one in-process/Node-loader path.
+ */
 function inProcessFactory(): WorkerFactory {
-  return () => new InProcessWorker(new EmscriptenEngineHost(createNodeModuleLoader()));
+  return createNodeWorkerFactory();
 }
 
 describe('public API over real wasm (createTypesetter, in-process adapter, node)', () => {

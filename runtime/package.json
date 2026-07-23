@@ -20,8 +20,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc && npm run build:worker",
+    "build": "tsc && npm run build:worker && npm run build:node-harness",
     "build:worker": "esbuild worker/entry.ts --bundle --format=iife --target=es2022 --platform=browser --outfile=dist/worker.js --sourcemap",
+    "build:node-harness": "esbuild node/harness.ts --bundle --format=esm --target=es2022 --platform=node --outfile=dist/node-harness.mjs --sourcemap",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run"
   },

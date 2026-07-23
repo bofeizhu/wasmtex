@@ -505,6 +505,32 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-24 — M2 item 7: conformance seed corpus (loop)
+
+**Done.** `coder` agent delivered conformance/: four committed corpus
+projects (hello-xetex, hello-pdftex, bib-cite, idx-makeindex) with
+machine-readable expectations (exit/ok, minPages, text snippets with
+negative controls, exact diagnostics, executed-phase sequences), a
+runner driving the PUBLIC createTypesetter over real wasm, and a
+shared pdf-probe (the demo smoke now imports the same single
+implementation). The in-process node harness was promoted from test
+support to runtime/node/ with an esbuild node-harness bundle — one
+definition, two consumers. Guarded CI job added; runner green-skips
+without dist/.
+
+**Milestone-grade evidence.** The makeindex path ran on real wasm for
+the FIRST time: engine → makeindex (3 entries) → incorporate pass →
+converge pass → xdvipdfmx, 2 pages, index terms rendering only via
+\printindex (body-absence proven). bibtex8 seed pins the honest
+multi-pass diagnostics shape (pass-1 citation warnings — a deliberate
+rebase tripwire, documented). Runner discrimination proven (wrong
+snippet → exit 1). Review: approve; fixes applied — audit checks
+(d)/(e) now cover conformance/ (new top-level source tree), CI guards
+gained assets.json, page-probe cross-check now ASSERTS agreement
+instead of printing it, integrator caught a duplicate-compilerOptions
+JSON bug that had silently dropped noEmit. All gates green: 186/186,
+conformance 4/4, smoke 4/4, audit (38+ sources).
+
 ## 2026-07-24 — M2 items 5+6: formats verified; fixtures regenerated
 
 **Item 5.** Deliberate re-checks closed: dist/formats exactly

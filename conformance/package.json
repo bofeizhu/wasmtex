@@ -1,0 +1,12 @@
+{
+  "name": "wasmtex-conformance",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "WasmTeX conformance seed corpus + runner (DESIGN.md §8). Drives the public wasmtex runtime against dist/; no npm deps. Not the published package.",
+  "license": "MIT",
+  "scripts": {
+    "preconformance": "npm --prefix ../runtime run build",
+    "conformance": "node run.mjs"
+  }
+}

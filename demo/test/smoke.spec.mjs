@@ -27,10 +27,12 @@
 //   would FAIL on a PDF that lacked the text.
 
 import { test, expect } from '@playwright/test';
-import { inflateSync } from 'node:zlib';
 import { mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// The PDF text-extraction technique documented above is factored into the shared
+// conformance probe so this smoke and conformance/run.mjs use ONE implementation.
+import { stripSpaces, reconstructXetexText, extractPdftexText } from '../../conformance/pdf-probe.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SHOT_DIR = process.env.WASMTEX_SCREENSHOT_DIR || resolve(HERE, '..', 'test-results');
@@ -40,93 +42,9 @@ const SHOT_DIR = process.env.WASMTEX_SCREENSHOT_DIR || resolve(HERE, '..', 'test
 // not discriminating and the whole content proof is worthless).
 const WRONG_SENTENCE = 'Goodbye, cruel LibreOffice, farewell!';
 
-const stripSpaces = (s) => s.replace(/\s+/g, '');
-
-// ---------------------------------------------------------------------------
-// PDF text extraction helpers (Node side; the page returns base64 PDF bytes).
-// ---------------------------------------------------------------------------
-
-/** Inflate every FlateDecode stream in a PDF; non-flate streams are skipped. */
-function inflateStreams(pdf) {
-  const buf = Buffer.from(pdf);
-  const out = [];
-  let i = 0;
-  for (;;) {
-    const s = buf.indexOf('stream', i);
-    if (s < 0) break;
-    // `indexOf('stream')` also matches inside 'endstream'; skip those.
-    if (buf.toString('latin1', Math.max(0, s - 3), s).endsWith('end')) {
-      i = s + 6;
-      continue;
-    }
-    let start = s + 6;
-    if (buf[start] === 0x0d) start++;
-    if (buf[start] === 0x0a) start++;
-    const e = buf.indexOf('endstream', start);
-    if (e < 0) break;
-    let end = e;
-    if (buf[end - 1] === 0x0a) end--;
-    if (buf[end - 1] === 0x0d) end--;
-    try {
-      out.push(inflateSync(buf.subarray(start, end)));
-    } catch {
-      /* not a flate stream (e.g. an uncompressed object) — ignore */
-    }
-    i = e + 9;
-  }
-  return out;
-}
-
-/** Decode a ToUnicode destination (a run of UTF-16BE code units) to a JS string.
- *  Ligatures map one glyph to several code units (e.g. `fi` -> U+0066 U+0069),
- *  so decode ALL of them, not just the first. */
-function decodeDest(hex) {
-  let s = '';
-  for (let k = 0; k + 4 <= hex.length; k += 4) s += String.fromCharCode(parseInt(hex.slice(k, k + 4), 16));
-  return s;
-}
-
-/** Parse a ToUnicode CMap body into a glyph-code -> string map (bfchar + bfrange). */
-function parseCMap(text, map) {
-  for (const blk of text.matchAll(/beginbfchar([\s\S]*?)endbfchar/g)) {
-    for (const m of blk[1].matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
-      map.set(parseInt(m[1], 16), decodeDest(m[2]));
-    }
-  }
-  for (const blk of text.matchAll(/beginbfrange([\s\S]*?)endbfrange/g)) {
-    for (const m of blk[1].matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
-      const lo = parseInt(m[1], 16), hi = parseInt(m[2], 16), dst = parseInt(m[3].slice(0, 4), 16);
-      for (let g = lo, u = dst; g <= hi; g++, u++) map.set(g, String.fromCodePoint(u));
-    }
-  }
-}
-
-/** Reconstruct XeTeX text: decode content-stream hex glyph runs through the ToUnicode CMap. */
-function reconstructXetexText(pdf) {
-  const streams = inflateStreams(pdf).map((s) => s.toString('latin1'));
-  const map = new Map();
-  for (const t of streams) if (t.includes('beginbfchar') || t.includes('beginbfrange')) parseCMap(t, map);
-  let text = '';
-  for (const t of streams) {
-    if (!/(TJ|Tj)/.test(t) || !/<[0-9A-Fa-f]{4,}>/.test(t)) continue; // a glyph content stream
-    for (const hs of t.matchAll(/<([0-9A-Fa-f]+)>/g)) {
-      const hex = hs[1];
-      for (let k = 0; k + 4 <= hex.length; k += 4) text += map.get(parseInt(hex.slice(k, k + 4), 16)) ?? '';
-    }
-  }
-  return text;
-}
-
-/** Extract pdfTeX text: concatenate the `(...)` string literals from the content stream. */
-function extractPdftexText(pdf) {
-  const streams = inflateStreams(pdf).map((s) => s.toString('latin1'));
-  let text = '';
-  for (const t of streams) {
-    if (!/(TJ|Tj)/.test(t) || !/\((?:\\.|[^\\()])*\)/.test(t)) continue;
-    for (const m of t.matchAll(/\(((?:\\.|[^\\()])*)\)/g)) text += m[1].replace(/\\([()\\])/g, '$1');
-  }
-  return text;
-}
+// The `stripSpaces` / `reconstructXetexText` / `extractPdftexText` helpers now
+// live in ../../conformance/pdf-probe.mjs (imported above) — the single shared
+// implementation of the technique the file header documents.
 
 // ---------------------------------------------------------------------------
 // Documents.

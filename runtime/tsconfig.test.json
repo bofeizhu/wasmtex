@@ -6,11 +6,9 @@
   // noEmit: this config only checks types; emitting is the build config's job.
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "noEmit": true
-  },
-  "compilerOptions": {
+    "noEmit": true,
     // Tests run under node (vitest) and may import node:fs etc.
     "types": ["node"]
   },
-  "include": ["src", "worker", "test", "vitest.config.ts"]
+  "include": ["src", "worker", "node", "test", "vitest.config.ts"]
 }

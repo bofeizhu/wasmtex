@@ -1,0 +1,22 @@
+{
+  "title": "bib-cite",
+  "description": "A pdfTeX document with two \\cite keys + plain style: exercises the bibtex8 path and the incorporate-reruns (the §9 M2 bibtex8 seed). The rendered author surnames prove the .bbl reached the PDF.",
+  "engine": "pdftex",
+  "entry": "main.tex",
+  "bibliography": "auto",
+  "index": "off",
+  "expect": {
+    "ok": true,
+    "exitCode": 0,
+    "minPages": 1,
+    "textSnippets": ["Knuth", "Lamport", "Programming"],
+    "absentSnippets": ["Wittgenstein"],
+    "diagnostics": [
+      { "severity": "warning", "message": "LaTeX Warning: Citation `knuth1984' on page 1 undefined on input line 3.", "file": "main.tex", "line": 3 },
+      { "severity": "warning", "message": "LaTeX Warning: Citation `lamport1994' on page 1 undefined on input line 3.", "file": "main.tex", "line": 3 },
+      { "severity": "warning", "message": "LaTeX Warning: There were undefined references.", "file": "main.tex" },
+      { "severity": "warning", "message": "LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.", "file": "main.tex" }
+    ]
+  },
+  "phases": ["engine", "bibtex8", "engine", "engine"]
+}

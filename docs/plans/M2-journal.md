@@ -1300,3 +1300,216 @@ warranted). The throwaway generator is not committed. dist/ untouched (item 4b's
 **Item 6 COMPLETE.** 21 fixtures regenerated against TL 2026; version-agnostic claim VALIDATED
 (zero detector/parser changes; one benign `ts1cmr.fd` structural delta that touches no anchor);
 GENERATOR under-specification fixed; all five gates green.
+
+---
+
+## Item 7 — Conformance seed corpus
+
+Dated 2026-07-23. Goal: stand up `conformance/` as a real gate — committed seed
+documents + a node runner that drives the PUBLIC `wasmtex` runtime
+(`createTypesetter`) against `dist/`, asserting the §8 contract (exit code, PDF
+page count, extracted text snippets, diagnostics shape — no pixel comparisons).
+Seeds per the §9 M2 bullet: hello per engine (xetex, pdftex), one bibtex8 doc,
+one makeindex doc. The makeindex doc is the FIRST real-wasm exercise of the
+sequencing machine's makeindex path.
+
+### Bundle verification (makeindex + bibtex8 inputs) — no project inputs needed
+
+Before writing the makeindex seed I verified the texlive-basic bundle carries
+what the tool paths need, so the §6.3 project-input fallback is NOT triggered:
+
+- `makeidx.sty` present at `texmf-dist/tex/latex/base/makeidx.sty` — provides
+  `\printindex` (the kernel already owns `\makeindex`/`\index`/`theindex`).
+- makeindex is invoked by `core.ts` as `makeindex <job>.idx` with **no `-s`
+  style** → it uses its compiled-in default style, which emits exactly the
+  LaTeX `theindex` environment `\printindex` reads. So no `.ist` is required
+  (the bundle carries several — `base/mkind.ist`, `base/latex.ist`, … — but the
+  seed does not reference one).
+- `plain.bst` present at `texmf-dist/bibtex/bst/base/plain.bst` — the bibtex8
+  seed's `\bibliographystyle{plain}`.
+
+Decision: all four seeds compile from their committed sources alone; no
+conformance/fixtures inputs are supplied. (The CJK seed of §6.3, which DOES need
+a checked-in font, is an M5 full-corpus concern, not an M2 seed.)
+
+### Import-mechanism decision (the load-bearing architecture call)
+
+The runner must drive the PUBLIC API (`createTypesetter`) over the real wasm,
+in-process, under Node — the same stack `runtime/test/typeset-integration.test.ts`
+drives, but from OUTSIDE `runtime/`. Two facts constrain the mechanism:
+
+1. **`runtime/dist/**` is bundler-targeted, not Node-native.** `tsconfig.json`
+   compiles with `moduleResolution: "bundler"` (extensionless relative imports)
+   and explicitly declines Node-native execution of the emitted files. So a
+   plain `node conformance/run.mjs` CANNOT `import 'runtime/dist/src/index.js'`
+   — the extensionless specifiers don't resolve under Node ESM. This is true of
+   the whole compiled tree, including the public entry.
+2. **The in-process adapter + Node engine loader lived under
+   `runtime/test/support/`** (TEST-ONLY, `.ts`, extensionless imports) — not
+   compiled, not importable from outside `runtime/`, and their `node:fs`/
+   `node:module` use must never enter the shipped browser worker.
+
+Decision — **a compiled Node harness bundle, the Node-delivery twin of
+`worker.js`:**
+
+- Promote the two adapters out of `test/support/` into a new `runtime/node/`
+  root (the honest home for Node-execution glue: tests depend on the harness,
+  not the harness on tests). `in-process-worker.ts` + `node-engine-loader.ts`
+  move verbatim (only their relative import depth changes `../../` → `../`).
+- Add `runtime/node/harness.ts`: re-exports the PUBLIC `createTypesetter` (from
+  `../src/index`) and exports `createNodeWorkerFactory()` — the exact
+  `() => new InProcessWorker(new EmscriptenEngineHost(createNodeModuleLoader()))`
+  the integration test already uses, now the single shared definition.
+- esbuild bundles `node/harness.ts` → `dist/node-harness.mjs` (ESM,
+  `--platform=node`, Node builtins external; the 27 MB `busytex.js`/52 MB
+  `.data` are loaded at RUNTIME via `createRequire`/`readFileSync` on absolute
+  paths, NOT bundled). This is exactly analogous to `build:worker` bundling
+  `worker/entry.ts` → `dist/worker.js` (browser IIFE): same source, a
+  target-specific delivery bundle.
+- `conformance/run.mjs` imports the single `dist/node-harness.mjs` (built dist).
+  `runtime/test/typeset-integration.test.ts` imports the SAME
+  `createNodeWorkerFactory` from `../node/harness` SOURCE (vitest/esbuild
+  resolves extensionless TS). One definition, two consumers, zero duplication —
+  and it satisfies the task's "import from runtime's built dist OR source"
+  literally (runner ← dist, in-runtime test ← source).
+
+Why not the alternatives: (a) run the runner under tsx/vitest — drags a
+bundler/loader dep into conformance and stops it being a standalone gate;
+(b) keep adapters in test/support and reach in from `node/harness.ts` — the
+build tsc would emit `dist/test/**`, breaking the "test/ never emitted"
+invariant; promotion to `node/` is the clean direction.
+
+### Shared PDF probe
+
+The smoke's PDF text-extraction technique (inflate FlateDecode streams; decode
+XeTeX glyph runs through the embedded ToUnicode CMap; pull pdfTeX `(...)` string
+literals) is factored into `conformance/pdf-probe.mjs` (SPDX, original) and
+imported by BOTH the runner and the refactored `demo/test/smoke.spec.mjs` — the
+task's "factor into a shared helper if clean". Adds `countPages(pdf)`: inflates
+object streams too, reads the page-tree root `/Type /Pages … /Count N`, and
+cross-checks against leaf `/Type /Page` occurrences (honest about PDF-1.5
+object-stream compression — documented in the file).
+
+### package.json + CI
+
+`conformance/` gets its own tiny package.json mirroring `demo/` (a
+`preconformance` that builds the runtime → produces `node-harness.mjs`, then
+`conformance` → `node run.mjs`); no external deps (pure Node, unlike demo's
+Playwright). CI: a guarded `conformance` job in build.yml mirroring
+`demo-smoke`'s dist/-presence guard — runs the corpus when engine artifacts are
+present, skips green otherwise.
+
+
+### RUN — all four seeds green against the TL 2026 dist
+
+`node conformance/run.mjs` (public `createTypesetter` over the real busytex wasm,
+fresh typesetter per entry):
+
+```
+entry            engine  pages passes  wall   phases
+ok   bib-cite        pdftex  1     3      ~300ms engine>bibtex8>engine>engine
+ok   hello-pdftex    pdftex  1     1      ~140ms engine
+ok   hello-xetex     xetex   1     1      ~510ms engine>xdvipdfmx
+ok   idx-makeindex   xetex   2     3     ~1170ms engine>makeindex>engine>engine>xdvipdfmx
+```
+
+Per entry:
+
+- **hello-xetex** — 1 page, 1 pass, xelatex → xdvipdfmx. Snippets `XeTeX`,
+  `WasmTeX` found via the ToUnicode CMap; `LibreOffice` absent (neg control).
+  diagnostics `[]`.
+- **hello-pdftex** — 1 page, 1 pass, pdflatex writes the PDF directly (no
+  driver). Snippets `pdfTeX`, `WasmTeX` via the `(…)` literals; `LibreOffice`
+  absent. diagnostics `[]`.
+- **bib-cite** — 1 page, **3 passes**, `engine → bibtex8 → engine → engine`.
+  The rendered author surnames `Knuth`, `Lamport` (+ `Programming`) prove the
+  `.bbl` bibtex8 produced was incorporated into the PDF; `Wittgenstein` absent.
+  diagnostics: **4 warnings** — the two `Citation … undefined on input line 3`
+  (attributed to `main.tex:3`), `There were undefined references`, and
+  `Label(s) may have changed. Rerun to get cross-references right` — retained
+  from pass 1 in the multi-pass transcript. (See the finding below.)
+- **idx-makeindex** — 2 pages, **3 passes**,
+  `engine → makeindex → engine → engine → xdvipdfmx`. The three index terms
+  `nebula`, `pulsar`, `quasar` (+ the `Index` heading) render in the PDF and
+  appear in NO body paragraph, so their presence is proof the index was built
+  and incorporated; `Wittgenstein` absent. diagnostics `[]`.
+
+### Makeindex path — the full evidence (deliverable 4)
+
+The first real-wasm exercise of the sequencing machine's makeindex path. The
+observed step chain, reconstructed from the transcript + the inferred driver:
+
+1. **engine (pass 1)** — xelatex writes `main.idx` (`Writing index file main.idx`),
+   finds `No file main.aux` / `No file main.ind` (first run).
+2. **makeindex** — `This is makeindex, version 2.18 [TeX Live 2026]`,
+   `Scanning input file main.idx….done (3 entries accepted, 0 rejected)`,
+   `Generating output file main.ind….done (13 lines written, 0 warnings)`.
+   Invoked as `makeindex main.idx` (no `-s`), so the compiled-in default style
+   emits the `theindex` environment `\printindex` reads.
+3. **engine (pass 2)** — xelatex reads `(./main.ind [1] [2])`: the index renders
+   → the document grows to **2 pages**.
+4. **engine (pass 3)** — a genuine convergence pass. The LaTeX kernel writes
+   `\gdef\@abspage@last{N}` to `main.aux`; pass 1 recorded `{1}` (1 page), pass 2
+   recorded `{2}` (index added a page), so the `.aux` CHANGED between passes and
+   the machine's `.aux`-change signal triggered one more pass. Pass 3's `.aux`
+   equals pass 2's → quiescent. This is exactly the §5.3 rerun-until-quiescent
+   contract doing its job — not a makeindex quirk.
+5. **xdvipdfmx (driver)** — finalizes the `.xdv` → PDF. Silent in the transcript
+   (no banner), so the runner infers it from `engine === xetex && PDF produced`
+   (XeTeX cannot emit a PDF itself, and the machine finalizes XeTeX only through
+   xdvipdfmx). Independently corroborated by the low-level integration test,
+   which sees the real `xdvipdfmx` progress phase.
+
+The index renders (`nebula`/`pulsar`/`quasar` in the PDF, absent from the body)
+— the makeindex path is proven end to end through the PUBLIC API.
+
+### Finding: bibtex8-path diagnostics are non-empty (multi-pass retention)
+
+Predicted `bib-cite` diagnostics `[]`; the actual is **4 warnings**. Not a bug —
+the diagnostics parser (item 8) scans the FULL multi-pass transcript with global
+dedup, and pass 1 (before bibtex8 ran) legitimately warned that the citations
+were undefined. Those warnings stay in the concatenated log even though the final
+pass resolves them. The seed now pins this exact shape (the "Citation … undefined"
+warnings carry `file: main.tex, line: 3`) — a real end-to-end exercise of the
+parser and an honest record of what a host sees for a clean bibliography compile.
+Whether cross-pass-resolved warnings should be suppressed is a parser-design
+question owned by item 8 / a later milestone, not item 7; the corpus documents
+current reality.
+
+### Page-count probe honesty
+
+For all four PDFs the page-tree `/Type /Pages … /Count N` and the independent
+leaf `/Type /Page` tally AGREE (hello=1/1, bib=1/1, idx=2/2) — the probe inflates
+object streams first so PDF-1.5 compression does not hide the page objects.
+
+### Gates — all green
+
+- runtime `npm run typecheck`: clean (adds `node/` to the checked set).
+- runtime `npm test`: **186/186** (10 files) — the file move (test/support →
+  node/) + the shared `createNodeWorkerFactory` delegation broke nothing; the
+  integration suite still drives the same stack.
+- runtime `npm run build`: emits `dist/worker.js` (browser IIFE) **and**
+  `dist/node-harness.mjs` (Node ESM, 54 kB) — the new `build:node-harness` step.
+- demo `npm test` (Playwright/chromium): **4/4** on the shared `pdf-probe.mjs`
+  (the smoke's local extraction helpers were removed, not reimplemented).
+- **conformance `node run.mjs`: 4/4**; green-skips (exit 0) with a message when
+  dist/ is absent (verified with `WASMTEX_DIST=/nonexistent`).
+- license audit: all checks passed (38 sources; the two moved files' deletions
+  staged so `--cached` reflects the final tree).
+
+### Deviations from DESIGN.md
+
+None. New surface: `conformance/{run.mjs,pdf-probe.mjs,package.json,corpus/*}`,
+`runtime/node/{harness,in-process-worker,node-engine-loader}.ts`, the
+`build:node-harness` step, a guarded `conformance` CI job, and the
+`demo/test/smoke.spec.mjs` factor onto the shared probe. The §6.3 project-input
+fallback was NOT needed (the bundle carries `makeidx.sty` + `plain.bst`; the
+default makeindex style needs no `.ist`). dist/ untouched.
+
+### Item 7 — outcome
+
+**Item 7 COMPLETE.** Four seed documents + expectations, a guarded node runner
+driving the PUBLIC runtime via a shared Node-harness bundle, a shared PDF probe,
+and a guarded CI job. All four seeds pass against TL 2026; the makeindex path is
+exercised and proven end to end for the first time on real wasm. Five gates
+green.

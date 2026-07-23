@@ -1,0 +1,17 @@
+{
+  "title": "hello-xetex",
+  "description": "hello-world through XeTeX -> xdvipdfmx (the §9 M2 xetex seed).",
+  "engine": "xetex",
+  "entry": "hello.tex",
+  "bibliography": "off",
+  "index": "off",
+  "expect": {
+    "ok": true,
+    "exitCode": 0,
+    "minPages": 1,
+    "textSnippets": ["XeTeX", "WasmTeX"],
+    "absentSnippets": ["LibreOffice"],
+    "diagnostics": []
+  },
+  "phases": ["engine", "xdvipdfmx"]
+}

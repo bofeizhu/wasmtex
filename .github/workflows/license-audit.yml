@@ -13,6 +13,6 @@ jobs:
   license-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Run license / provenance audit
         run: bash build/audit/license-audit.sh

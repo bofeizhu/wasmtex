@@ -54,7 +54,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Parse the pinned image coordinates from pins.lock with the SAME awk-block
       # pattern build/artifacts/build.sh uses for `pinned_id`: section-scoped to

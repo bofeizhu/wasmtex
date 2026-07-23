@@ -139,6 +139,8 @@ comment = TL2026 engine sources; branch tags/texlive-2026.0 @ r78235 (2026-03-01
 # closed. RE-PIN-AT-M3: switch url + checksum_url back to
 # .../historic/systems/texlive/2026/texlive2026-20260301.iso once archived (the
 # sha256/sha512 stay identical, so the mirror swap self-verifies). See journal.
+# Re-checked 2026-07-23 (M3 item 2): historic/2026/ still has NO consolidated
+# ISO (404) — reminder stands; re-check at the next milestone or TL 2027.
 #
 # sha512 is the mirror's own published value (.../texlive2026-20260301.iso.sha512),
 # recorded so fetch.sh cross-checks every download against TUG's published value.
@@ -155,14 +157,37 @@ mirror       = CTAN release area (TU-Chemnitz Images/); historic re-pin due at M
 license      = TeX Live aggregate (per-package; see THIRD_PARTY_NOTICES.md)
 comment      = frozen TL2026 image; release-area fallback per M2 ISO-availability risk
 
-# --- Toolchain container (M0 item 1) ------------------------------------------
+# --- Toolchain container(s) (M0 item 1; arm64 canonical re-pin M3 item 3) ------
 # Recorded for provenance; NOT fetched by fetch.sh. The build runs inside the
 # image built by build/toolchain/build-image.sh. The artifact-reproducibility
 # anchor is image_id (it covers apt resolution AND the un-checksummed emsdk
-# downloads that happen at image-build time). ubuntu_digest is the linux/amd64
-# platform digest consumed by the Dockerfile FROM; ubuntu_index_digest is the
-# multi-arch manifest-list digest, cross-reference only. Keep in sync with
+# downloads at image-build time). ONE parameterized Dockerfile now produces BOTH
+# images: it FROMs the multi-arch INDEX digest (ubuntu_index_digest, shared) and
+# the build's --platform selects the per-arch base — so the two images differ
+# ONLY in --platform (the invariant the three-way equivalence check needs).
+# ubuntu_digest in each block is the per-arch PLATFORM digest the index resolves
+# to (index -> arm64/v8, index -> amd64). Keep in sync with
 # build/toolchain/Dockerfile.
+#
+# [toolchain-image-arm64] is the CANONICAL builder (DESIGN.md §9 amendment):
+# native arm64 Linux, built with no Rosetta. [toolchain-image] is the parked
+# amd64 EQUIVALENCE LANE (M3 item 6); its image_id below is the M0-era build
+# (the pre-shrink 20-pkg apt set, and the old forced-amd64 Dockerfile), kept as
+# the historical record — item 6 rebuilds the amd64 image from the now-shared
+# parameterized Dockerfile (--platform linux/amd64) and re-pins its image_id in
+# the same commit that runs the equivalence check.
+
+[toolchain-image-arm64]
+kind                = container
+ubuntu_digest       = sha256:ecd3706b6b5587d1318e1777359b8563f9db6e8e5a81841f04dc3c7edbefbdc1
+ubuntu_index_digest = sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
+emscripten          = 3.1.43
+emsdk_commit        = d9c66fa2c2cd78daeb672967b2ef12bf18adf842
+emsdk_release       = bf3c159888633d232c0507f4c76cc156a43c32dc
+image_id            = sha256:5d4af6533004f8d9c71857dfc9babb2c0757263410fad4af199543b9c49630dc
+platform            = linux/arm64
+comment             = CANONICAL builder (M3 item 3). Native arm64. ubuntu_digest = the index->arm64/v8 platform digest; the Dockerfile FROM pins ubuntu_index_digest and --platform linux/arm64 selects this. emsdk_release = the emscripten-releases hash 3.1.43 resolves to; its linux-arm64 prebuilt (wasm-binaries-arm64.tbz2, 242978805 B) is CONFIRMED present — SAME emsdk pin as [toolchain-image]/native, only the platform binaries differ (linux-arm64). image_id is the repro anchor.
+
 [toolchain-image]
 kind                = container
 ubuntu_digest       = sha256:0d779ea97881505f5ef0039336ee85edba27519bdba968c284c86ee066a973c8
@@ -171,4 +196,4 @@ emscripten          = 3.1.43
 emsdk_commit        = d9c66fa2c2cd78daeb672967b2ef12bf18adf842
 image_id            = sha256:1b37eac1bc6f3ec5dd369aed5a65889451fe08fbe8b91f579717cb59b436dce6
 platform            = linux/amd64
-comment             = built locally; see build/toolchain/. image_id is the repro anchor.
+comment             = PARKED amd64 EQUIVALENCE LANE (M3 item 6). image_id is the M0-era build (pre-shrink apt set, old forced-amd64 Dockerfile); item 6 rebuilds from the shared Dockerfile (--platform linux/amd64) and re-pins it. ubuntu_digest = the index->amd64 platform digest.

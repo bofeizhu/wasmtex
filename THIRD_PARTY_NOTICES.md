@@ -105,21 +105,23 @@ the release artifacts is assembled at the release-engineering license audit
 
 | Source (`pins.lock` id) | Pin | License (confirmed against `pins.lock` at the item-7 audit) |
 | --- | --- | --- |
-| `texlive-source` | `texlive-2023.0` tarball | TeX Live source tree — mixed (Knuth / LPPL / GPL / …) |
+| `texlive-source-2026` | `texlive-2026.0` tarball | TeX Live source tree — mixed (Knuth / LPPL / GPL / …) |
 | `expat` | `expat-2.5.0.tar.gz` | MIT |
 | `fontconfig` | `fontconfig-2.13.96.tar.gz` | MIT-style (fontconfig) |
-| `texlive-iso` | `texlive2023-20230313.iso` | TeX Live aggregate (per-package) |
+| `texlive-iso-2026` | `texlive2026-20260301.iso` | TeX Live aggregate (per-package) |
 
 `expat` and `fontconfig` are the only libraries the busytex Makefile fetches
 outside the TeX Live source tree; TeX Live vendors its other normal dependencies
 (among others: harfbuzz, icu, freetype, zlib, graphite2, teckit, pplib, zziplib,
 libpaper, lua53, xpdf), which are therefore covered by the `texlive-source` pin. The
 toolchain container (`ubuntu:22.04`, emsdk/Emscripten 3.1.43) is recorded in
-`pins.lock` `[toolchain-image]` and `build/toolchain/`; the same pinned emsdk
-is consumed by both the parked container and the native host path
-(`build/toolchain/native-host.md`), with darwin-arm64 platform binaries on
-the latter. GNU tools installed via Homebrew for the native path are host
-prerequisites only and never enter the artifact provenance chain.
+`pins.lock` (`[toolchain-image-arm64]`, the canonical arm64 builder;
+`[toolchain-image]`, the parked amd64 equivalence lane) and `build/toolchain/`;
+the same pinned emsdk is consumed by both containers and the native host path
+(`build/toolchain/native-host.md`), differing only in platform binaries
+(linux-arm64 / linux-amd64 / darwin-arm64 respectively). GNU tools installed via
+Homebrew for the native path are host prerequisites only and never enter the
+artifact provenance chain.
 
 ## Development and test tooling (not distributed)
 

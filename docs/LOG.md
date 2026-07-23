@@ -5,6 +5,35 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-23 — M3 items 2+3: ISO re-check; arm64 canonical container
+
+**Item 2.** historic/2026/ still has no consolidated ISO (404);
+re-check dated in the lock, reminder stands.
+
+**Item 3.** `coder` agent delivered the arm64 canonical builder:
+ONE parameterized Dockerfile pinning the ubuntu:22.04 multi-arch
+INDEX digest — the canonical (arm64) and equivalence-lane (amd64)
+images differ ONLY in --platform, the structural invariant item 6's
+three-way check needs. 22.04 kept deliberately (era-consistency with
+emsdk 3.1.43; same userland across lanes so divergence = arch alone;
+apt cmake 3.22 sidesteps the cmake-4 policy floor). The plan's
+emsdk-arm64 risk did NOT materialize (3.1.43's linux-arm64 prebuilt
+proven present by a range probe; same pin across all three lanes).
+Prerequisites halved 20→10 by enumerating what OUR config invokes
+(gperf kept as fontconfig's hard transitive requirement). Smoked:
+emcc 3.1.43, aarch64, native ELF (no emulation), hello wasm runs.
+pins.lock gains [toolchain-image-arm64] additively; the amd64 block
+annotated as the parked equivalence lane.
+
+**Review (request-changes → fixed).** (1) The OCI source LABEL had
+the wrong org (an M0-era error rebaked into the fresh image) — fixed,
+image REBUILT and re-pinned in the same commit (final image_id
+5d4af653…). (2) The README's smoke command produced invalid C via
+printf quoting — replaced with the verified variant; journal notes
+the correction. (3) THIRD_PARTY_NOTICES' dependency table still
+cited the RETIRED 2023 pins — moved to the 2026 ids. All gates
+re-run green post-rebuild (smoke, fetch.sh, audit).
+
 ## 2026-07-22 — Bootstrap
 
 **Attempted / done.** Repo initialized on `main`. Claude Code levels

@@ -16,20 +16,23 @@ that drives the WasmTeX bootstrap build. Per the DESIGN.md §9 revision, dev
 builds run raw on this host (no container) to maximise iteration speed toward
 the runtime MVP. This path is **development-only**: the constitutional floor is
 unchanged — *only container-built, pin-verified artifacts are ever released*
-(DESIGN.md §9). Per the 2026-07-22 §9 amendment, the canonical builder from
-M3 onward is a pinned **arm64** Linux container; the parked amd64 image in
-this directory survives at most as a free CI verification lane.
+(DESIGN.md §9). Per the 2026-07-22 §9 amendment, the canonical builder is the
+pinned **arm64** Linux container landed at M3 item 3 (`build/sources/pins.lock`
+`[toolchain-image-arm64]`, `build/toolchain/Dockerfile`, built natively — no
+Rosetta); the amd64 image in this directory survives at most as a free CI
+equivalence-check lane.
 
 The companion sourceable script is [`native-env.sh`](./native-env.sh); the
-parked container contract is in [`README.md`](./README.md).
+container contract (both arches) is in [`README.md`](./README.md).
 
 ---
 
 ## 1. What is pinned HARD
 
 The one artifact-affecting input on this path is the Emscripten toolchain, and
-it is pinned to **exactly the same values** as the container, recorded in
-`build/sources/pins.lock` `[toolchain-image]`:
+it is pinned to **exactly the same values** as the containers, recorded in
+`build/sources/pins.lock` `[toolchain-image-arm64]` (the canonical arm64 lane
+this darwin-arm64 host most directly mirrors) and `[toolchain-image]` (amd64):
 
 | Pin | Value |
 | --- | --- |
@@ -41,8 +44,10 @@ equal the pinned commit (the setup aborts otherwise), mirroring the container's
 `Dockerfile` check. At the pinned emsdk commit, `emsdk install 3.1.43` resolves
 to emscripten-releases build `bf3c159888633d232c0507f4c76cc156a43c32dc` and
 downloads the **darwin-arm64** LLVM/clang + node for it — the same release the
-container resolves, differing only in platform binaries (linux-amd64 there).
-This is what "mirror the container's pin exactly on darwin binaries" means.
+containers resolve, differing only in platform binaries (**linux-arm64** in the
+canonical arm64 container, verified present at M3 item 3; linux-amd64 in the
+parked lane). This is what "mirror the container's pin exactly on darwin
+binaries" means.
 
 emsdk lives out-of-tree at `~/.cache/wasmtex/toolchain/emsdk` (sibling of the
 fetch.sh source cache `~/.cache/wasmtex/sources`), never committed to the repo.

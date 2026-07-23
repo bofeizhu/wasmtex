@@ -1,102 +1,145 @@
 # build/toolchain/
 
-This directory holds two build paths:
+This directory holds the WasmTeX build toolchain. There are three lanes; only
+the container lanes ever produce released artifacts.
 
-- **Native arm64 macOS host (active, M0 dev path)** — per the DESIGN.md §9
-  revision, bootstrap development builds run raw on the maintainer's host for
-  fast iteration toward the runtime MVP. See **[`native-host.md`](./native-host.md)**
-  (the host contract: what is pinned, prerequisite translation, setup, smoke)
-  and **[`native-env.sh`](./native-env.sh)** (`source` it to enter the build
-  environment). The pinned emsdk (Emscripten `3.1.43`, emsdk commit
-  `d9c66fa2…`) is the **same** value as the container below and as
-  `build/sources/pins.lock` — only the platform binaries differ (darwin-arm64).
-- **Pinned amd64 container (parked for M3)** — the canonical, reproducible
-  builder documented in the rest of this file. It is *parked, not discarded*:
-  the constitutional floor is that **only container-built, pin-verified
-  artifacts are ever released** (DESIGN.md §9); the native path is
-  development-only. Per the 2026-07-22 §9 amendment the amd64 *requirement*
-  is dropped: at M3 this container's userland is re-pinned as an **arm64**
-  Linux container (the canonical builder), and this amd64 image survives at
-  most as a free CI verification lane in the three-way equivalence check.
+- **Canonical builder — pinned arm64 Linux container (active, M3).** A
+  digest-pinned `ubuntu:22.04` (arm64) plus the exact toolchain the
+  WasmTeX (busytex-derived) + TeX Live 2026 WebAssembly build needs, built
+  **natively on the Apple-Silicon host — no Rosetta**. Per the 2026-07-22
+  DESIGN.md §9 amendment this is the canonical, reproducible builder; the
+  constitutional floor is that **only container-built, pin-verified artifacts
+  are ever released** (DESIGN.md §9). Defined by [`Dockerfile`](./Dockerfile),
+  built by [`build-image.sh`](./build-image.sh). Everything that affects
+  artifacts is pinned here and mirrored into
+  [`build/sources/pins.lock`](../sources/pins.lock)
+  `[toolchain-image-arm64]`.
+- **Equivalence lane — pinned amd64 Linux container (parked for M3 item 6).**
+  The same userland, one architecture over. Built from the **same
+  parameterized `Dockerfile`** with `--platform linux/amd64` (under emulation
+  on an arm64 host — prefer a CI amd64 runner). Its only role is the M3
+  three-way artifact-hash equivalence check; it survives only if it earns its
+  keep. Pinned in `pins.lock` `[toolchain-image]` (the M0-era image_id, kept as
+  the historical record until item 6 rebuilds it).
+- **Native arm64 macOS host (development only).** Raw host builds for fast
+  iteration, no container. See [`native-host.md`](./native-host.md) and
+  [`native-env.sh`](./native-env.sh). The pinned emsdk (Emscripten `3.1.43`,
+  emsdk commit `d9c66fa2…`) is the **same** value as the containers and as
+  `pins.lock` — only the platform binaries differ (darwin-arm64 there,
+  linux-arm64 / linux-amd64 in the containers).
+
+The full item-3 record (arch-parameterization decision, base-image decision,
+the emsdk arm64-prebuilt verification, the prerequisite shrink) is in
+[`docs/plans/M3-journal.md`](../../docs/plans/M3-journal.md).
+
+> The **container build flow** scripts that run the engine build *inside* this
+> image (`build/artifacts/build.sh`, `run-in-container.sh`) are still PARKED
+> with their M0 stale-path banners; M3 item 4 revives and re-points them at
+> `build/engines/` + the arm64 image. Until then use the native flow,
+> `build/artifacts/build-native.sh`.
 
 ---
 
-## The pinned build-toolchain container (parked for M3)
+## One Dockerfile, two pinned images
 
-The pinned build-toolchain container: a bare `ubuntu:22.04` plus the exact
-toolchain the busytex + TeX Live WebAssembly build needs. Everything that
-affects artifacts is pinned here and mirrored into `build/sources/pins.lock`
-(M0 item 2), so the build is reproducible: the same inputs produce
-byte-identical artifacts.
+The base is pinned by the **multi-arch manifest-list (INDEX) digest**, which is
+arch-agnostic and cryptographically commits to each per-arch manifest. The
+Dockerfile `FROM`s that index; the build's `--platform` (supplied by
+`build-image.sh`, default `linux/arm64`) selects which per-arch base is pulled.
+The canonical image and the equivalence-lane image therefore differ **only in
+`--platform`** — precisely the invariant the equivalence check needs. (A sibling
+`Dockerfile.arm64` was rejected: two near-identical files would drift.) This
+supersedes the M0 amd64-only design, which hardcoded `FROM
+--platform=linux/amd64` and tripped BuildKit's `FromPlatformFlagConstDisallowed`
+lint; that constant is gone.
+
+**Why `ubuntu:22.04` (not 24.04):** (1) era-consistency with the pinned emsdk
+`3.1.43` prebuilt binaries (mid-2023); (2) the equivalence lane compares arm64
+vs amd64 on the *same* 22.04 userland, so any artifact-hash divergence is
+attributable to **architecture alone**, not a userland-version confound. As a
+bonus, apt `cmake` on 22.04 is 3.22 (< 4), so the native-host cmake-4
+policy-floor workaround is not needed here.
 
 ## Contents
 
-- `Dockerfile` — original work (MIT, this repo). Defines the image.
-- `build-image.sh` — builds the image for `linux/amd64`, tags it
-  `wasmtex-toolchain:dev`, and prints the built image identifier.
+- `Dockerfile` — original work (MIT, this repo). Defines the image for both
+  arches (arch selected by the build's `--platform`).
+- `build-image.sh` — builds the image for the requested arch (default `arm64`),
+  tags it `wasmtex-toolchain:<arch>-dev`, and prints the built Image ID.
+- `native-host.md` / `native-env.sh` — the development-only native macOS lane.
 
 ## What is pinned
 
 | Pin | Value | Where |
 | --- | --- | --- |
-| Base image | `ubuntu:22.04`, linux/amd64 platform digest `sha256:0d779ea9…973c8` | `Dockerfile` `FROM` (via `UBUNTU_DIGEST` ARG) |
-| Base image (index) | manifest-list digest `sha256:0e0a0fc6…8982` | `Dockerfile` comment, cross-reference only |
+| Base index (shared) | `ubuntu:22.04` manifest-list `sha256:0e0a0fc6…8982` | `Dockerfile` `FROM` (via `UBUNTU_INDEX_DIGEST`) |
+| Base arm64 platform | index → arm64/v8 `sha256:ecd3706b…bdc1` | `pins.lock` `[toolchain-image-arm64]` |
+| Base amd64 platform | index → amd64 `sha256:0d779ea9…973c8` | `pins.lock` `[toolchain-image]` |
 | Emscripten | `3.1.43` | `Dockerfile` `EMSCRIPTEN_VERSION` ARG |
-| emsdk | commit `d9c66fa2c2cd78daeb672967b2ef12bf18adf842` (git tag `3.1.43`) | `Dockerfile` `EMSDK_COMMIT` ARG |
+| emsdk | commit `d9c66fa2c2cd78daeb672967b2ef12bf18adf842` (tag `3.1.43`) | `Dockerfile` `EMSDK_COMMIT` ARG |
+| emsdk arm64 prebuilt | release `bf3c159…`, `wasm-binaries-arm64.tbz2` (242,978,805 B) — **confirmed present** | `pins.lock` `emsdk_release`; journal item 3 |
+| Built Image ID (arm64) | `sha256:23c01f1f…dce421…8f27` (the repro anchor) | `pins.lock` `[toolchain-image-arm64]` `image_id` |
 
-The pins match upstream busytex CI (`.github/workflows/build-wasm.yml`) and its
-README "Building from source" list, at the pinned busytex commit
-`f2bd7b11ee1b7b093638321c1f3e5d70389d307b`. The apt package set installs both
-the extras that CI names explicitly (`gperf p7zip-full strace icu-devtools`,
-`wget cmake git`) and the toolchain the GitHub `ubuntu-22.04` runner provides
-implicitly but the busytex Makefile actually invokes (`build-essential`,
-`perl`, `python3`, `libarchive-tools`/`bsdtar`, `cmake`, …). See the Dockerfile
-comments for the per-group rationale.
+## Prerequisites (the lean set)
 
-Environment hygiene set in the image: `LANG=LC_ALL=C.UTF-8` (a fixed,
-locale-package-free UTF-8 locale) and `TZ=UTC`. `SOURCE_DATE_EPOCH` is **not**
-baked in — it is exported at build-invocation time so one image can stamp
-artifacts deterministically for any pinned epoch.
+The apt set is enumerated from what **our build config actually invokes**
+(`build/engines/Makefile` + the `build/artifacts` driver), not the M0
+busytex-CI mirror. It halves from 20 packages to **10**:
+
+`build-essential`, `ca-certificates`, `cmake`, `curl`, `git`, `gperf`,
+`libarchive-tools` (bsdtar), `perl`, `python3`, `xz-utils`.
+
+Per-tool justification and the full drop list (`p7zip-full`, `strace`,
+`icu-devtools`, `wget`, `bzip2`, `file`, `pkg-config`, `autoconf`, `automake`,
+`libtool` — none invoked on the native+wasm path) are in the Dockerfile comment
+and `docs/plans/M3-journal.md` item 3.
+
+`SOURCE_DATE_EPOCH` is **not** baked in — it is exported at build-invocation
+time so one image can stamp artifacts deterministically for any pinned epoch.
+Environment hygiene set in the image: `LANG=LC_ALL=C.UTF-8`, `TZ=UTC`.
 
 ## Build the image
 
 ```sh
-build/toolchain/build-image.sh
+build/toolchain/build-image.sh            # arm64 canonical (native); tags :arm64-dev
+build/toolchain/build-image.sh amd64      # equivalence lane; tags :amd64-dev (emulated on arm64)
 ```
 
-Builds `wasmtex-toolchain:dev` with `--platform linux/amd64` and prints the
-Image ID to record in `pins.lock`. On an Apple-Silicon (arm64) host this runs
-under Rosetta emulation and is slow; that is expected (docs/plans/M0.md Risks).
+Prints the Image ID to record in `pins.lock`. The arm64 build is native on an
+Apple-Silicon host; the amd64 build runs under emulation there (slow — prefer a
+CI amd64 runner, per the M3 plan).
 
 ## Smoke check
 
-After building, confirm the emulated toolchain is the pinned Emscripten and is
-genuinely x86_64:
+Confirm the toolchain is the pinned Emscripten and genuinely aarch64, then
+compile+run a hello-world to wasm under the bundled node:
 
 ```sh
-docker run --rm --platform linux/amd64 wasmtex-toolchain:dev \
-  bash -lc 'emcc --version && uname -m'
+# baked ENV path (non-login): emcc resolves via EM_CONFIG
+docker run --rm --platform linux/arm64 wasmtex-toolchain:arm64-dev emcc --version
+
+# login shell (node on PATH) + full check
+docker run --rm --platform linux/arm64 wasmtex-toolchain:arm64-dev bash -lc '
+  emcc --version | head -1        # -> emcc ... 3.1.43
+  uname -m                        # -> aarch64
+  printf "#include <stdio.h>\nint main(void){puts(\"ok\");return 0;}\n" > /tmp/h.c
+  emcc /tmp/h.c -o /tmp/h.js && node /tmp/h.js   # -> ok
+'
 ```
 
-Expect the first line to report `emcc … 3.1.43` and the architecture line to
-report `x86_64`. Also verify the non-login-shell path (exercises the baked
-`ENV`/`PATH`, not `/etc/profile.d`):
-
-```sh
-docker run --rm --platform linux/amd64 wasmtex-toolchain:dev emcc --version
-```
+Verified on the authoring host (2026-07-23): `emcc … 3.1.43`; `uname -m` =
+`aarch64`; the emsdk clang/node ELF `e_machine` = 183 (`EM_AARCH64`, i.e. native
+not emulated); `node` reports `process.arch = arm64`; `hello.c` compiled to a
+valid wasm module (magic `00 61 73 6d`) and ran. Full transcript in the journal.
 
 ## Reproducibility note
 
-Artifact reproducibility pins the **built image digest** (the Image ID that
-`build-image.sh` prints, recorded in `pins.lock`), not the Dockerfile alone.
-The Dockerfile is provenance for *how* the image is made; `apt-get` package
-resolution is not bit-reproducible across time (mirrors move, package versions
-roll), so the Dockerfile does not by itself guarantee an identical image on a
-future rebuild. Likewise, `emsdk install` downloads the prebuilt 3.1.43
-LLVM/clang and node binaries from `storage.googleapis.com` at image-build
-time without a repo-side checksum; the built-image digest is the pin that
-covers both apt and these downloads. Rebuild the image once, record its
-digest, and build all artifacts inside that pinned image. If the image is
-ever rebuilt, its new digest is re-pinned in `pins.lock` in the same commit
+Artifact reproducibility pins the **built image ID** (what `build-image.sh`
+prints, recorded in `pins.lock`), not the Dockerfile alone. The Dockerfile is
+provenance for *how* the image is made; `apt-get` resolution is not
+bit-reproducible across time (mirrors move, versions roll), and `emsdk install`
+downloads the prebuilt 3.1.43 LLVM/clang + node from `storage.googleapis.com`
+without a repo-side checksum. The built-image ID covers both. Rebuild the image
+once, record its ID, and build all artifacts inside that pinned image; if the
+image is ever rebuilt, its new ID is re-pinned in `pins.lock` in the same commit
 that rebuilds it.

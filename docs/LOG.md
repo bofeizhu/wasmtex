@@ -5,6 +5,40 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-23 — M3 COMPLETE (Build logistics & CI): loop STOP-target reached
+
+**Milestone accepted.** The tester independently verified the revised
+(post-descope) acceptance list and every criterion PASSED; confirmed on
+the current HEAD by CI run 30016715455 (commit d21160f) — artifacts-
+build + conformance + demo-smoke all `success`, 0 Node-20 deprecation
+warnings. M3 is the autonomous loop's explicit STOP target, so the loop
+ENDS here.
+
+**What M3 delivered (arc):** a pinned **arm64** Linux toolchain container
+(digest-pinned userland + emsdk 3.1.43), deployed to GHCR and pulled
+by-digest in CI with an identity gate; the canonical containerized build
+running the full offline wasm path in CI (`artifacts-build.yml`), landing
+dist/ with the in-container execution gate green; the §8 functional gates
+(conformance corpus + Playwright demo→PDF smoke) wired to run against the
+CI-built artifact on an amd64 runner — which also settles host-arch
+independence functionally (arm64-built wasm runs on amd64 in CI and on
+macOS arm64 firsthand). Selective ISO staging demoted after measuring
+109 GB runner disk (the "14 GB wall" was a macOS-runner figure).
+
+**What M3 dropped (user decisions, recorded as DESIGN deviations):**
+byte-for-byte reproducibility (§6.1) and the three-way hash-equivalence
+check (§9) — the release bar is now functional correctness from the
+pinned container on pin-verified inputs, not bit-identical output. The
+repro gate + ls-R normalizer stay in-tree as off-path tooling. No local
+container builds (all container work is CI-only). amd64 lane not needed.
+
+**Carry-forwards (not M3 blockers):** the known install-tl wall-clock-
+timestamp nondeterminism (only relevant if byte-repro is revived); the
+accepted per-PR cross-run integration-coverage follow-up; the historic
+ISO re-pin when TUG archives TL 2026. Next milestone is M4 (bundles +
+manifests) — but the loop does NOT auto-continue past M3 per the
+push-through directive; M4 begins on the user's next go.
+
 ## 2026-07-23 — M3 item 7 COMPLETE: gates green in CI; node24 action bump
 
 **Gates verified green.** Run 30012659864 (the slice-B2 push) ran the

@@ -1,0 +1,395 @@
+# SPDX-License-Identifier: MIT
+# Provenance: original work authored in the WasmTeX repository (see LICENSE).
+#   Not derived from any third-party source. This workflow REUSES the pin-parse /
+#   GHCR login / pull-by-digest / identity-gate step *patterns* established in
+#   .github/workflows/toolchain-smoke.yml (slice A). The duplication is deliberate
+#   (duplication over premature abstraction for two workflows); folding the shared
+#   steps into a composite action is noted as future work (M3-journal item 7).
+#
+# WasmTeX containerized artifact build — the CANONICAL RELEASE BUILD PATH
+# (M3 item 7, slice B1).
+# =============================================================================
+# DESIGN.md §9's constitutional floor: **only container-built, pin-verified
+# artifacts are ever released**; native `make artifacts` is a development vehicle,
+# never a release source. THIS workflow is that canonical builder, in CI: it pulls
+# the pinned arm64 toolchain image by digest, stages the pinned sources, and runs
+# the fully-offline in-container build (build/artifacts/build.sh, driven by
+# `make artifacts-container`) — landing dist/ + SHA256SUMS with the in-build
+# execution gate green. Per the standing no-local-container-builds directive
+# (docs/plans/M3.md) this runner is the ONLY place the toolchain container ever
+# executes; slice A proved the GHCR pull + identity plumbing this build depends on.
+#
+# TWO MODES — the `repro` workflow_dispatch input:
+#   * repro=false (default; every qualifying push): ONE canonical build. dist/ is
+#     uploaded as the run's artifact (the release candidate for that commit).
+#   * repro=true: build/repro-check.sh in its FULL two-build mode — two clean,
+#     independent container builds whose dist/ must be byte-identical (DESIGN.md
+#     §6.1). This is M3 item 5's EMPIRICAL green: the local build-twice run is
+#     prohibited by the standing directive, so CI is where the byte-identical
+#     SHA256SUMS proof is actually demonstrated. Costs ~2x the single-build wall.
+#
+# SOURCE CACHE STRATEGY (the 10 GB actions/cache repo quota is the constraint):
+#   build/sources/fetch.sh lays every pinned input flat in ~/.cache/wasmtex/sources.
+#   The 6.78 GB TeX Live ISO dwarfs everything else and changes only at the annual
+#   rebase, so it gets its OWN cache keyed on its CONTENT hash (the
+#   [texlive-iso-2026] sha256 straight out of pins.lock) — it survives every
+#   unrelated pin change and is (re)downloaded only when its bytes actually change.
+#   The small sources (TL source ~150 MB, expat, fontconfig, the busytex git
+#   checkout) go in a SECOND cache — the ISO excluded by a negation pattern so it is
+#   never stored twice — keyed on the whole-pins.lock hash: any pin edit re-verifies
+#   the CHEAP set, the safe & simple default. Steady state ~6.9 GB (< 10 GB); a
+#   rebase's new ISO evicts the old by LRU.
+#   NEITHER cache uses restore-keys, on purpose: fetch.sh fails CLOSED on a
+#   present-but-hash-mismatched cached file (it refuses to silently re-download —
+#   see build/sources/fetch.sh handle_file), so a fuzzy fallback that restored stale
+#   bytes under a changed pin would HARD-FAIL the fetch instead of refetching. Exact
+#   keys only => a pin change misses cleanly and fetch.sh downloads fresh into an
+#   empty slot. (If the negation pattern ever misbehaves under `~` expansion, the
+#   fallback is to enumerate the small inputs by explicit path — the flat fetch.sh
+#   layout makes either form clean.)
+# =============================================================================
+name: artifacts-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      repro:
+        description: >-
+          Reproducibility double-build: run build/repro-check.sh (two clean
+          container builds; byte-identical dist/ required, DESIGN.md 6.1) instead
+          of a single build. This is M3 item 5's empirical green. ~2x the wall time.
+        type: boolean
+        default: false
+  # Filtered to the inputs that determine the artifact BYTES: OUR engine config,
+  # the build driver/glue, and the pinned sources+image. A push touching any of
+  # them rebuilds. (Runtime/demo/conformance code does not change the engine
+  # artifacts and is intentionally NOT a trigger — slice B2 wires the gates that
+  # CONSUME dist/.) The commit that lands this file also matches the last path, so
+  # it self-fires the first run.
+  push:
+    branches: [main]
+    paths:
+      - build/engines/**
+      - build/artifacts/**
+      # gen-assets.mjs is mounted into the container and emits dist/assets.json
+      # (an integrity oracle in SHA256SUMS) — it determines artifact bytes.
+      - build/manifest/**
+      - build/sources/pins.lock
+      - .github/workflows/artifacts-build.yml
+
+# Expensive builds must not pile up, but a superseded run is NOT cancelled: its
+# artifact is still valid evidence (a pin-verified build of that commit), and
+# killing a 90-minute build to start another wastes a runner-hour for nothing.
+concurrency:
+  group: artifacts-build-${{ github.ref }}
+  cancel-in-progress: false
+
+# Least privilege: read the checkout, pull the private GHCR toolchain package.
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  artifacts-build:
+    runs-on: ubuntu-24.04-arm
+    # Single build: ~60-120 min on the 4-vCPU runner. Repro mode is two of those.
+    # 300 leaves margin under the 360-min hard cap while still failing a wedged
+    # build well short of it.
+    timeout-minutes: 300
+    env:
+      # The local tag build/artifacts/build.sh expects (its WASMTEX_TOOLCHAIN_TAG
+      # default). We pull the image by digest, then `docker tag` it to this so the
+      # driver's image_id preflight resolves it unchanged. Job scope also feeds it
+      # to `make artifacts-container` (build.sh reads it from the environment).
+      WASMTEX_TOOLCHAIN_TAG: wasmtex-toolchain:arm64-dev
+      # "true" | "false" | "" — workflow_dispatch inputs surface as STRINGS on
+      # github.event.inputs (empty on push). Downstream compares against "true".
+      REPRO_MODE: ${{ github.event.inputs.repro }}
+    # Explicit bash = `bash -eo pipefail {0}` (the default run shell omits
+    # pipefail): a failed command in a telemetry pipeline (df | awk, curl | ..., a
+    # tee'd build) must fail the step, not silently zero a number or hide an error.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Pinned coordinates (slice A's section-scoped awk-block pattern) ------
+      # build/artifacts/build.sh's `pinned_id` awk, generalized to take the section
+      # name. Fail loud on any empty value: a renamed block or a dropped key must
+      # STOP the job, not build against the wrong image or cache nothing.
+      - id: pins
+        name: Parse pinned image + ISO coordinates (pins.lock)
+        run: |
+          lock="build/sources/pins.lock"
+          [ -r "$lock" ] || { echo "!! $lock missing/unreadable" >&2; exit 1; }
+          parse() {  # section key
+            awk -F= -v sec="$1" -v key="$2" '
+              /^\[/ { s = $0 }
+              s == sec && $1 ~ ("^ *" key " *$") { gsub(/ /, "", $2); print $2; exit }
+            ' "$lock"
+          }
+          registry_ref="$(parse '[toolchain-image-arm64]' registry_ref)"
+          registry_digest="$(parse '[toolchain-image-arm64]' registry_digest)"
+          image_id="$(parse '[toolchain-image-arm64]' image_id)"
+          iso_file="$(parse '[texlive-iso-2026]' file)"
+          iso_sha256="$(parse '[texlive-iso-2026]' sha256)"
+          pins_short="$(sha256sum "$lock" | cut -c1-12)"
+
+          missing=0
+          for kv in "registry_ref=$registry_ref" "registry_digest=$registry_digest" \
+                    "image_id=$image_id" "iso_file=$iso_file" "iso_sha256=$iso_sha256" \
+                    "pins_short=$pins_short"; do
+            [ -n "${kv#*=}" ] || { echo "!! ${kv%%=*} empty in pins.lock" >&2; missing=1; }
+          done
+          [ "$missing" -eq 0 ] || exit 1
+
+          # Digest-form pull target: repo path (tag stripped) @ manifest digest.
+          image_ref="${registry_ref%:*}@${registry_digest}"
+
+          {
+            echo "registry_ref=$registry_ref"
+            echo "registry_digest=$registry_digest"
+            echo "image_id=$image_id"
+            echo "image_ref=$image_ref"
+            echo "iso_file=$iso_file"
+            echo "iso_sha256=$iso_sha256"
+            echo "pins_short=$pins_short"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "image_ref  = $image_ref"
+          echo "image_id   = $image_id"
+          echo "iso_file   = $iso_file"
+          echo "iso_sha256 = $iso_sha256"
+          echo "pins_short = $pins_short"
+
+      # Repo-scoped GITHUB_TOKEN + `packages: read` — proven sufficient for the
+      # private, OCI-label-linked package by slice A's first run.
+      - name: Log in to GHCR (read-only, GITHUB_TOKEN)
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+      - id: pull
+        name: Pull canonical image by digest + record telemetry
+        env:
+          IMAGE_REF: ${{ steps.pins.outputs.image_ref }}
+        run: |
+          echo "Pull target (digest form): $IMAGE_REF"
+          avail_before_gb="$(df -BG --output=avail / | awk 'NR==2 { gsub(/[^0-9]/, ""); print }')"
+          start="$(date +%s)"
+          docker pull "$IMAGE_REF"
+          end="$(date +%s)"
+          avail_after_gb="$(df -BG --output=avail / | awk 'NR==2 { gsub(/[^0-9]/, ""); print }')"
+          size_bytes="$(docker image inspect --format '{{.Size}}' "$IMAGE_REF")"
+          echo "image size : $(numfmt --to=iec --suffix=B "$size_bytes")"
+          echo "pull time  : $(( end - start ))s"
+          echo "free /      : ${avail_before_gb} GB -> ${avail_after_gb} GB"
+
+      # IDENTITY GATE (slice A): the pulled image's config .Id MUST equal the
+      # pinned image_id — the registry digest thereby proven to resolve to the
+      # EXACT canonical bytes the reproducible build is anchored to (DESIGN.md §6).
+      # build.sh re-checks this against the local tag below; here it fails early
+      # and loud, before the multi-GB fetch and the multi-hour build.
+      - name: Identity gate — pulled .Id must equal pinned image_id
+        env:
+          IMAGE_REF: ${{ steps.pins.outputs.image_ref }}
+          PINNED_ID: ${{ steps.pins.outputs.image_id }}
+        run: |
+          got_id="$(docker image inspect --format '{{.Id}}' "$IMAGE_REF")"
+          echo "pulled .Id : $got_id"
+          echo "pinned id  : $PINNED_ID"
+          if [ "$got_id" != "$PINNED_ID" ]; then
+            {
+              echo "!! IDENTITY GATE FAILED — the registry digest did NOT resolve to the"
+              echo "   canonical image bytes pinned in build/sources/pins.lock."
+              echo "     pulled .Id : $got_id"
+              echo "     pinned id  : $PINNED_ID  ([toolchain-image-arm64])"
+            } >&2
+            exit 1
+          fi
+          echo "Identity gate passed: registry digest resolves to the canonical image bytes."
+
+      # Give the digest-pulled image the local tag build/artifacts/build.sh expects,
+      # so its own image_id preflight (docker image inspect on the tag) resolves the
+      # SAME canonical bytes the gate just verified — the driver runs unchanged.
+      - name: Tag pulled image as the driver's local tag
+        env:
+          IMAGE_REF: ${{ steps.pins.outputs.image_ref }}
+        run: docker tag "$IMAGE_REF" "$WASMTEX_TOOLCHAIN_TAG"
+
+      # --- Pinned source acquisition (see SOURCE CACHE STRATEGY in the header) ---
+      # ISO: its own cache, keyed on its content hash, EXACT key only (no
+      # restore-keys — a stale ISO restored under a changed pin would hard-fail
+      # fetch.sh instead of refetching). Survives all non-ISO pin churn.
+      - id: iso-restore
+        name: Restore pinned TL ISO cache (6.78 GB; content-keyed, exact only)
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/wasmtex/sources/${{ steps.pins.outputs.iso_file }}
+          key: wasmtex-iso-${{ steps.pins.outputs.iso_sha256 }}
+
+      # Small sources: whole ~/.cache/wasmtex/sources MINUS the ISO (negation so the
+      # 6.78 GB ISO is not stored twice), keyed on the whole pins.lock hash. Any pin
+      # edit re-verifies this cheap set. EXACT key only (same fail-closed reasoning).
+      - id: src-restore
+        name: Restore small pinned sources cache (ISO excluded; exact only)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/wasmtex/sources
+            !~/.cache/wasmtex/sources/${{ steps.pins.outputs.iso_file }}
+          key: wasmtex-src-${{ hashFiles('build/sources/pins.lock') }}
+
+      # On a cold ISO cache this DOWNLOADS + verifies ~6.8 GB (ISO) + ~150 MB (TL
+      # source) + the small tarballs + the busytex git clone. Budget generously:
+      # even on the runner's fast network the ISO is several minutes, and its
+      # sha256+sha512 re-hash alone is ~30 s. On a warm cache fetch.sh only
+      # re-verifies (no downloads). fetch.sh is fail-closed on any hash mismatch.
+      - name: Fetch + verify pinned sources
+        run: |
+          start="$(date +%s)"
+          build/sources/fetch.sh
+          echo "$(( $(date +%s) - start ))" > "$RUNNER_TEMP/fetch_secs"
+
+      # Persist the fetched sources right after a successful fetch (before the
+      # multi-hour build), so a later build failure does NOT cost the next run a
+      # 6.8 GB re-download. Guarded on a restore MISS: saving an exact-key hit just
+      # warns. actions/cache/save is a normal step (saves when reached), so a failed
+      # fetch (which aborts the job) correctly saves nothing.
+      - name: Save pinned TL ISO cache
+        if: steps.iso-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/wasmtex/sources/${{ steps.pins.outputs.iso_file }}
+          key: wasmtex-iso-${{ steps.pins.outputs.iso_sha256 }}
+
+      - name: Save small pinned sources cache
+        if: steps.src-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/wasmtex/sources
+            !~/.cache/wasmtex/sources/${{ steps.pins.outputs.iso_file }}
+          key: wasmtex-src-${{ hashFiles('build/sources/pins.lock') }}
+
+      # --- The build: the canonical release path --------------------------------
+      # The driver (build.sh -> run-in-container.sh) already WIPES/creates the docker
+      # work volume, enforces --network none, and runs the execution gate in its dist
+      # stage — so this step only selects single vs repro. Telemetry (df before/after,
+      # wall seconds) is written to RUNNER_TEMP BEFORE the build's exit code is
+      # propagated, so the always() summary reports even a failed build (e.g. a
+      # DIVERGED repro run, which exits 1 but whose report is the whole point).
+      - id: build
+        name: Build the artifact set in the pinned container
+        run: |
+          df -h / > "$RUNNER_TEMP/df_before.txt"
+          start="$(date +%s)"
+          # rc is captured IMMEDIATELY after each pipeline (not after the fi):
+          # any command later appended to a branch would clobber PIPESTATUS and
+          # mask a failed/DIVERGED build as rc=0.
+          set +e
+          if [ "$REPRO_MODE" = "true" ]; then
+            echo ">> repro mode: build/repro-check.sh (two clean builds; byte-identical dist/ required)"
+            build/repro-check.sh 2>&1 | tee "$RUNNER_TEMP/build.log"
+            rc="${PIPESTATUS[0]}"
+          else
+            echo ">> single mode: make artifacts-container"
+            make artifacts-container 2>&1 | tee "$RUNNER_TEMP/build.log"
+            rc="${PIPESTATUS[0]}"
+          fi
+          set -e
+          echo "$(( $(date +%s) - start ))" > "$RUNNER_TEMP/build_secs"
+          df -h / > "$RUNNER_TEMP/df_after.txt"
+          exit "$rc"
+
+      # --- Evidence + telemetry -------------------------------------------------
+      # Informational always() step: set +e so a missing telemetry file can never
+      # abort the summary (and never fail the job on its own account).
+      - name: Job summary (SHA256SUMS, timings, disk, repro verdict)
+        if: always()
+        env:
+          ISO_CACHE_HIT: ${{ steps.iso-restore.outputs.cache-hit }}
+          SRC_CACHE_HIT: ${{ steps.src-restore.outputs.cache-hit }}
+          IMAGE_REF: ${{ steps.pins.outputs.image_ref }}
+          PINS_SHORT: ${{ steps.pins.outputs.pins_short }}
+        run: |
+          set +e
+          fetch_secs="?"; [ -f "$RUNNER_TEMP/fetch_secs" ] && fetch_secs="$(cat "$RUNNER_TEMP/fetch_secs")"
+          build_secs="?"; [ -f "$RUNNER_TEMP/build_secs" ] && build_secs="$(cat "$RUNNER_TEMP/build_secs")"
+          mode="single"; [ "$REPRO_MODE" = "true" ] && mode="repro (two-build)"
+          iso_hit="miss"; [ "$ISO_CACHE_HIT" = "true" ] && iso_hit="hit"
+          src_hit="miss"; [ "$SRC_CACHE_HIT" = "true" ] && src_hit="hit"
+          {
+            echo "## Containerized artifact build"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| mode | ${mode} |"
+            echo "| pins (short) | \`${PINS_SHORT}\` |"
+            echo "| image | \`${IMAGE_REF}\` |"
+            echo "| ISO cache | ${iso_hit} |"
+            echo "| small-src cache | ${src_hit} |"
+            echo "| fetch wall | ${fetch_secs}s |"
+            echo "| build wall | ${build_secs}s |"
+            echo ""
+            if [ -f "$RUNNER_TEMP/df_before.txt" ]; then
+              echo "<details><summary>disk (<code>df -h /</code>) before/after build</summary>"
+              echo ""
+              echo '```'
+              echo "-- before --"
+              cat "$RUNNER_TEMP/df_before.txt"
+              echo "-- after --"
+              [ -f "$RUNNER_TEMP/df_after.txt" ] && cat "$RUNNER_TEMP/df_after.txt"
+              echo '```'
+              echo "</details>"
+              echo ""
+            fi
+            if [ "$REPRO_MODE" = "true" ] && [ -f build/out/repro-check/VERDICT ]; then
+              echo "### Reproducibility verdict: \`$(cat build/out/repro-check/VERDICT)\`"
+              echo ""
+            fi
+            if [ -f dist/SHA256SUMS ]; then
+              echo "### dist/SHA256SUMS"
+              echo ""
+              echo '```'
+              cat dist/SHA256SUMS
+              echo '```'
+            else
+              echo "_no dist/SHA256SUMS (build did not reach dist assembly)_"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The build's dist/ = the release candidate for this commit (single mode) or
+      # the last build's output (repro mode). Named with the short pins hash so the
+      # artifact is traceable to the exact pin set it was built from.
+      - name: Upload dist/ artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasmtex-dist-${{ steps.pins.outputs.pins_short }}
+          path: dist/
+          if-no-files-found: warn
+          retention-days: 30
+
+      # Repro mode only: the byte-diff report + one-line VERDICT (REPRODUCIBLE |
+      # DIVERGED | INCOMPLETE) — the evidence that closes M3 item 5. always() so a
+      # DIVERGED run (which fails the build step) still surfaces its report.
+      - name: Upload reproducibility report (repro mode)
+        if: ${{ always() && github.event.inputs.repro == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasmtex-repro-${{ steps.pins.outputs.pins_short }}
+          path: |
+            build/out/repro-check/report.txt
+            build/out/repro-check/VERDICT
+          if-no-files-found: warn
+
+      - name: Upload build transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasmtex-buildlog-${{ steps.pins.outputs.pins_short }}
+          path: ${{ runner.temp }}/build.log
+          if-no-files-found: warn

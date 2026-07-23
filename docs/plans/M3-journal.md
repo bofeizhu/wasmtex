@@ -776,3 +776,130 @@ enforces §6's image-bytes pin at pull time).
   retired). Slice B's real questions: ISO acquisition (6.8 GB
   download per uncached run vs the 10 GB actions/cache repo quota)
   and 4-vCPU wall-time.
+
+### Slice B1 — containerized build workflow (2026-07-23)
+
+Authored `.github/workflows/artifacts-build.yml`: the CI job that runs the
+canonical container build slice A's plumbing was proving out. It is the DESIGN
+§9 release build path in CI — pull the pinned arm64 image by digest, stage the
+pinned sources, run the offline in-container build (`make artifacts-container`
+→ `build/artifacts/build.sh`), land `dist/` + `SHA256SUMS` with the in-build
+execution gate green. No build ran on the dev machine (standing directive):
+authoring + static validation (PyYAML `safe_load`, `bash -n` on all eight run
+blocks, and the real-`pins.lock` awk-extraction check) only.
+
+#### Design decisions
+
+**Identity-gate reuse + the driver hand-off (the load-bearing integration).**
+The pin-parse / GHCR-login / pull-by-digest / identity-gate steps are
+duplicated from slice A's `toolchain-smoke.yml` verbatim in shape (the awk
+`pinned_id` block generalized to take a section arg, so it also reads the
+`[texlive-iso-2026]` `file`/`sha256`). Slice A's identity gate is kept as an
+EARLY, standalone, loud failure (pulled `.Id` == pinned `image_id`) before the
+multi-GB fetch and multi-hour build. The new bridge to the build driver: after
+the gate, `docker tag <digest-ref> wasmtex-toolchain:arm64-dev` — the
+`WASMTEX_TOOLCHAIN_TAG` default `build/artifacts/build.sh` inspects in its own
+image-id preflight. That preflight then resolves the exact bytes the gate just
+verified, so the driver runs UNCHANGED (no CI-only env override of the tag; the
+job-level `WASMTEX_TOOLCHAIN_TAG` both drives the `docker tag` and is inherited
+by `make`, one source of truth). Defense in depth: the gate and the driver
+independently assert the same pin.
+
+**Source cache strategy — split by change-rate, exact keys only.** The
+constraint is the 10 GB actions/cache repo quota against a 6.78 GB ISO.
+`fetch.sh` lays everything flat in `~/.cache/wasmtex/sources`, which makes a
+clean split:
+
+- The **ISO** gets its OWN cache keyed on its **content hash** (the
+  `[texlive-iso-2026]` sha256 lifted from the lock — `wasmtex-iso-<sha256>`).
+  It changes only at the annual rebase, so this key survives every unrelated
+  pin/image churn; the expensive 6.8 GB download happens ONLY when the bytes
+  actually change. Keying on the content hash also means the M3 historic-ISO
+  mirror swap (URL changes, bytes identical) REUSES the cache — exactly right.
+- The **small sources** (TL source ~150 MB, expat, fontconfig, the busytex git
+  checkout) get a second cache over the whole sources dir **MINUS the ISO** (an
+  actions/cache `!` negation pattern, so the 6.8 GB is never stored twice),
+  keyed on the whole-`pins.lock` hash. Any pin edit re-verifies this cheap set —
+  the safe, simple default; over-invalidation (an image re-pin busts it) costs
+  only a ~150 MB refetch, and the ISO — protected by its own key — is untouched.
+- **No `restore-keys` on either**, and this is the subtle correctness point:
+  `fetch.sh` fails CLOSED on a present-but-hash-mismatched cached file (it
+  refuses to silently re-download; `handle_file` exits 1 with a "remove and
+  refetch" hint). A fuzzy fallback that restored stale bytes under a changed pin
+  would therefore HARD-FAIL the fetch instead of refetching. Exact keys only =>
+  a pin change misses cleanly and `fetch.sh` downloads fresh into an empty slot.
+- **Split restore/save** (not the combined `actions/cache` post-save): the two
+  `actions/cache/save@v4` steps run right after a successful fetch, BEFORE the
+  multi-hour build, each guarded on a restore miss. So a build failure never
+  costs the next run a 6.8 GB re-download. Steady-state cache footprint ~6.9 GB
+  (one ISO generation + a small cache), under quota; a rebase's new ISO evicts
+  the old by LRU.
+
+**Single-vs-repro input.** `workflow_dispatch` carries an optional `repro`
+boolean (default false). `github.event.inputs.repro` (a STRING on dispatch,
+empty on push) → job-env `REPRO_MODE`; the build step branches
+`build/repro-check.sh` (full two-build mode — item 5's empirical green) vs
+`make artifacts-container`. Push ALWAYS runs single mode (empty input ≠
+"true"). The build command runs under `set +e` + `${PIPESTATUS[0]}` so a
+DIVERGED repro (exit 1) still writes its df/timing telemetry and reaches the
+`always()` summary before the step propagates the real failure. The repro
+report (`report.txt` + one-line `VERDICT`) uploads on `always()` so a
+divergence surfaces its evidence.
+
+**Concurrency / triggers.** `concurrency` group per `github.ref`,
+`cancel-in-progress: false` — a superseded build's artifact is still valid
+evidence and a 90-min build is too expensive to kill. Push filtered to the
+inputs that determine artifact bytes: `build/engines/**`, `build/artifacts/**`,
+`build/manifest/**` (gen-assets.mjs emits the assets.json integrity oracle —
+review catch: it was omitted from the first draft), `build/sources/pins.lock`,
+and the workflow itself (self-fires the first run);
+runtime/demo/conformance code is deliberately not a trigger. `permissions:
+contents: read + packages: read`; `defaults.run.shell: bash` for the same
+pipefail discipline as slice A.
+
+**Evidence.** `dist/` uploads as `wasmtex-dist-<pins_short>` (short pins.lock
+hash, 30-day retention); `$GITHUB_STEP_SUMMARY` gets the mode, cache hit/miss,
+fetch + build wall-times, `df -h /` before/after (the retired-14 GB-wall
+telemetry), and `dist/SHA256SUMS` (+ the repro VERDICT in repro mode). The
+build transcript uploads too.
+
+#### Expected wall-times (4-vCPU `ubuntu-24.04-arm`)
+
+- pull-by-digest ~18 s (measured, slice A); image 1.41 GB.
+- cold fetch: 6.8 GB ISO download (minutes on the runner's fast net) + ~150 MB
+  small + busytex clone; warm fetch re-verifies only (ISO sha256+sha512 re-hash
+  ~30 s). Given its own generous time note in the step.
+- single build: local native arm64 was ~34 min on 8 perf cores; expect **60–120
+  min** on 4 vCPU. repro = two of those. `timeout-minutes: 300` covers repro
+  with margin under the 360-min hard cap. Risk: if 4-vCPU builds hit the 120-min
+  end, repro (~240 min + fetch + overhead) approaches the ceiling — first real
+  repro run calibrates this; if tight, raise toward 350 or gate repro to
+  dispatch/schedule (it already is dispatch-only).
+
+#### What remains
+
+- **Slice B2:** flip the guarded `demo-smoke` + `conformance` jobs in
+  `build.yml` (and the equivalent for the runtime real-wasm integration tests)
+  from their `dist/`-present green-skip to actually consuming THIS workflow's
+  `dist/` artifact (download-artifact, or a reusable-workflow/`workflow_run`
+  wiring) — the recorded M1/M2 deferral that closes "CI runs the wasm path".
+- **Item 6 (amd64 equivalence lane):** needs the same containerized build on an
+  amd64 CI runner (the `[toolchain-image]` block, rebuilt + re-pinned) to
+  produce the cross-arch hashes; this workflow is the arm64 half and the
+  template for the amd64 job.
+- **Item 5 empirical green:** a `workflow_dispatch` run with `repro=true` is now
+  the mechanism; its byte-identical `SHA256SUMS` (post-`normalize-lsr.py` fix)
+  is the deferred proof.
+- **Composite-action refactor (future work):** the pin-parse/login/pull/gate
+  steps are now duplicated across two workflows — fold into a composite action
+  once a third consumer (the amd64 lane) makes the shape stable. Duplication is
+  the right call for two.
+- **First-run validation:** the actions/cache `!` negation under `~` expansion,
+  and the `github.event.inputs.repro` string handling, are the two behaviors
+  static checks can't confirm — verify on the self-fired first run (fallback for
+  the negation is explicit per-path enumeration of the small inputs).
+
+**Deviations.** None from DESIGN.md. This is CI machinery around the existing
+drivers; the §5 runtime contracts and §6 reproducibility anchor are untouched
+(the identity gate enforces the §6 image-bytes pin at pull time, and the build
+delegates to the unchanged pin-verified driver).

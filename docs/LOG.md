@@ -5,6 +5,38 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-23 — M3 item 7a: toolchain deployed to GHCR; CI smoke green
+
+**User-directed unit** ("deploy the container to GitHub and see if it's
+working") folded into item 7 as slice A, after the same user directive
+banned further local container builds (loop prompt + plan updated;
+milestone tail resequenced 5→7→6→8). The EXISTING pinned image was
+pushed — not rebuilt in CI, which would re-resolve apt and drift the
+userland items 4/5 validated. Push used the user's own `gh`/docker
+login (classifier correctly blocked token piping by the agent);
+`docker logout ghcr.io` immediately after; registry_ref +
+registry_digest pinned additively in [toolchain-image-arm64].
+
+**First run: GREEN in 26 s** (self-fired — the workflow's path filter
+includes pins.lock, which the landing commit touches). Answers:
+(1) the Actions GITHUB_TOKEN pulls the PRIVATE OCI-label-linked
+package with zero settings changes; (2) identity gate passed — the
+GHCR digest resolves to the exact pinned image_id on the runner;
+(3) emcc 3.1.43 / aarch64 sanity green in-container; (4) **109 GB
+free disk — the "14 GB wall" was the macOS runner spec, and it is
+RETIRED** (M3-notes correction): selective ISO staging demoted from
+load-bearing to optional. Slice B now: containerized build job (full
+ISO staging fine), ISO acquisition strategy, repro-check two-build
+mode in CI (item 5's empirical green), artifact caching, flipping the
+guarded gates.
+
+**Review (approve, no blockers → fixes folded).** Default run shell
+lacks pipefail → a df failure would have silently zeroed the
+load-bearing disk telemetry (job-level `defaults.run.shell: bash`);
+`timeout-minutes: 30` added. Reviewer verified the awk pin-parse
+against the live lock, token-into-env (never run-body interpolation),
+and trigger self-fire semantics by execution.
+
 ## 2026-07-23 — M3 item 5: repro gate built; DIVERGED → ls-R root cause → fixed
 
 **Verdict.** The build-twice gate (`build/repro-check.sh`, `make

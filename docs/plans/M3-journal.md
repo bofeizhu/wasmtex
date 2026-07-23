@@ -758,3 +758,21 @@ authoring plus awk-parse and YAML/`bash -n` validation only.
 **Deviations.** None from DESIGN.md. This is CI plumbing; the §5 runtime
 contracts and §6 reproducibility anchor are untouched (the identity gate in fact
 enforces §6's image-bytes pin at pull time).
+
+#### Slice A result (run 29997712501, 2026-07-23): GREEN — every question answered
+
+- **Private-package pull: WORKS.** The Actions `GITHUB_TOKEN`
+  (`packages: read`) pulled the private, OCI-label-linked package with
+  no settings changes — the fallback grant was never needed.
+- **Identity gate: PASSED.** The registry digest resolved to exactly
+  the pinned canonical image (`.Id` == pins.lock `image_id`) on the
+  runner — the GHCR round-trip preserves the §6 repro anchor.
+- **Toolchain sanity: PASSED** (emcc 3.1.43, aarch64, node/bsdtar/
+  python3 present). Whole job: 26 s; pull ~18 s.
+- **Disk telemetry — the 14 GB wall is DEAD: 109 GB free** (108 GB
+  after the 1.41 GB pull). The planning constraint was the *macOS*
+  runner spec; the Linux arm64 runner has ~8× that. Selective ISO
+  staging demoted to optional (M3-notes correction; M3.md risk bullet
+  retired). Slice B's real questions: ISO acquisition (6.8 GB
+  download per uncached run vs the 10 GB actions/cache repo quota)
+  and 4-vCPU wall-time.

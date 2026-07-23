@@ -15,6 +15,16 @@ Not a plan yet; the M3 plan is written when M3 starts.
   M3 needs footprint engineering: stage only the archive packages
   `texlive-basic` reads instead of extracting the full ISO; prune
   between stages; `actions/cache` the work tree.
+- **MEASURED CORRECTION (2026-07-23, toolchain-smoke run 29997712501):**
+  the ~14 GB figure above is the *macOS* runner spec. The Linux
+  `ubuntu-24.04-arm` runner — the lane we actually build on — reports
+  **109 GB free** on `/` (108 GB after the 1.41 GB toolchain pull).
+  Disk is NOT a binding constraint there: full ISO (6.8 GB) + staged
+  texmfrepo + source + work tree fit with a wide margin. Selective ISO
+  staging is DEMOTED from load-bearing to optional wall-time
+  optimization; the remaining CI-build questions are ISO acquisition
+  (~6.8 GB download per uncached run vs `actions/cache`'s 10 GB repo
+  quota) and build wall-time on 4 vCPU.
 
 ## The amd64 question (2026-07-22 analysis)
 

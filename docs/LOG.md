@@ -505,6 +505,46 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-24 — M2 COMPLETE: TL 2026 rebase acceptance verified (item 9)
+
+**Named-owner step first.** TL 2023 pins retired from pins.lock (the
+runbook 1d step; values in git history; cached 2023 files deletable);
+fetch.sh now verifies exactly six blocks, all green.
+
+**Verdict.** `tester` agent ran `make rebase-check` — its FIRST full
+end-to-end execution — at HEAD 26ffc8b, clean tree: **6/6 gates in
+54.8 s.** Fetch verify (incl. the 6.78 GB ISO, 2 hashes); execution
+gate (53 env imports, "TeX Live 2026_busytexwasm"); license audit
+(40 sources, all-retired patches enforced); runtime 186/186 incl.
+real-wasm luatex rejection; conformance 4/4 (bib-cite 3 passes via
+bibtex8; idx-makeindex 2 pages via the full makeindex sequence);
+demo smoke 4/4. LuaTeX absent at every layer (applet listing probed
+empirically; formats exactly {xelatex,pdflatex}.fmt; no lua build
+targets — the packed texmf still carries lua-named LaTeX *package*
+sources per collection-basic, correctly noted as not an engine).
+Engine banners confirm the forecast column: ICU 78.2, HarfBuzz
+12.3.2, zlib 1.3.2, libpng 1.6.55, FreeType 2.14.1. Runbook matches
+reality command-for-command; DESIGN §6.2 pointer additive. Artifact
+inventory of record (88,776,788 B total): busytex.wasm 1c9b96dc…
+(27,508,145), busytex.js 81aa161c… (273,991), pdflatex.fmt 4c757811…
+(2,286,489), xelatex.fmt 551fe496… (4,472,954), texlive-basic.data
+5ead5862… (52,775,230), texlive-basic.js 1a8f4089… (1,459,979);
+assets.json generated 2026-03-01T00:00:00Z. **M2 acceptance
+SATISFIED.**
+
+**Milestone summary.** The first annual rebase is done and
+institutionalized: TL 2023→2026 in seven working items — pins with
+three-way checksums, the build config forked to ours (LuaTeX exited:
+wasm −13%, bundle −25% before the 2026 sizes), only three drift fixes
+(no emsdk bump; both macOS patches retired as fixed-upstream), one
+real regression (ICU 78 alias-table packaging) root-caused and fixed
+portably, fixtures regenerated with the version-agnostic claim fully
+validated, a four-seed conformance corpus driving the public runtime,
+and docs/rebase.md + make rebase-check so TL 2027 starts from an
+operation, not archaeology. Carried forward: CI runs the wasm path
+only after M3 wires artifacts in; the ISO re-pins to historic/ at M3.
+Next per §9: **M3 — Build logistics & CI** (plan next iteration).
+
 ## 2026-07-24 — M2 item 8: the rebase runbook (loop)
 
 **Done.** `coder` agent distilled the ~1300-line M2 journal into

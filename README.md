@@ -30,8 +30,8 @@ no engine or runtime code yet.
 | Bootstrap | Repo scaffolding, licensing posture, CI skeletons | Done |
 | M0 | Faithful baseline — reproduce upstream busytex's build natively on the dev host | Done |
 | M1 | Runtime v1 — typed ESM API, XeTeX-first (LuaTeX dropped from v1) (MVP core) | Done |
-| M2 | Rebase to TeX Live 2026 — port patches, dump formats; LuaTeX exits the build | In progress |
-| M3 | Build logistics & CI — pinned arm64 container as canonical builder, repro gate | Not started |
+| M2 | Rebase to TeX Live 2026 — port patches, dump formats; LuaTeX exits the build | Done |
+| M3 | Build logistics & CI — pinned arm64 container as canonical builder, repro gate | In progress |
 | M4 | Bundles + manifests — tlpdb-driven tiering and on-demand resolution | Not started |
 | M5 | Release engineering + hardening — archives, audit, npm dry-run, corpus, budgets | Not started |
 

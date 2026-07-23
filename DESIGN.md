@@ -58,6 +58,11 @@ Live data bundles, and exposes a small, typed, job-oriented API designed for
   rebase (§9); the v1 binary carries XeTeX + pdfTeX + the tools.*
 - Pinned, reproducible builds: same inputs ⇒ byte-identical artifacts, with
   a CI check that builds twice and diffs hashes.
+  *Amended 2026-07-23: byte-for-byte reproducibility is DEFERRED out of v1
+  (§6.1). The release guarantee is now "built in the pinned container from
+  pin-verified inputs, passing the functional gates (execution gate +
+  conformance corpus)" — not bit-identical output. Inputs stay pinned and
+  hash-verified; provenance is unaffected. Revisitable post-1.0.*
 - Tiered TeX Live bundles (`core` / `extended` / `full`) generated from TeX
   Live's own package database (tlpdb), each with a machine-readable manifest
   (file list, sizes, sha256, provided package names).
@@ -212,6 +217,25 @@ emsdk version, container digest. CI runs the full build twice and fails on
 any artifact-hash mismatch. `SOURCE_DATE_EPOCH` and stable file ordering in
 archives are mandatory.
 
+> **Amended 2026-07-23 (byte-repro deferred out of v1).** The build-twice
+> byte-identical gate is DROPPED as a v1 requirement (user decision). A CI
+> repro run (M3 item 5) proved the artifacts are *nearly* reproducible —
+> the engine (`.wasm`/`.js`) and `.fmt` formats are byte-identical across
+> clean builds; the only remaining divergence is wall-clock timestamps that
+> `install-tl`/`updmap` bake into a few generated font-map files, not
+> covered by `SOURCE_DATE_EPOCH`. Closing that last gap needs per-file
+> timestamp normalizers whose effort and font-corruption risk outweigh the
+> benefit for an MVP: for v1, **functional correctness is the release bar**
+> (the §8 conformance corpus + the execution gate, run against the
+> container-built `dist/`), not bit-identical output. What is UNCHANGED:
+> inputs stay pinned + hash-verified (provenance intact), releases come only
+> from the pinned container, and `SOURCE_DATE_EPOCH` + stable ordering stay
+> set (they make the build *mostly* reproducible for free — we just no
+> longer gate on the last bytes). `normalize-lsr.py` (the ls-R ordering
+> normalizer already landed) stays: it is behavior-preserving and zero-cost.
+> Revisit if a supply-chain-verification use case makes bit-identity worth
+> the normalizer surface post-1.0.
+
 > Bootstrap-phase note (2026-07-22): this contract binds the canonical
 > container build path, activated at M3 (§9 revision). During the
 > native-first bootstrap, host builds consume the same pinned, verified
@@ -334,6 +358,14 @@ using a small open font checked into `conformance/fixtures`.
   arm64 Linux container / amd64 Linux container) that settles
   host-arch-independence with data — amd64 stays only as a free
   verification lane if it earns its keep.
+  *Amended 2026-07-23: the build-twice byte-repro gate and the
+  hash-equivalence check are DROPPED (§6.1 deviation — byte-identity is
+  no longer a v1 requirement). Host-arch/platform independence is now
+  settled FUNCTIONALLY instead: the arm64 container-built wasm is run
+  under the conformance corpus on other platforms (already confirmed on
+  macOS arm64, 2026-07-23). M3 acceptance becomes: pinned arm64
+  container builds the full artifact set in CI + all functional gates
+  green against it. No local container builds; no amd64 lane needed.*
 - **M4 — Bundles + manifests (formerly M3).** tlpdb-driven tiering,
   per-bundle manifests, top-level integrity manifest, on-demand
   resolution with log feedback.

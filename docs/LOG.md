@@ -5,6 +5,36 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-23 — Scope: byte-for-byte reproducibility DROPPED from v1
+
+**User decision.** Byte-identical builds are no longer a v1 requirement.
+The one CI repro run (30003309704) had proven the artifacts are *nearly*
+reproducible — `busytex.wasm`/`.js` and both `.fmt` formats byte-identical
+across two clean builds — with a single remaining divergence: install-tl/
+updmap bake wall-clock timestamps into a few generated font-map files, not
+covered by `SOURCE_DATE_EPOCH`. Closing that needs per-file timestamp
+normalizers; the user judged the effort + font-corruption risk not worth it
+for an MVP ("as long as it works we are fine"). Context that supports the
+call: **upstream busytex has no reproducibility gate either** — byte-repro
+was a WasmTeX-original bar (§6.1), stricter than what we derive from.
+
+**Recorded as a DESIGN deviation** (constitutional; CLAUDE.md requires it):
+DESIGN.md §6.1 + the principles list + §9 M3 amended. The release guarantee
+becomes "built in the pinned container from pin-verified inputs, passing the
+functional gates (execution gate + §8 conformance corpus)" — not bit-
+identical output. UNCHANGED: inputs stay pinned + hash-verified (provenance
+intact), releases come only from the pinned container, `SOURCE_DATE_EPOCH` +
+stable ordering stay set.
+
+**Actions.** Stopped the in-flight timestamp-fix coder (nothing written —
+tree was clean). Cancelled the planned parallel-repro-matrix redesign
+(committed a2d3707 hours earlier — now superseded). `normalize-lsr.py` and
+`repro-check.sh` STAY (behavior-preserving, zero-cost, off the release
+path). M3 resequenced: item 5 closed as descoped; item 6 replaced by the
+functional cross-platform check (already green on macOS arm64); item 7
+remainder is wiring the guarded gate jobs to the CI-built artifact; item 8
+acceptance drops the repro + equivalence verdicts.
+
 ## 2026-07-23 — M3 item 7a: toolchain deployed to GHCR; CI smoke green
 
 **User-directed unit** ("deploy the container to GitHub and see if it's

@@ -231,7 +231,7 @@ jobs:
       # fetch.sh instead of refetching). Survives all non-ISO pin churn.
       - id: iso-restore
         name: Restore pinned TL ISO cache (6.78 GB; content-keyed, exact only)
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ~/.cache/wasmtex/sources/${{ steps.pins.outputs.iso_file }}
           key: wasmtex-iso-${{ steps.pins.outputs.iso_sha256 }}
@@ -241,7 +241,7 @@ jobs:
       # edit re-verifies this cheap set. EXACT key only (same fail-closed reasoning).
       - id: src-restore
         name: Restore small pinned sources cache (ISO excluded; exact only)
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/.cache/wasmtex/sources
@@ -266,14 +266,14 @@ jobs:
       # fetch (which aborts the job) correctly saves nothing.
       - name: Save pinned TL ISO cache
         if: steps.iso-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ~/.cache/wasmtex/sources/${{ steps.pins.outputs.iso_file }}
           key: wasmtex-iso-${{ steps.pins.outputs.iso_sha256 }}
 
       - name: Save small pinned sources cache
         if: steps.src-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             ~/.cache/wasmtex/sources
@@ -372,7 +372,7 @@ jobs:
       # artifact is traceable to the exact pin set it was built from.
       - name: Upload dist/ artifact
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wasmtex-dist-${{ steps.pins.outputs.pins_short }}
           path: dist/
@@ -385,7 +385,7 @@ jobs:
       # expected today on the known timestamp gap) still surfaces its report.
       - name: Upload reproducibility report (repro mode)
         if: ${{ always() && github.event.inputs.repro == 'true' }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wasmtex-repro-${{ steps.pins.outputs.pins_short }}
           path: |
@@ -395,7 +395,7 @@ jobs:
 
       - name: Upload build transcript
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wasmtex-buildlog-${{ steps.pins.outputs.pins_short }}
           path: ${{ runner.temp }}/build.log
@@ -439,7 +439,7 @@ jobs:
       # (path: dist), reconstructing the repo-root dist/ that conformance/run.mjs
       # reads by default (its WASMTEX_DIST override is unused here).
       - name: Download the CI-built dist/ artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: wasmtex-dist-${{ needs.artifacts-build.outputs.pins_short }}
           path: dist
@@ -496,7 +496,7 @@ jobs:
       # runtime from '/runtime/dist/' — so the download lands exactly where the demo
       # server expects it, no path munging or env var required.
       - name: Download the CI-built dist/ artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: wasmtex-dist-${{ needs.artifacts-build.outputs.pins_short }}
           path: dist
@@ -542,7 +542,7 @@ jobs:
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-report
           path: demo/playwright-report

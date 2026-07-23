@@ -5,6 +5,26 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-23 — M3 item 7 COMPLETE: gates green in CI; node24 action bump
+
+**Gates verified green.** Run 30012659864 (the slice-B2 push) ran the
+full path end-to-end: `artifacts-build` built dist/ in the pinned
+container, then `conformance` and `demo-smoke` downloaded that artifact
+and BOTH succeeded — the first real functional-gate execution in CI.
+Item 7 done. This is the M3 functional acceptance bar (post byte-repro
+descope) demonstrated live.
+
+**Node 20 deprecation cleared.** The run surfaced GitHub's Node-20
+deprecation warning for `actions/cache/restore@v4` and
+`actions/upload-artifact@v5`. Root cause + trap: for the artifact/cache
+actions, `v5` is NOT the node24 major (unlike checkout/setup-node where
+it is) — verified against each action.yml `runs.using`: cache node24 is
+**v5**, upload-artifact node24 is **v6**, and download-artifact node24
+is **v7** (its v6 is still node20 — the versions are offset between
+upload and download). Bumped all three in artifacts-build.yml (the only
+workflow using them). Pure runtime bump, no API change; the triggered
+rebuild reconfirms cache restore/save + artifact round-trip on node24.
+
 ## 2026-07-23 — M3 item 7b2: functional gates run against the CI artifact
 
 **Done.** The two functional gates — the §8 conformance corpus and the

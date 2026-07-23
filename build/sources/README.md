@@ -1,9 +1,10 @@
 # build/sources/
 
-> Since the M2 rebase the ACTIVE build consumes the TL **2026** pins
-> (`[texlive-source-2026]`, `[texlive-iso-2026]`); the TL 2023 examples below
-> remain accurate for the lock format and stay pinned until the 2023 blocks
-> are retired (a later M2 item).
+> The ACTIVE build consumes the TL **2026** pins (`[texlive-source-2026]`,
+> `[texlive-iso-2026]`). The TL 2023 blocks were RETIRED at M2 item 9
+> (2026-07-24; values recoverable from git history; the cached 2023 files may
+> be deleted). Where this README shows 2023 values as format examples they
+> remain accurate as examples only.
 
 Fetches and verifies every external input the reproducible build depends on.
 `pins.lock` is the single source of truth; `fetch.sh` reads it, downloads each
@@ -19,10 +20,8 @@ downloaded that is not pinned with a hash, and any mismatch stops the build.
 | Id | Kind | Pin | Why |
 | --- | --- | --- | --- |
 | `busytex` | git | commit `f2bd7b11…d307b` (+ deterministic archive sha256) | upstream MIT build machinery (DESIGN.md §2); vendored at M0 item 3 |
-| `texlive-source` | file | `texlive-2023.0` tarball + sha256 | TL 2023 engine sources upstream builds against (Makefile `URL_texlive`) |
-| `expat` | file | `expat-2.5.0.tar.gz` + sha256 | fetched separately by the Makefile (`URL_expat`) |
-| `fontconfig` | file | `fontconfig-2.13.96.tar.gz` + sha256 | fetched separately by the Makefile (`URL_fontconfig`) |
-| `texlive-iso` | file | `texlive2023-20230313.iso` + sha512/sha256 | frozen TL 2023 texmf image, from a TUG **historic** mirror |
+| `expat` | file | `expat-2.5.0.tar.gz` + sha256 | fetched separately by the engine build (`URL_expat`) |
+| `fontconfig` | file | `fontconfig-2.13.96.tar.gz` + sha256 | fetched separately by the engine build (`URL_fontconfig`) |
 | `texlive-source-2026` | file | `texlive-2026.0` tarball + sha256 | TL 2026 engine sources (M2 rebase; tag is a git-svn branch ref) |
 | `texlive-iso-2026` | file | `texlive2026-20260301.iso` + sha512/sha256 | frozen TL 2026 texmf image (release-area exception, see below; re-pin at M3) |
 | `toolchain-image` | container | ubuntu digest, emsdk commit, emscripten 3.1.43, built image id | M0 item 1; recorded, not fetched |

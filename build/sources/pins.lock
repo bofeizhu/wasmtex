@@ -64,23 +64,6 @@ archive_sha256 = f670beff2c3a5afb78ead20aa83d645a856513db68a0670155f0b6658df259f
 license        = MIT
 comment        = upstream multicall WASM TeX build machinery; forked into build/engines/ at M2 item 3
 
-# --- TeX Live 2023 engine sources ---------------------------------------------
-# What upstream busytex builds against (Makefile URL_texlive). GitHub serves
-# this as an on-the-fly archive of the branch tags/texlive-2023.0; such
-# auto-archives are not guaranteed byte-stable across GitHub infra changes, so
-# a hash mismatch here means "GitHub re-generated the tarball", not corruption
-# (see README "Reproducibility caveats"). sha256 is over the .tar.gz bytes
-# upstream feeds to `tar -xz`.
-[texlive-source]
-kind    = file
-url     = https://github.com/TeX-Live/texlive-source/archive/refs/heads/tags/texlive-2023.0.tar.gz
-file    = texlive-source-2023.0.tar.gz
-sha256  = b14ec8c6873ae04d77cd1de239b660e30f3d6f0e97449aee67e3300ea4a259fd
-bytes   = 107708547
-license = mixed (TeX Live source tree: Knuth/LPPL/GPL/... see THIRD_PARTY_NOTICES.md)
-comment = Makefile URL_texlive; tag texlive-2023.0
-
-# --- Dependency tarballs fetched separately by the upstream Makefile ----------
 # These are the ONLY libraries the busytex Makefile downloads outside the TL
 # source tree (TL vendors harfbuzz/icu/freetype/zlib/graphite2/... itself).
 # Enumerated from the Makefile at the pinned commit: URL_expat, URL_fontconfig.
@@ -102,37 +85,18 @@ bytes   = 2133746
 license = MIT-style (fontconfig)
 comment = Makefile URL_fontconfig
 
-# --- TeX Live 2023 full ISO (texmf repository for install-tl) -----------------
-# texlive2023-20230313.iso is the frozen TL 2023 image. Upstream fetches it as a
-# 5-part split cache from its own GitHub release (Makefile
-# URL_texlive_full_iso_cache) or, commented, from the rotating CTAN "current"
-# Images URL. Neither is pin-safe long term (the CTAN yearly URL dies when the
-# next TL ships). We fetch the single frozen ISO from a TUG *historic* archive
-# mirror instead, which keeps 2023 permanently. See README for the mirror list
-# and rotation rationale.
-#
-# sha512 is the mirror's own published checksum (…/texlive2023-20230313.iso.sha512),
-# recorded here so fetch.sh cross-checks every download against TUG's published
-# value. sha256 is our recorded content hash over the same bytes (added below).
-[texlive-iso]
-kind         = file
-url          = https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/2023/texlive2023-20230313.iso
-file         = texlive2023-20230313.iso
-sha512       = 3a78cc59d562a9224543b90318ecb28d3ae7f975c2a031e15304a20b8fb0abac6e0ed63012c0bdf8f5edd39380caf122a17c948c05b28ea38fe90f2f0b19bdba
-sha256       = 620923de5936ab315926e81de2cb8253a9c626fb7e03d8ffe0d424598eb32f94
-bytes        = 5123467264
-checksum_url = https://ftp.tu-chemnitz.de/pub/tug/historic/systems/texlive/2023/texlive2023-20230313.iso.sha512
-mirror       = TUG historic archive (TU-Chemnitz)
-license      = TeX Live aggregate (per-package; see THIRD_PARTY_NOTICES.md)
-comment      = frozen TL2023 image; historic mirror only, never a rotating CTAN 'current' URL
-
 # =============================================================================
-# TL 2026 rebase inputs (M2 item 2). ADDITIVE by design: the [texlive-source] and
-# [texlive-iso] 2023 blocks above stay BYTE-IDENTICAL so the pre-rebase build
-# remains reproducible until item 4 cuts the build over to these pins; a later M2
-# item then retires the 2023 blocks. Nothing outside this lock keys off the block
-# *id* (build scripts read the cache FILENAME; fetch.sh iterates ids generically
-# and only requires uniqueness), so the versioned `-2026` ids are safe.
+# TL 2026 rebase inputs (M2 item 2). Added ADDITIVELY alongside the TL 2023
+# blocks, which stayed byte-identical until the rebase landed; the 2023 blocks
+# ([texlive-source], [texlive-iso]) were RETIRED at M2 item 9 (2026-07-24, the
+# runbook 1d named-owner step) once items 3-8 were green on these pins. Their
+# values remain recoverable from git history; the cached 2023 files
+# (texlive-source-2023.0.tar.gz, texlive2023-20230313.iso) are no longer
+# verified by fetch.sh and may be deleted from ~/.cache/wasmtex/sources at
+# will. The `-2026` id suffix is KEPT (explicit year, zero churn); the next
+# rebase repeats this additive pattern per docs/rebase.md Phase 1d. Nothing
+# outside this lock keys off the block *id* (build scripts read the cache
+# FILENAME; fetch.sh iterates ids generically and only requires uniqueness).
 #
 # expat/fontconfig are deliberately NOT re-pinned for 2026: they are fetched by
 # the (busytex-derived) engine build, external to the TL source tree, have a

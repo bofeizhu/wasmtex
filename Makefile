@@ -37,7 +37,7 @@
 # build/artifacts/README.md.
 # =============================================================================
 
-.PHONY: artifacts artifacts-container clean-artifacts
+.PHONY: artifacts artifacts-container clean-artifacts rebase-check
 
 STAGE ?= all
 
@@ -48,6 +48,40 @@ artifacts:
 # Container flow (parked for M3). Kept reachable, unchanged.
 artifacts-container:
 	WASMTEX_STAGE=$(STAGE) build/artifacts/build.sh
+
+# `make rebase-check` (M2 item 8, DESIGN.md §6.2): the mechanical ACCEPTANCE tail
+# of the annual rebase — a fail-fast, ordered aggregator of the six gates the
+# runbook's Phase 5 lists, one entry point across five directories and six tools
+# for an operation run once a year. It doubles as the executable form of the
+# acceptance list (docs/rebase.md Phase 5), kept honest because it runs.
+#
+# It VERIFIES the rebase; it does NOT perform it. The judgment phases (pin
+# research, patch re-test, drift fixes) and the multi-hour, staged, resumable
+# build are Phases 1-3 of docs/rebase.md — driven by hand, never folded into a
+# one-shot check (hence `-check`, not the §6.2 `make rebase` name). It assumes
+# dist/ is already built (`make artifacts`) and verifies that output; it guards
+# on dist/ presence with a clear message rather than a deep error otherwise.
+# Order is cheap->heavy so a regression fails as early as possible.
+# Prerequisites: Node; Playwright browsers for the demo smoke (runbook Phase 0).
+rebase-check:
+	@test -f dist/assets.json || { \
+	  echo "!! rebase-check: dist/ not built — run 'make artifacts' first (runbook Phase 3)."; \
+	  echo "   rebase-check verifies the build's OUTPUT; it does not perform the build."; \
+	  exit 1; }
+	@echo "== rebase-check: acceptance gates (docs/rebase.md Phase 5) =="
+	@echo "-- [1/6] fetch verify (pins present + hash-verified) --"
+	build/sources/fetch.sh
+	@echo "-- [2/6] execution gate (env-import sanity + engine banner) --"
+	node build/artifacts/verify-engine.mjs dist
+	@echo "-- [3/6] license / provenance audit --"
+	build/audit/license-audit.sh
+	@echo "-- [4/6] runtime suite (typecheck + vitest) --"
+	npm --prefix runtime run typecheck && npm --prefix runtime test
+	@echo "-- [5/6] conformance corpus (public API over real wasm) --"
+	npm --prefix conformance run conformance
+	@echo "-- [6/6] demo smoke (Playwright) --"
+	npm --prefix demo test
+	@echo "== rebase-check: all acceptance gates green =="
 
 # Remove the assembled dist/ output and the native build tree. Does not touch
 # the pinned source cache or the toolchain. The (parked) container flow's docker

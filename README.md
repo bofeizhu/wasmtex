@@ -42,7 +42,9 @@ DESIGN.md §9.)
 
 [`DESIGN.md`](DESIGN.md) is the founding design document and the source of
 truth for goals, non-goals, API shape, build pipeline, licensing posture, and
-milestones.
+milestones. [`docs/rebase.md`](docs/rebase.md) is the annual-rebase runbook —
+the operational sequence for tracking each new TeX Live release, seeded by the
+TL 2026 rebase and honest about what is scripted versus a judgment call.
 
 ## License
 

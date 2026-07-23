@@ -505,6 +505,31 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-24 — M2 item 8: the rebase runbook (loop)
+
+**Done.** `coder` agent distilled the ~1300-line M2 journal into
+docs/rebase.md (496 lines): five phases with the M2 evidence inline —
+pin research (tag-namespace gotcha, historic-vs-release decision tree,
+MANDATORY drift-forecast probe), patch re-tests (retire-vs-re-diff),
+build (emsdk rule verbatim; the three drift classes with their real
+instances incl. the ICU item-4b retirement condition), fixture
+regeneration (the scorecard + churn-vs-finding taxonomy), and
+conformance as THE §6.2 acceptance gate. `make rebase-check`
+implemented as the acceptance aggregator only (six gates, fail-fast,
+dist-guarded) — deliberately NOT named `make rebase`, because a
+patch-applying automation does not exist and post-retirement has
+nothing to apply; that §6.2 wording tension is surfaced honestly in
+the runbook and routed through a future joint DESIGN+runbook commit.
+DESIGN §6.2 pointer is dated and additive; README links the runbook.
+
+**Review (approve + fixes).** Reviewer verified the runbook against
+the journal claim-by-claim and ran gates 1-3 live. Fixed: the
+drift-table still starred lua53 as a linked lib (false since item 3)
+and omitted libpaper; the 2023-pin retirement was ownerless — now
+explicitly owned by item 9 (and the runbook warns against ownerless
+retirements). Gaps the distillation surfaced: §6.2 tension, scattered
+prerequisites (now Phase 0), the year-agnostic abstraction itself.
+
 ## 2026-07-24 — M2 item 7: conformance seed corpus (loop)
 
 **Done.** `coder` agent delivered conformance/: four committed corpus

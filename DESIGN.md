@@ -218,6 +218,12 @@ upstream-able?). A scripted `make rebase TL=2027` applies patches to the new
 snapshot, surfacing conflicts as the year's work list. The conformance
 corpus (§8) is the acceptance gate for a rebase.
 
+> Runbook (2026-07-23): the operational sequence — pin research, patch re-test,
+> build + drift, fixture regen, and the acceptance gates (`make rebase-check`) —
+> is documented in `docs/rebase.md`, seeded by the TL 2026 rebase (M2). This
+> contract is unchanged; the runbook is honest about what is scripted vs a
+> judgment call.
+
 ### 6.3 CJK and fonts
 
 The engines fully support CJK (XeTeX/LuaTeX + the `ctex`/`xeCJK` packages,

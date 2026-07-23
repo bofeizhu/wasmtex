@@ -527,6 +527,9 @@ unreachable via the exports map anyway), engines relaxed >=24→>=18
 every consumer's editor hover corrected. Tarball verified: 37 files,
 LICENSE/README/dist, no engine bytes. 186/186, audit green.
 
+**Published.** User ran `npm publish`; registry confirmed:
+`wasmtex@0.0.1`, unpacked 418,085 B. The name is secured.
+
 ## 2026-07-24 — M2 COMPLETE: TL 2026 rebase acceptance verified (item 9)
 
 **Named-owner step first.** TL 2023 pins retired from pins.lock (the

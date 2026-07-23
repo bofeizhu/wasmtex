@@ -138,7 +138,7 @@ macos_overrides=(
 # The dropped helpers (packfs.c/.py, cosmo_getpass.h, ubuntu_package_preload.py)
 # and the retired worker/pipeline glue are no longer forked or copied.
 machinery_files=(
-  Makefile busytex.c emcc_wrapper.py
+  Makefile busytex.c emcc_wrapper.py normalize-lsr.py
 )
 
 # Cached inputs (names match build/sources/pins.lock). TL 2026 cutover (M2 item

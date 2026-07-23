@@ -98,7 +98,7 @@ ISO="$CACHE/texlive2026-20260301.iso"
 
 # OUR engine build-config files the Makefile references by path (build/engines/).
 machinery_files=(
-  Makefile busytex.c emcc_wrapper.py
+  Makefile busytex.c emcc_wrapper.py normalize-lsr.py
 )
 
 banner() { printf '\n>> [%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }

@@ -460,3 +460,247 @@ None from DESIGN.md. The `--use-preload-cache` drop *removes* a deviation
 volume policy intentionally diverges from the native driver's incremental/
 resumable tree — required by the item-5/6 reproducibility contract, not a DESIGN
 change.
+
+---
+
+## Item 5 — Reproducibility double-build gate
+
+Dated 2026-07-23. Goal (M3 plan item 5, DESIGN.md §6.1): `build/repro-check.sh` —
+the build-twice gate. Run N clean container builds; their `dist/` (SHA256SUMS +
+assets.json + every payload byte) must be byte-identical; any divergence is a
+nondeterminism bug hunted to its source and fixed in the Makefile/driver, never
+smoothed over. `SOURCE_DATE_EPOCH` is already pinned; the plan's suspects were
+archive ordering, gzip mtimes in `.fmt`, install-tl-embedded dates, locale sort,
+and file_packager input ordering. Wire `make repro-check`. Journal.
+
+### The gate — `build/repro-check.sh`
+
+Original work (SPDX MIT), style-matched to the sibling drivers. Two modes:
+
+- **full (default, canonical)** — run N (≥2) fresh clean-volume container builds
+  and diff pairwise. This is the mode CI and the annual-rebase acceptance use, so
+  the verdict rests on **nothing that predates the check**.
+- **`--reuse-current` (pragmatic)** — treat the `dist/` already on disk as build
+  #1 (snapshotting it *first*, before anything overwrites it) and run exactly ONE
+  more clean build as #2. Halves wall-time (one ~34 min build, not two) at the
+  cost of trusting the on-disk `dist/` was itself a pin-verified container build.
+  `make repro-check` defaults to full; `REPRO_ARGS=--reuse-current` selects this.
+
+Each build delegates to `build/artifacts/build.sh` (STAGE=all), which enforces
+the pinned-image identity check and **wipes its docker work volume first** — so
+each build starts pristine and re-running the gate is safe (resumable-safe: no
+build inherits another's incremental state; the item-4 clean-volume policy is
+load-bearing here).
+
+**Why snapshot the whole `dist/`, not just SHA256SUMS.** SHA256SUMS byte-identity
+is the authoritative GREEN verdict — it hashes every payload file — so the diff
+*decision* needs only SHA256SUMS + assets.json. But the RED **report** wants the
+actual diverging bytes (sizes, first-divergence offset, a hex+ASCII context
+window), and the next build overwrites `dist/`. So each build's `dist/` is
+snapshotted eagerly into `build/out/repro-check/build-NN/` (git-ignored), and the
+report is generated from the snapshots after all builds finish. The report leads
+with the SHA256SUMS + assets.json oracle callout, then a full per-file byte diff:
+for each differing file, its size in each build (+Δ), the `cmp` line, and a
+`hexdump -C` window on **both** sides around the first divergence — the ASCII
+gutter is what makes an embedded date/path/mtime legible at a glance.
+
+### Portability hardening (host = macOS dev **and** Linux CI)
+
+The gate's *comparison and report run on the host* (macOS for a `--reuse-current`
+dev run; Linux in CI), so the report primitives must be BSD/GNU-portable. A
+pre-run test of the exact `cmp`/offset/hexdump pipeline against real `dist/` bytes
+plus a fabricated perturbed copy — **before** spending 34 minutes — caught two
+BSD-vs-GNU bugs that would otherwise have produced a garbled report on the very
+run they were meant to diagnose:
+
+1. **`od -t x1z` is not portable.** BSD `od` (macOS) rejects the `z` ASCII-gutter
+   format char (`od: z: unrecognised format character`). Switched the context
+   window to `hexdump -C -s <skip> -n <len>` — supported by both BSD and
+   util-linux (CI), ASCII gutter intact.
+2. **`cmp` offset wording differs.** GNU prints `differ: byte N`; BSD (macOS)
+   prints `differ: char N`. The sed extractor matched only `byte`, so on the
+   macOS host it silently fell back to offset 0/1. Fixed to match either word
+   (`differ: [a-z]* N`).
+
+(A third issue the test surfaced was in the *test harness itself* — a missing
+`mkdir` — not the gate; the gate's `[ -f ]` guards handle a genuinely
+one-sided file via its "ONLY in build N" branch.)
+
+### Nondeterminism suspects — pre-analysis
+
+Checked the plan's headline suspects against the pinned image and the on-disk
+artifacts *before* building; the two classic ones are already neutralized by
+construction, which is why container-vs-container had a real chance of being
+clean on the first try:
+
+- **file_packager input ordering — NOT a suspect.** emsdk 3.1.43's
+  `tools/file_packager.py` sorts `data_files` by `dstpath` (its own comment:
+  *"sorted … to make the order of files reproducible across file systems /
+  operating systems (os.walk does not …)"*). So the `.data` packing order is
+  filesystem-order-independent — a fresh ext4 volume's htree readdir order cannot
+  perturb it.
+- **gzip mtime in `.fmt` — already zeroed.** The shipped `.fmt` are gzip streams
+  (`1f 8b 08 00`) whose 4-byte mtime field is `00 00 00 00`. The classic
+  gzip-timestamp nondeterminism is pre-neutralized (web2c's dump path zeroes it).
+- **locale sort** — `LC_ALL=C.UTF-8` in the container, `LC_ALL=C sort` in
+  `do_dist`'s SHA256SUMS, and gen-assets' C-locale path sort all agree.
+- **install-tl / TeX dates** — `SOURCE_DATE_EPOCH=1772323200` + `FORCE_SOURCE_DATE=1`
+  + `TZ=UTC` are exported by `run-in-container.sh`; assets.json's `generated`
+  field is derived from the epoch (deterministic), and the `.fmt` dump date rides
+  `FORCE_SOURCE_DATE`.
+
+So the residual risk was whatever these do *not* cover — an install-tl log or a
+generated TDS file embedding a wall-clock date that lands in the packed
+`build/texlive-basic/` tree, or a genuinely order-sensitive step upstream of the
+file_packager sort.
+
+### Run 1 + verdict — DIVERGED, root-caused to `ls-R`
+
+Executed `build/repro-check.sh --reuse-current` (build #1 = item-4's on-disk
+`dist/`; build #2 = one fresh clean-volume container build, ~32 min, exit 0),
+babysat in-turn. **VERDICT: DIVERGED.** Exactly four files differed, and all four
+trace to a SINGLE source (`build/out/repro-check/report.txt`):
+
+| file | build1 | build2 | Δ | why |
+| --- | --- | --- | --- | --- |
+| `texlive-basic.data` | 52,660,712 | 52,660,788 | +76 | **root cause** (below) |
+| `texlive-basic.js` | 1,450,840 | 1,450,843 | +3 | file_packager metadata tracking `.data` |
+| `SHA256SUMS` | 509 | 509 | 0 | the `texlive-basic.data` hash line |
+| `assets.json` | 1,341 | 1,341 | 0 | embeds those hashes |
+
+**Byte-IDENTICAL across the two builds — the key negative result:** `busytex.wasm`,
+`busytex.js`, `formats/pdflatex.fmt`, `formats/xelatex.fmt`. So the emsdk-clang
+wasm codegen, the MODULARIZE glue, AND the `.fmt` format dumps are already
+reproducible container-to-container (the `FORCE_SOURCE_DATE` epoch + the
+gzip-mtime-zeroing hold; the native-vs-container `.fmt`/wasm deltas the item-4
+preview saw were host-compiler/build-path artifacts that vanish within the
+container lane). `ls-R` is the SOLE root cause; the other three files are derived
+reflections of it.
+
+**Localizing the `.data` divergence.** First differing byte at offset 32,113,164,
+whose `hexdump` context (the gate's own report) reads
+`… % ls-R -- filename database for kpathsea; …`. In `texlive-basic.js` the only
+independent change is `compressedData.cachedOffset` 52656616 → 52656692 (Δ **76**,
+matching the `.data` growth) plus the LZ4 `offsets` block-boundary array shifting
+after that block — i.e. one packed file's LZ4-compressed representation grew 76
+bytes while the file list's uncompressed offsets were unaffected: a **constant
+size, changed content** signature.
+
+**Root cause — `ls-R` readdir order.** install-tl runs `mktexlsr`, which writes
+each texmf tree's `ls-R` kpathsea database by walking the tree in **filesystem
+readdir order** and does NOT sort. `build/artifacts/build.sh` gives every build a
+**freshly created docker volume** (the item-4 clean-volume repro policy), and a
+fresh ext4 filesystem carries a **randomized htree hash seed** (mkfs picks it), so
+the readdir order of any directory differs from one build's volume to the next.
+Two otherwise-identical builds therefore emit `ls-R` with the same entries in a
+different byte order → different `texlive-basic.data` (the reorder compresses
+~76 B worse under LZ4) → different `.js`/SHA256SUMS/assets.json. Confirmed against
+build #2's actual tree: every `ls-R` directory block was in scrambled
+(non-C-sorted) readdir order (e.g. `./tex/latex/base:` → `doc-2016-02-15.sty,
+slides.def, omscmr.fd, cp437de.def, …`). `SOURCE_DATE_EPOCH` cannot touch this —
+it is ORDERING, not a timestamp.
+
+A **second, subtler** facet: install-tl's `updmap` writes the font-map dirs
+incrementally, so `mktexlsr` lists a single directory such as
+`./texmf-var/fonts/map/dvips/updmap:` under MULTIPLE duplicate headers (7×, one
+map file each), and the split across those duplicates is itself readdir/timing
+dependent.
+
+### The fix — `build/engines/normalize-lsr.py`
+
+New original helper (SPDX MIT). After install-tl, the `build/texlive-%.txt` recipe
+runs it over every generated `ls-R`
+(`find … -name ls-R -exec $(PYTHON) $(abspath normalize-lsr.py) {} +`). It rewrites
+each `ls-R` into a canonical byte-order that is a pure function of the file SET,
+not of readdir order: parse into (dir-header → entries) records exactly as
+kpathsea's own reader does (a line ending in `:` is a header, others are entries,
+blanks separate), then emit blocks in sorted-header order, entries within each
+block sorted, and — critically — MERGE all occurrences of a duplicate header into
+one block with the deduplicated UNION of their entries (absorbing the updmap
+split, occurrence count, and intra-block order all at once). All sorting is by raw
+bytes = `LC_ALL=C`, host/locale-independent. kpathsea folds `ls-R` into a
+directory→files hash and is order-independent, so this is strictly
+behavior-preserving — it removes only the nondeterminism. Wired into BOTH drivers'
+`machinery_files` (`Makefile busytex.c emcc_wrapper.py normalize-lsr.py`) so it
+syncs into the work tree like `emcc_wrapper.py`; a Makefile-header mod-list bullet
+records it. `.gitignore` gained `__pycache__/`/`*.pyc` (running the helper compiles
+bytecode into `build/engines/`, which the license audit's build/engines scan would
+otherwise flag).
+
+### Verification — analysis-only (standing no-local-build directive)
+
+A standing directive landed mid-finalization: **no further container builds on
+this machine**; the hunt is analysis-only from the existing artifacts/snapshots,
+and any rebuild-based re-verification is CI work. The fix was verified WITHOUT a
+rebuild, which is sound because the fix's core property is checkable directly:
+
+- **Order-independence (the property that fixes the bug).** A throwaway harness
+  imported the real `canonicalize()` and ran it over build #2's three actual
+  `ls-R` files AND over 5 independent random re-shufflings of each (each shuffle
+  permutes block order + within-block entry order — exactly what a different
+  volume's readdir order would produce). All shuffles normalized to the
+  BYTE-IDENTICAL canonical form. So a build on any htree seed yields the same
+  `ls-R` bytes.
+- **Idempotence** (`canonicalize(canonicalize(x)) == canonicalize(x)`) and
+  **content preservation** (the dir→{files} set is unchanged — nothing added or
+  lost, verified as a set-equality that accounts for the duplicate-header merge)
+  held on all three files.
+- **Recipe form validated in the pinned image**: the exact
+  `find … -exec python3 normalize-lsr.py {} +` invocation ran inside
+  `wasmtex-toolchain:arm64-dev` (python3 3.10.12) against a writable copy of the
+  `ls-R` files — canonicalized correctly, exit 0, idempotent on re-run.
+
+Because (a) `ls-R` was the SOLE divergence in the two completed builds (wasm/glue/
+formats were byte-identical) and (b) the normalizer makes `ls-R` provably
+readdir-order-independent, two post-fix builds are expected byte-identical. The
+**empirical build-twice green is deferred to CI** (M3 item 7 wires `make
+repro-check` as its own job) per the directive — the local two-build run started
+for this purpose was aborted at build #1's prep stage and MUST NOT be re-run
+locally.
+
+### Status / deferred
+
+- **Landed:** the gate (`build/repro-check.sh`), `make repro-check`, the
+  `docs/rebase.md` Phase-5 note, the `ls-R` root-cause fix (`normalize-lsr.py` +
+  recipe + both drivers), audit green, execution gate green on the on-disk
+  `dist/`.
+- **On-disk `dist/` is the PRE-fix build #2** (readdir-order `ls-R`); it still
+  passes the execution gate. The fix is in the build CONFIG and takes effect on
+  the next build (CI). No local rebuild was performed to refresh it (directive).
+- **Deferred to CI (M3 item 7):** the empirical two-clean-build `make repro-check`
+  green — the byte-identical `SHA256SUMS` proof that closes item 5's acceptance.
+  This journal + the analytical verification are the evidence that the fix is
+  correct; CI provides the final empirical confirmation.
+
+### Deviations
+
+None from DESIGN.md. `normalize-lsr.py` canonicalizes an install-tl output for
+reproducibility (DESIGN.md §6.1); it is behavior-preserving for kpathsea and
+touches no engine/source code. The empirical build-twice demonstration is deferred
+to CI by an operational directive (no local builds), not a DESIGN change; §6.1's
+contract is unchanged and now has both a runnable gate and a root-cause fix.
+
+### Review outcome (code-reviewer, 2026-07-23)
+
+**Request-changes → all applied.** The reviewer verified the normalizer with 19
+synthetic-fixture tests, traced the recipe (install-tl at the only ls-R writer;
+normalize runs after it and the prune, before packing), confirmed machinery
+sync, and matched the journal against the on-disk evidence byte-for-byte. Two
+should-fixes landed:
+
+1. **`--keep-going` false GREEN** (the gate's one real flaw): a failed build
+   left the previous dist/ on disk, was snapshotted anyway, and diffed clean.
+   Now: failed builds are recorded and NOT snapshotted, pairs missing a
+   snapshot are skipped in the diff, and any failure forces verdict
+   `INCOMPLETE` + exit 1 before the green path is even considered.
+2. **Local-run doc contradiction**: root Makefile + script header recommended
+   local runs the standing directive prohibits; both now cross-reference the
+   M3 standing decision (container builds on CI runners only).
+
+Nits also applied: robust awk `--help` extractor (sed range had drifted),
+`LC_ALL=C cmp` (gettext-localized message broke the offset extractor under
+non-English locales), header rule tightened to kpathsea's real one (ends `:`
+AND starts `./`/`/` — a colon-suffixed filename can no longer hijack a block),
+format citation moved from `db.c` to the kpathsea manual. Post-fix: 8/8
+property tests green (idempotence, 50-shuffle order-independence, dup-header
+merge, content preservation, raw-byte sort, magic header, edge cases).

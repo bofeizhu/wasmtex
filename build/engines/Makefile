@@ -64,6 +64,15 @@
 #       marker). Runtime/demo are unaffected — the browser worker already fetched
 #       the .data and only skipped the cache; the node loaders read via fs. Restores
 #       the §5.2 optional-adapter posture. Changes texlive-basic.js bytes.
+#     - Canonicalize ls-R for reproducibility (M3 item 5, DESIGN.md §6.1). After
+#       install-tl, the texlive-%.txt recipe runs normalize-lsr.py over every
+#       generated ls-R. mktexlsr writes ls-R in filesystem READDIR order (and
+#       splits updmap's font-map dirs across duplicate headers), which differs
+#       across fresh ext4 work volumes and made texlive-basic.data/.js diverge
+#       between two clean container builds (the build-twice gate caught it). The
+#       normalizer rewrites each ls-R into sorted/merged/deduplicated order;
+#       kpathsea reads ls-R order-independently, so it is behavior-preserving.
+#       New helper normalize-lsr.py (synced by both drivers' machinery_files).
 #   Kept (DESIGN.md §3 program set): xetex, pdftex, bibtex8, xdvipdfmx,
 #   makeindex, kpsewhich, and the texlive-basic bundle path.
 # Reference URLs from upstream, retained:
@@ -572,6 +581,12 @@ build/texlive-%.txt: build/texlive-%.profile source/texmfrepo.txt
 	# lua fmtutil entries (built by the HOST TeX — non-hermetic, never shippable),
 	# and this prune is the load-bearing removal. Do not delete them as dead code.
 	rm -rf $(addprefix $(basename $@)/texmf-dist/texmf-var/web2c/, pdftex/latex.fmt pdftex/etex.fmt pdftex/pdfetex.fmt pdftex/pdftex.fmt pdftex/mptopdf.fmt pdftex/latex-dev.fmt pdftex/pdflatex-dev.fmt xetex/xetex.fmt xetex/xelatex-dev.fmt tex/ luahbtex/ luatex/) $(addprefix $(basename $@)/, bin/ tlpkg/ texmf-dist/doc/ texmf-dist/scripts/ texmf-dist/source/ install-tl install-tl.log)
+	# Reproducibility (M3 item 5, DESIGN.md §6.1): mktexlsr writes each ls-R in
+	# filesystem READDIR order, which differs across fresh ext4 work volumes and
+	# made texlive-basic.data/.js diverge between two clean container builds.
+	# Canonicalize every ls-R to sorted/merged/deduplicated order (kpathsea reads
+	# ls-R order-independently, so this is behavior-preserving). See normalize-lsr.py.
+	find $(basename $@) -name ls-R -exec $(PYTHON) $(abspath normalize-lsr.py) {} +
 	mkdir -p $(dir $@)
 	find $(basename $@) > $@
 	tar -czf $(basename $@).tar.gz $(basename $@)

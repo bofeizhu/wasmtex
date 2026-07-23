@@ -5,6 +5,58 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-23 — M3 item 5: repro gate built; DIVERGED → ls-R root cause → fixed
+
+**Verdict.** The build-twice gate (`build/repro-check.sh`, `make
+repro-check`) compared item 4's build with a fresh clean container
+build: **DIVERGED in exactly 4 files** — texlive-basic.data (+76 B,
+root), texlive-basic.js (+3 B offset metadata), SHA256SUMS/assets.json
+(hash reflections). busytex.wasm, busytex.js and BOTH .fmt dumps were
+byte-identical: wasm codegen and format dumping are already
+reproducible container-to-container.
+
+**Root cause.** install-tl's mktexlsr writes each texmf tree's `ls-R`
+kpathsea database in *readdir order*; every clean build gets a fresh
+docker volume = fresh ext4 with a randomized htree hash seed, so the
+byte order differs per build (SOURCE_DATE_EPOCH can't help — ordering,
+not timestamps). Second facet: updmap's incremental map writes split
+one dir across duplicate ls-R headers, readdir/timing-dependently.
+
+**Fix at the source.** `build/engines/normalize-lsr.py` canonicalizes
+every ls-R after install-tl: blocks sorted by header, entries sorted
+raw-byte (LC_ALL=C equivalent), duplicate headers merged to one
+deduped union block — a pure function of the file *set*. kpathsea
+reads ls-R order-independently, so behavior-preserving. Proven
+analytically (no local rebuild, per the standing directive below):
+order-independence over real build-#2 ls-R files + random shuffles,
+idempotence, content-preservation (the dir→files map IS kpathsea's
+in-memory database), plus 8 synthetic-fixture property tests.
+
+**Standing directive (user, 2026-07-23).** No container builds on this
+machine anymore — arm64 or amd64, any mode. Codified in the loop
+prompt + M3 plan; the empirical two-build GREEN moves to CI (item 7
+becomes item 6's prerequisite; expected order 5→7→6→8). A second
+full-mode gate run was killed at prep the moment the directive landed.
+
+**Review (request-changes → fixed).** `--keep-going` could report a
+false GREEN: a failed build #2 left dist/ holding build #1's bytes,
+the snapshot duplicated it, diff empty → REPRODUCIBLE for a build that
+never ran. Fixed: failed builds are recorded + unsnapshotted, pairs
+with missing snapshots are skipped, and ANY failure forces verdict
+INCOMPLETE, exit 1. Also fixed: local-run wording in Makefile/script
+contradicted the directive (now cross-referenced); --help sed range
+overran (robust awk extractor); LC_ALL=C on cmp (gettext localization
+would break the offset extractor); normalizer header rule tightened to
+kpathsea's (ends ':' AND starts './'/'/'); format citation swapped
+from db.c to the kpathsea manual. BSD/GNU portability bugs (od -t x1z,
+cmp "char"-vs-"byte") were caught pre-run by validating BOTH gate
+paths against real bytes before spending build time.
+
+**Deferred.** Item 5's checkbox stays open pending the CI empirical
+two-build green (closes with item 7/8). dist/ on disk remains the
+valid pre-fix build #2. `build/texlive-basic.txt` + the tar member
+order stay nondeterministic — neither ships in dist/, noted only.
+
 ## 2026-07-23 — M3 item 4: the canonical container build is green
 
 **Done.** `coder` agent revived the parked container flow onto

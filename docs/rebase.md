@@ -239,7 +239,10 @@ runs — the journal is as much the deliverable as the binary.
 ### 3a. Build-side pins to cut over (same commit, before the first stage)
 
 - **Fresh work dir.** Bump `WASMTEX_WORK_DIR`'s default in `build-native.sh` to a
-  new sibling (M2: `busytex-2026`). **Additive, never wipe** — the previous
+  new sibling (M2: `busytex-2026`) — and the duplicated default in the root
+  `Makefile`'s `clean-artifacts` target, which must stay in sync or `make
+  clean-artifacts` silently leaves the real multi-GB tree behind.
+  **Additive, never wipe** — the previous
   tree's configure caches, staged source, dumped `.fmt`, and ISO `texmfrepo` must
   not contaminate the new build, and the old tree stays a fallback until
   acceptance.
@@ -420,6 +423,13 @@ so a regression fails as early as possible:
 | 4 | runtime suite | `npm --prefix runtime run typecheck && npm --prefix runtime test` | typecheck clean; **186/186** |
 | 5 | conformance | `npm --prefix conformance run conformance` | **4/4** seeds |
 | 6 | demo smoke | `npm --prefix demo test` | **4/4** (Playwright) |
+
+> **The reproducibility gate is a SEPARATE step, not part of `rebase-check`.**
+> DESIGN §6.1's build-twice check (`make repro-check`, `build/repro-check.sh`)
+> runs two full clean container builds (~hours) and is deliberately kept out of
+> `rebase-check`'s fast, fail-fast tail. Run it as its own step of the rebase (it
+> verifies the *canonical builder* is still deterministic on the new pins) and as
+> its own CI job — never fold it into the acceptance aggregator above.
 
 The M2 corpus run for reference (fresh typesetter per entry, public API over real
 wasm):

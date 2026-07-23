@@ -39,9 +39,11 @@
 # See build/artifacts/README.md.
 # =============================================================================
 
-.PHONY: artifacts artifacts-container clean-artifacts rebase-check
+.PHONY: artifacts artifacts-container clean-artifacts rebase-check repro-check
 
 STAGE ?= all
+# Extra args forwarded to build/repro-check.sh (e.g. REPRO_ARGS=--reuse-current).
+REPRO_ARGS ?=
 
 # Native host flow (active).
 artifacts:
@@ -85,9 +87,28 @@ rebase-check:
 	npm --prefix demo test
 	@echo "== rebase-check: all acceptance gates green =="
 
+# `make repro-check` (M3 item 5, DESIGN.md §6.1): the build-twice reproducibility
+# gate. Runs TWO clean CANONICAL container builds from scratch and asserts their
+# dist/ artifacts (SHA256SUMS + assets.json + every payload byte) are identical;
+# any divergence prints a per-file report and fails. This is a MULTI-HOUR gate
+# (each clean container build is ~34 min on an 8-core arm64 host, longer in CI),
+# so it is DELIBERATELY NOT part of `rebase-check`'s fast acceptance tail — it is
+# its own step in the annual rebase (docs/rebase.md Phase 5) and its own CI job.
+#
+# WHERE IT RUNS (standing decision 2026-07-23, docs/plans/M3.md): container
+# builds run on CI runners ONLY — do NOT invoke this target on the dev machine.
+# Default is the canonical two-build mode; the one-build variant CI can use when
+# a pin-verified dist/ is already present (on-disk dist/ = build #1) is
+#   make repro-check REPRO_ARGS=--reuse-current
+# See build/repro-check.sh --help.
+repro-check:
+	build/repro-check.sh $(REPRO_ARGS)
+
 # Remove the assembled dist/ output and the native build tree. Does not touch
 # the pinned source cache or the toolchain. The container flow's docker work
 # volume is also removed if present (harmless no-op without docker).
+# The work-dir default below duplicates build-native.sh's WASMTEX_WORK_DIR
+# default — the annual rebase bumps both together (docs/rebase.md §3a).
 clean-artifacts:
 	rm -rf dist
 	rm -rf "$${WASMTEX_WORK_DIR:-$$HOME/.cache/wasmtex/build/native/busytex-2026}"

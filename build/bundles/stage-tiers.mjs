@@ -71,7 +71,18 @@ import {
 import { dirname, join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseTlpdb } from './tlpdb.mjs';
-import { resolveTiers } from './resolve.mjs';
+import { extractRelease, resolveTiers } from './resolve.mjs';
+
+/**
+ * Schema version of the tier MANIFEST SIDE-CHANNEL (`--manifest`, below). This is
+ * a BUILD-INTERNAL file, NOT the shipped `dist/manifest.json`: it carries exactly
+ * the tlpdb-derived facts `build/manifest/gen-assets.mjs` needs to populate the
+ * top-level integrity manifest's `bundles[].provides` + `texliveSnapshot` (M4
+ * item 4). Keeping it here — where the tlpdb is already parsed + resolved for
+ * staging — lets gen-assets stay a pure dist-inventory tool that never re-parses
+ * the tlpdb. Bump on an incompatible shape change.
+ */
+export const MANIFEST_SIDECAR_VERSION = 1;
 
 function fail(msg) {
   console.error(`\n!! [stage-tiers] FAIL: ${msg}`);
@@ -154,17 +165,51 @@ export function stageTree(installDir, outDir, resolution) {
   return { order, totals, skipped };
 }
 
+/**
+ * Build the tier MANIFEST SIDE-CHANNEL (`build/manifest/gen-assets.mjs` reads
+ * this to fill the shipped manifest's `bundles[].provides` + `texliveSnapshot`).
+ * Pure + deterministic: `provides` is the tier's full claimed PACKAGE-NAME list
+ * (already sorted by the resolver, disjoint across tiers) — the "provided package
+ * names" of DESIGN §3/§7, INCLUDING font-only packages (e.g. `fandol`) that ship
+ * no `.sty`, which the resolver's finer `provides` MAP (package→`.sty`/`.cls`)
+ * omits. Only the named tiers (the ones actually PACKAGED into bundles) are
+ * emitted, so the side-channel matches what `dist/` ships.
+ *
+ * @param {import('./resolve.mjs').Resolution} resolution
+ * @param {string|null} release           TL release id (extractRelease), or null.
+ * @param {ReadonlyArray<string>} tierNames  tier names to include, in order.
+ * @returns {{schemaVersion:number, texlive:{release:(string|null), tlpdbRevision:(number|null)}, tiers:Array<{name:string, provides:string[]}>}}
+ */
+export function manifestSidecar(resolution, release, tierNames) {
+  const byName = new Map(resolution.tiers.map((t) => [t.tier, t]));
+  const tiers = [];
+  for (const name of tierNames) {
+    const t = byName.get(name);
+    if (t === undefined) continue;
+    // t.packages is the resolver's sorted, disjoint content-package list for the
+    // tier (Collections/Schemes excluded — they carry no runfiles). Copy it as
+    // the bundle's provided-package index.
+    tiers.push({ name, provides: [...t.packages] });
+  }
+  return {
+    schemaVersion: MANIFEST_SIDECAR_VERSION,
+    texlive: { release: release ?? null, tlpdbRevision: resolution.tlpdbRevision },
+    tiers,
+  };
+}
+
 // --- CLI ---------------------------------------------------------------------
 function parseArgs(argv) {
-  const opts = { install: null, tlpdb: null, out: null, json: null };
+  const opts = { install: null, tlpdb: null, out: null, json: null, manifest: null };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--install') opts.install = argv[++i];
     else if (a === '--tlpdb') opts.tlpdb = argv[++i];
     else if (a === '--out') opts.out = argv[++i];
     else if (a === '--json') opts.json = argv[++i];
+    else if (a === '--manifest') opts.manifest = argv[++i];
     else if (a === '-h' || a === '--help') {
-      console.log('Usage: node stage-tiers.mjs --install DIR --tlpdb PATH --out DIR [--json OUT]');
+      console.log('Usage: node stage-tiers.mjs --install DIR --tlpdb PATH --out DIR [--json OUT] [--manifest OUT]');
       process.exit(0);
     } else fail(`unknown argument: ${a}`);
   }
@@ -245,6 +290,19 @@ function main() {
     };
     writeFileSync(opts.json, `${JSON.stringify(doc, null, 2)}\n`);
     note(`wrote ${opts.json}`);
+  }
+
+  // Manifest side-channel for gen-assets.mjs: per-PACKAGED-tier provided-package
+  // index + TL snapshot id (release + tlpdb revision). Deterministic (sorted
+  // provides, no timestamps); gen-assets reads it to populate the shipped
+  // dist/manifest.json without re-parsing the tlpdb (M4 item 4).
+  if (opts.manifest) {
+    const sidecar = manifestSidecar(resolution, extractRelease(db), packaged);
+    writeFileSync(opts.manifest, `${JSON.stringify(sidecar, null, 2)}\n`);
+    note(
+      `wrote ${opts.manifest} (release ${sidecar.texlive.release ?? '?'}, rev ` +
+        `${sidecar.texlive.tlpdbRevision ?? '?'}; ${sidecar.tiers.map((t) => `${t.name}=${t.provides.length}`).join(' ')})`,
+    );
   }
 }
 

@@ -247,6 +247,26 @@ export function extractRevision(db) {
   return null;
 }
 
+/**
+ * The TL RELEASE year, read from `00texlive.config`'s `depend release/YYYY` — the
+ * release number "as used in the installer" (its own longdesc). This is the TL
+ * snapshot's self-declared release (e.g. "2026"), the authoritative in-tlpdb
+ * counterpart to the pinned `[texlive-*-2026]` id; the manifest carries it in
+ * `texliveSnapshot`. Returned as a STRING (a release id, not an arithmetic
+ * quantity — kept verbatim so a hypothetical non-numeric TL release survives).
+ * @param {Map<string, import('./tlpdb.mjs').TlpdbPackage>} db
+ * @returns {string|null}
+ */
+export function extractRelease(db) {
+  const cfg = db.get('00texlive.config');
+  if (!cfg) return null;
+  for (const dep of cfg.depends) {
+    const m = /^release\/(.+)$/.exec(dep);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 const MiB = 1024 * 1024;
 const fmtMiB = (bytes) => `${(bytes / MiB).toFixed(1)} MiB`;
 

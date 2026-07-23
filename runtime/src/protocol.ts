@@ -137,11 +137,11 @@ export type AutoOff = 'auto' | 'off';
 
 /**
  * A role an asset plays in the pipeline. These six literals are exactly the
- * roles item 4's generator (`build/manifest/gen-assets.mjs`, schemaVersion 1)
- * emits — one per artifact kind in a built `dist/`. The `(string & {})` arm
- * keeps them as autocomplete hints while leaving the set OPEN: item 4 OWNS the
- * schema, this protocol only carries it, so M4's integrity manifest can add
- * roles (e.g. on-demand bundle tiers) without a protocol change. (The
+ * roles the manifest generator (`build/manifest/gen-assets.mjs`) emits — one per
+ * artifact kind in a built `dist/`. The `(string & {})` arm keeps them as
+ * autocomplete hints while leaving the set OPEN: the generator OWNS the schema,
+ * this protocol only carries it, so a future manifest can add roles (e.g. new
+ * on-demand bundle tiers) without a protocol change. (The
  * `glue-pipeline` / `glue-worker` roles were retired at M2 item 3 when the
  * vendored busytex worker/pipeline glue was dropped from `dist/`.)
  */
@@ -155,15 +155,15 @@ export type AssetRole =
   | (string & {});
 
 /**
- * One entry of the parsed `assets.json` inventory.
+ * One entry of the parsed asset inventory (`manifest.json` / `assets.json`).
  *
- * Item 4 OWNS this schema; the protocol only carries the inventory from client
- * to worker. Its schemaVersion-1 generator emits all four of `path`, `bytes`,
- * `sha256`, `role` on EVERY entry — but only `path` is required here (the one
- * field the worker truly needs to locate an asset); the rest are optional so a
- * hand-written minimal file still validates. The index signature keeps the shape
- * forward-compatible so a later schema (e.g. the M4 integrity manifest) can add
- * per-entry fields without churning the protocol.
+ * The manifest generator OWNS this schema; the protocol only carries the
+ * inventory from client to worker. The generator emits all four of `path`,
+ * `bytes`, `sha256`, `role` on EVERY entry — but only `path` is required here
+ * (the one field the worker truly needs to locate an asset); the rest are
+ * optional so a hand-written minimal file still validates. The index signature
+ * keeps the shape forward-compatible so a later schema can add per-entry fields
+ * without churning the protocol.
  *
  * `url` is NOT a generator field: it is the client's `locateAsset(name)` override
  * (DESIGN.md §5.1), injected per-entry by `createTypesetter` before the inventory
@@ -184,18 +184,58 @@ export interface AssetEntry {
 }
 
 /**
- * The parsed `assets.json` inventory (DESIGN.md §5.1, §5.4). Loosely typed on
- * purpose — see {@link AssetEntry}. `schemaVersion` is item 4's own schema stamp
- * (1 for the M1 generator; the M4 integrity manifest bumps it) and `generated`
- * its optional deterministic ISO build stamp (present iff the build sets
- * `SOURCE_DATE_EPOCH`); both are optional so a hand-written minimal
- * `{ assets: [] }` still validates. The index signature absorbs any additional
- * top-level fields a later schema adds (M4: texlive snapshot id, per-bundle
- * provided-package indexes) without a protocol change.
+ * The TeX Live snapshot identity carried by the schemaVersion-2 manifest
+ * (`manifest.json`, DESIGN.md §7). `release`/`tlpdbRevision` are the tlpdb's
+ * self-declared identity (from `00texlive.config`); `sourceDateEpoch`/`freeze`
+ * come from the pinned build epoch (`freeze` is the snapshot day, `YYYY-MM-DD`).
+ * Every field is optional — the generator omits any whose source is absent — and
+ * the index signature keeps it forward-compatible. Informational for hosts
+ * (verify an install against a known snapshot); the runtime does not gate on it.
+ */
+export interface TexliveSnapshot {
+  readonly release?: string;
+  readonly tlpdbRevision?: number;
+  readonly sourceDateEpoch?: number;
+  readonly freeze?: string;
+  readonly [field: string]: unknown;
+}
+
+/**
+ * One entry of the manifest's per-bundle provided-package index (DESIGN.md §5.4,
+ * §7). A REAL tier carries `files` (its dist `<name>.js`/`.data`), `bytes`, and
+ * `provides` (the sorted, disjoint list of TeX Live package names it ships — the
+ * §5.4 resolution maps a package name to the bundle that provides it). An ALIAS
+ * bundle (a byte-identical back-compat copy such as `texlive-basic`) instead
+ * carries only `aliasOf` naming its canonical tier, so a host never mistakes it
+ * for a distinct tier. Only `name` is required; the rest are optional/loosely
+ * typed so a hand-written or future-schema manifest still validates.
+ */
+export interface BundleManifestEntry {
+  readonly name: string;
+  readonly files?: readonly string[];
+  readonly bytes?: number;
+  readonly provides?: readonly string[];
+  readonly aliasOf?: string;
+  readonly [field: string]: unknown;
+}
+
+/**
+ * The parsed asset manifest (DESIGN.md §5.1, §5.4, §7). Loosely typed on purpose
+ * — see {@link AssetEntry}. `schemaVersion` is item 4's own schema stamp (1 for
+ * the M1 `assets.json` inventory; 2 for the M4 `manifest.json` integrity
+ * manifest) and `generated` its optional deterministic ISO build stamp (present
+ * iff the build sets `SOURCE_DATE_EPOCH`). The schemaVersion-2 superset ADDS
+ * `texliveSnapshot`, `engines` (the multicall program set), and `bundles` (the
+ * per-bundle provided-package index) — all optional, so the schemaVersion-1
+ * subset and a hand-written minimal `{ assets: [] }` still validate. The index
+ * signature absorbs any further top-level fields a later schema adds.
  */
 export interface AssetsInventory {
   readonly schemaVersion?: number;
   readonly generated?: string;
+  readonly texliveSnapshot?: TexliveSnapshot;
+  readonly engines?: readonly string[];
+  readonly bundles?: readonly BundleManifestEntry[];
   readonly assets: readonly AssetEntry[];
   readonly [field: string]: unknown;
 }
@@ -221,6 +261,37 @@ export interface AssetsConfig {
   readonly baseUrl: string;
   readonly inventory: AssetsInventory;
   readonly bundles: BundleSelection;
+}
+
+/**
+ * Which bundle provides `packageName`, per the manifest's per-bundle `provides`
+ * index (DESIGN.md §5.4 / §7). Returns the bundle NAME, or `undefined` when no
+ * bundle lists it (or the manifest carries no `bundles`). The lookup is
+ * case-INSENSITIVE — a `\usepackage{xeCJK}` argument resolves against the tlpdb
+ * package name `xecjk` — and ALIAS bundles (those with `aliasOf`) are skipped so
+ * a package resolves to its canonical tier, never a back-compat copy. Since tiers
+ * are disjoint, at most one real bundle provides a given name; iteration follows
+ * manifest order for a deterministic result regardless.
+ *
+ * This is a pure DATA accessor exposing the index M4 items 6–7 (the §5.4 static
+ * `\usepackage` scan and the missing-file retry) will consume to select a bundle.
+ * It performs NO loading and has no side effects — resolution/mounting is those
+ * items' job, kept out of the protocol layer.
+ */
+export function bundleProvidingPackage(
+  inventory: AssetsInventory,
+  packageName: string,
+): string | undefined {
+  const bundles = inventory.bundles;
+  if (bundles === undefined || packageName.length === 0) return undefined;
+  const want = packageName.toLowerCase();
+  for (const b of bundles) {
+    if (b.aliasOf !== undefined || b.provides === undefined) continue;
+    for (const p of b.provides) {
+      if (p.toLowerCase() === want) return b.name;
+    }
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -779,6 +850,38 @@ function parseAssetEntry(x: unknown): AssetEntry | null {
   };
 }
 
+/** Rebuild one manifest bundle entry: `name` required; known metadata carried when validly typed, extras dropped. */
+function parseBundleManifestEntry(x: unknown): BundleManifestEntry | null {
+  if (!isPlainRecord(x)) return null;
+  if (!isNonEmptyString(x['name'])) return null;
+  const files = x['files'];
+  const bytes = x['bytes'];
+  const provides = x['provides'];
+  const aliasOf = x['aliasOf'];
+  return {
+    name: x['name'],
+    ...(isStringArray(files) ? { files: [...files] } : {}),
+    ...(isInt(bytes) && bytes >= 0 ? { bytes } : {}),
+    ...(isStringArray(provides) ? { provides: [...provides] } : {}),
+    ...(isNonEmptyString(aliasOf) ? { aliasOf } : {}),
+  };
+}
+
+/** Rebuild the manifest's texlive snapshot: a plain record whose known fields are carried when validly typed (may be empty). */
+function parseTexliveSnapshot(x: unknown): TexliveSnapshot | null {
+  if (!isPlainRecord(x)) return null;
+  const release = x['release'];
+  const tlpdbRevision = x['tlpdbRevision'];
+  const sourceDateEpoch = x['sourceDateEpoch'];
+  const freeze = x['freeze'];
+  return {
+    ...(isNonEmptyString(release) ? { release } : {}),
+    ...(isInt(tlpdbRevision) ? { tlpdbRevision } : {}),
+    ...(isInt(sourceDateEpoch) ? { sourceDateEpoch } : {}),
+    ...(isNonEmptyString(freeze) ? { freeze } : {}),
+  };
+}
+
 function parseAssetsInventory(x: unknown): AssetsInventory | null {
   if (!isPlainRecord(x)) return null;
   const rawAssets = x['assets'];
@@ -791,9 +894,30 @@ function parseAssetsInventory(x: unknown): AssetsInventory | null {
   }
   const schemaVersion = x['schemaVersion'];
   const generated = x['generated'];
+  // schemaVersion-2 (manifest.json) additions. Informational / on-demand data —
+  // NOT load-critical (the worker still loads by role from `assets`), so a
+  // malformed field is dropped rather than failing the whole inventory: `bundles`
+  // keeps only well-formed entries, `engines` is carried only as a string[], and
+  // `texliveSnapshot` only as a record. This keeps the trust boundary total while
+  // staying forward-compatible with a hand-written or future-schema manifest.
+  const engines = x['engines'];
+  const rawBundles = x['bundles'];
+  const rawSnapshot = x['texliveSnapshot'];
+  let bundles: BundleManifestEntry[] | undefined;
+  if (Array.isArray(rawBundles)) {
+    bundles = [];
+    for (const raw of rawBundles) {
+      const entry = parseBundleManifestEntry(raw);
+      if (entry !== null) bundles.push(entry);
+    }
+  }
+  const snapshot = parseTexliveSnapshot(rawSnapshot);
   return {
     ...(isInt(schemaVersion) ? { schemaVersion } : {}),
     ...(typeof generated === 'string' ? { generated } : {}),
+    ...(snapshot !== null ? { texliveSnapshot: snapshot } : {}),
+    ...(isStringArray(engines) ? { engines: [...engines] } : {}),
+    ...(bundles !== undefined ? { bundles } : {}),
     assets,
   };
 }

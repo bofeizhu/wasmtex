@@ -5,6 +5,44 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M4 item 4: manifest.json (schemaVersion 2)
+
+**Done, reviewer-approved (no blockers).** `build/manifest/gen-assets.mjs`
+now emits `dist/manifest.json` (the DESIGN §7 name) as a schemaVersion-2
+SUPERSET: the per-file inventory + `texliveSnapshot` ({release 2026,
+tlpdbRevision 78233, sourceDateEpoch, freeze 2026-03-01}, from the real
+tlpdb `00texlive.config` + SOURCE_DATE_EPOCH), a static `engines` list
+(the multicall applet set), and a per-bundle `bundles` index with
+`provides` (package names) — core 157, academic 2414, `texlive-basic`
+honestly marked `aliasOf: core` (detected by equal .data sha256).
+`assets.json` stays schemaVersion 1 (byte-shape identical to 0.0.1) so
+old consumers are unaffected. The resolver data reaches gen-assets via a
+`build/stage/tiers.json` side-channel that stage-tiers emits during
+staging (gen-assets never re-parses the tlpdb); wired into the Makefile +
+both drivers; manifest.json excluded from SHA256SUMS (can't hash itself).
+
+**Runtime:** `parseAssetsInventory` (the trust boundary — the manifest is
+fetched from the host-controlled asset URL) validates + carries the new
+fields, rebuilding them into fresh literals (no `__proto__`/extra-key
+leakage; malformed entries dropped). New exported `bundleProvidingPackage`
+(case-insensitive, alias-skipping) is the §5.4 accessor items 6–7 will
+use. `client.ts` prefers manifest.json, falls back to assets.json (cold-
+start / storage-less contract unchanged). 57 build-side + 195 runtime
+tests green, typecheck clean, manifest byte-identical on rerun.
+
+**Review fixes folded:** (1) manifest.json added to the gate REQUIRED
+lists (conformance/run.mjs + artifacts-build.yml assert) — it's now the
+runtime's PREFERRED artifact, so a regression dropping it must fail the
+gate. (2) A sidecar `schemaVersion` guard in gen-assets. (3) **Item-6
+policy pinned** (load-bearing, in M4.md): `provides` is a package-NAME
+index, so item 6's `\usepackage` scan must treat an UNMATCHED name as
+"unknown → do nothing" and let item 7's missing-file retry handle it —
+NOT "not-in-core ⇒ load academic" (that would download the 496 MB tier
+for core-served docs like longtable/graphicx, whose .sty names aren't
+provided-package names). A filename→bundle index is only needed once a
+2nd on-demand tier (`full`) exists. Deferred-trivial: stale "assets.json"
+doc/error strings; a couple more malformed-field test pins.
+
 ## 2026-07-24 — M4 item 3: multi-bundle build (core + academic)
 
 **Done, natively validated.** One combined install → two DISJOINT

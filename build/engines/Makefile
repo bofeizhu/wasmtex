@@ -640,12 +640,14 @@ build/texlive-%.txt: build/texlive-%.profile source/texmfrepo.txt
 # their own package files.
 
 # Stage the pruned combined install into build/stage/<tier>/ (+ build/stage/
-# tiers.txt, the packaged-tier list the drivers read). Reruns if the install, the
-# resolver or the tier definition changes. --tlpdb is the ISO-staged pinned db in
-# the work tree; rm -rf keeps the split clean across reruns.
+# tiers.txt, the packaged-tier list the drivers read; + build/stage/tiers.json,
+# the gen-assets side-channel — per-bundle provided-package names + TL snapshot
+# id, so the dist stage builds manifest.json without re-parsing the tlpdb).
+# Reruns if the install, the resolver or the tier definition changes. --tlpdb is
+# the ISO-staged pinned db in the work tree; rm -rf keeps the split clean.
 build/stage.stamp: build/texlive-tiers.txt bundles/stage-tiers.mjs bundles/resolve.mjs bundles/tiers.mjs bundles/tlpdb.mjs
 	rm -rf build/stage
-	$(NODE) bundles/stage-tiers.mjs --install build/texlive-tiers --tlpdb source/texmfrepo/tlpkg/texlive.tlpdb --out build/stage
+	$(NODE) bundles/stage-tiers.mjs --install build/texlive-tiers --tlpdb source/texmfrepo/tlpkg/texlive.tlpdb --out build/stage --manifest build/stage/tiers.json
 	touch $@
 
 # Only the BASE tier (core) carries the shared /etc/passwd + /bin/busytex; adding

@@ -583,11 +583,12 @@ describe('client — onAssetProgress (coarse per-phase)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// assets.json fetch path (no inventory supplied)
+// manifest fetch path (no inventory supplied) — prefer manifest.json, fall back
+// to assets.json for a pre-M4 asset tree (DESIGN.md §7).
 // ---------------------------------------------------------------------------
 
-describe('client — assets.json fetch path', () => {
-  it('fetches assets.json from the base URL, honoring locateAsset(assets.json)', async () => {
+describe('client — manifest fetch path', () => {
+  it('prefers manifest.json from the base URL, honoring locateAsset(manifest.json)', async () => {
     const fetched: string[] = [];
     const fetchImpl: FetchLike = async (url) => {
       fetched.push(url);
@@ -599,14 +600,15 @@ describe('client — assets.json fetch path', () => {
       bundles: BUNDLES,
       workerFactory: factory,
       fetchImpl,
-      locateAsset: (name) => (name === 'assets.json' ? 'wasmtex-assets://custom/manifest.json' : undefined),
+      locateAsset: (name) => (name === 'manifest.json' ? 'wasmtex-assets://custom/manifest.json' : undefined),
     });
+    // manifest.json succeeds first, so assets.json is never tried.
     expect(fetched).toEqual(['wasmtex-assets://custom/manifest.json']);
     expect(workers[0]!.init().assets.inventory.assets.map((a) => a.path)).toContain('busytex.wasm');
     await tex.dispose();
   });
 
-  it('defaults the assets.json URL to base + assets.json', async () => {
+  it('defaults the manifest URL to base + manifest.json', async () => {
     const fetched: string[] = [];
     const fetchImpl: FetchLike = async (url) => {
       fetched.push(url);
@@ -614,11 +616,26 @@ describe('client — assets.json fetch path', () => {
     };
     const { factory } = recordingFactory({ autoInit: true });
     const tex = await createTypesetter({ assetsBaseUrl: '/assets/', bundles: BUNDLES, workerFactory: factory, fetchImpl });
-    expect(fetched).toEqual(['/assets/assets.json']);
+    expect(fetched).toEqual(['/assets/manifest.json']);
     await tex.dispose();
   });
 
-  it('surfaces an HTTP failure as FatalError(init-failed)', async () => {
+  it('falls back to assets.json when manifest.json is absent (back-compat)', async () => {
+    const fetched: string[] = [];
+    const fetchImpl: FetchLike = async (url) => {
+      fetched.push(url);
+      if (url.endsWith('manifest.json')) return { ok: false, status: 404, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => INVENTORY };
+    };
+    const { workers, factory } = recordingFactory({ autoInit: true });
+    const tex = await createTypesetter({ assetsBaseUrl: '/assets/', bundles: BUNDLES, workerFactory: factory, fetchImpl });
+    // Preferred name tried first, then the alias — in order.
+    expect(fetched).toEqual(['/assets/manifest.json', '/assets/assets.json']);
+    expect(workers[0]!.init().assets.inventory.assets.map((a) => a.path)).toContain('busytex.wasm');
+    await tex.dispose();
+  });
+
+  it('surfaces a total miss (both 404) as FatalError(init-failed) naming what was tried', async () => {
     const fetchImpl: FetchLike = async () => ({ ok: false, status: 404, json: async () => ({}) });
     const { factory } = recordingFactory();
     const err = await createTypesetter({ assetsBaseUrl: '/dist', bundles: BUNDLES, workerFactory: factory, fetchImpl }).catch(
@@ -626,6 +643,8 @@ describe('client — assets.json fetch path', () => {
     );
     expect(err).toBeInstanceOf(FatalError);
     expect((err as FatalError).code).toBe('init-failed');
+    expect((err as FatalError).message).toContain('manifest.json');
+    expect((err as FatalError).message).toContain('assets.json');
   });
 });
 

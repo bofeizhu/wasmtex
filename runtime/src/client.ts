@@ -860,32 +860,53 @@ function assembleResult(message: ResultMessage): TypesetResult {
 // createTypesetter (DESIGN.md §5.1 entry point)
 // ---------------------------------------------------------------------------
 
-/** Resolve the inventory: use the supplied one, or fetch `assets.json` from the base URL. */
+/** The manifest file names the client fetches, in PREFERENCE order (DESIGN.md §7). */
+const MANIFEST_NAMES = ['manifest.json', 'assets.json'] as const;
+
+/**
+ * Resolve the inventory: use the supplied one, or fetch it from the base URL.
+ * PREFERS `manifest.json` (the DESIGN §7 schemaVersion-2 integrity manifest, which
+ * carries the per-bundle `provides` index and TL snapshot id) and FALLS BACK to
+ * `assets.json` (the schemaVersion-1 inventory alias) so an asset tree that
+ * predates the manifest still boots — just without the on-demand resolution data.
+ * The first candidate that fetches AND parses wins; every candidate's failure is
+ * collected so a total miss reports what was tried.
+ */
 async function resolveInventory(options: CreateTypesetterOptions): Promise<AssetsInventory> {
   if (options.inventory) return options.inventory;
-  const name = 'assets.json';
-  const override = options.locateAsset?.(name);
-  const url = typeof override === 'string' && override.length > 0 ? override : joinLocation(options.assetsBaseUrl, name);
   const fetchImpl = options.fetchImpl ?? (globalThis as { fetch?: FetchLike }).fetch;
   if (typeof fetchImpl !== 'function') {
     throw new TypesetInputError(
-      'createTypesetter: no fetch is available to load assets.json; pass options.inventory or options.fetchImpl',
+      'createTypesetter: no fetch is available to load the asset manifest; pass options.inventory or options.fetchImpl',
     );
   }
-  let response: FetchResponseLike;
-  try {
-    response = await fetchImpl(url);
-  } catch (error) {
-    throw new FatalError('init-failed', `failed to fetch ${url}: ${describeError(error)}`, url);
+  const failures: string[] = [];
+  for (const name of MANIFEST_NAMES) {
+    const override = options.locateAsset?.(name);
+    const url = typeof override === 'string' && override.length > 0 ? override : joinLocation(options.assetsBaseUrl, name);
+    let response: FetchResponseLike;
+    try {
+      response = await fetchImpl(url);
+    } catch (error) {
+      failures.push(`${url}: ${describeError(error)}`);
+      continue;
+    }
+    if (!response.ok) {
+      failures.push(`${url}: HTTP ${response.status}`);
+      continue;
+    }
+    try {
+      return (await response.json()) as AssetsInventory;
+    } catch (error) {
+      failures.push(`${url}: invalid JSON (${describeError(error)})`);
+      continue;
+    }
   }
-  if (!response.ok) {
-    throw new FatalError('init-failed', `failed to fetch ${url}: HTTP ${response.status}`, url);
-  }
-  try {
-    return (await response.json()) as AssetsInventory;
-  } catch (error) {
-    throw new FatalError('init-failed', `assets.json at ${url} is not valid JSON: ${describeError(error)}`, url);
-  }
+  throw new FatalError(
+    'init-failed',
+    `failed to load an asset manifest (tried ${MANIFEST_NAMES.join(', ')}): ${failures.join('; ')}`,
+    joinLocation(options.assetsBaseUrl, MANIFEST_NAMES[0]),
+  );
 }
 
 /** Choose the worker factory: explicit, else the default `new Worker(workerUrl)` (classic). */

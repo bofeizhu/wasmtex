@@ -42,7 +42,7 @@ const HARNESS = join(REPO, 'runtime', 'dist', 'node-harness.mjs');
 
 // Engine artifacts the runtime needs to actually compile (mirrors the runtime
 // integration test's REQUIRED list). Their absence is a clean skip, not a fail.
-const REQUIRED = ['assets.json', 'busytex.js', 'busytex.wasm', 'texlive-basic.js', 'texlive-basic.data'];
+const REQUIRED = ['manifest.json', 'assets.json', 'busytex.js', 'busytex.wasm', 'texlive-basic.js', 'texlive-basic.data'];
 
 // Extensions read as UTF-8 text; anything else (e.g. a future CJK seed's font)
 // is passed to the runtime as raw bytes.

@@ -454,7 +454,7 @@ jobs:
       - name: Assert the engine artifact is real (no silent green-skip)
         run: |
           missing=0
-          for f in busytex.wasm busytex.js texlive-basic.js texlive-basic.data assets.json; do
+          for f in busytex.wasm busytex.js texlive-basic.js texlive-basic.data assets.json manifest.json; do
             [ -f "dist/$f" ] || { echo "!! dist/$f missing after download" >&2; missing=1; }
           done
           if [ "$missing" -ne 0 ]; then

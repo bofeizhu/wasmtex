@@ -258,16 +258,19 @@ do_dist() {
 
   # Deterministic integrity list (sorted, relative paths). Linux: sha256sum —
   # byte-identical output format to the native driver's `shasum -a 256`, so the
-  # SHA256SUMS file is comparable across the native and container builds.
-  ( cd "$DIST" && find . -type f ! -name SHA256SUMS ! -name assets.json | LC_ALL=C sort | xargs sha256sum > SHA256SUMS )
+  # SHA256SUMS file is comparable across the native and container builds. The two
+  # generator outputs (manifest.json, assets.json) are excluded (not payload; a
+  # self-reference fixpoint otherwise).
+  ( cd "$DIST" && find . -type f ! -name SHA256SUMS ! -name manifest.json ! -name assets.json | LC_ALL=C sort | xargs sha256sum > SHA256SUMS )
 
-  # Data-driven asset inventory: dist/assets.json (M1 item 4). Emitted AFTER
-  # SHA256SUMS and BEFORE the verify gate — a mis-classified artifact or a hash
-  # mismatch must fail the BUILD, not a downstream consumer. generated= is pinned
-  # off SOURCE_DATE_EPOCH, so re-running this stage yields a byte-identical
-  # assets.json (and one matching the native build's).
-  banner "dist: generate assets.json (data-driven inventory)"
-  node "$MANIFEST/gen-assets.mjs" "$DIST"
+  # Integrity manifest: dist/manifest.json (schemaVersion 2, DESIGN §7) + the
+  # dist/assets.json v1 alias (M4 item 4). Emitted AFTER SHA256SUMS and BEFORE the
+  # verify gate — a mis-classified artifact or a hash mismatch must fail the BUILD,
+  # not a downstream consumer. --tiers is the stage-tiers side-channel (per-bundle
+  # provides + TL snapshot id); generated=/snapshot are pinned off SOURCE_DATE_EPOCH,
+  # so re-running this stage is byte-identical (and matches the native build's).
+  banner "dist: generate manifest.json + assets.json (integrity manifest)"
+  node "$MANIFEST/gen-assets.mjs" "$DIST" --tiers "$BUILD/build/stage/tiers.json"
 
   banner "dist inventory"
   ( cd "$DIST" && ls -la . formats && echo && cat SHA256SUMS )

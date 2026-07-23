@@ -25,7 +25,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
-import { stageTree } from './stage-tiers.mjs';
+import { manifestSidecar, stageTree } from './stage-tiers.mjs';
 
 let root;
 let installDir;
@@ -128,5 +128,46 @@ describe('stageTree — non-regular entries', () => {
     assert.ok(!existsSync(staged('core', 'texmf-dist/link.sty')));
     assert.equal(skipped.length, 1);
     assert.match(skipped[0], /link\.sty$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// manifestSidecar — the gen-assets side-channel builder (M4 item 4).
+// ---------------------------------------------------------------------------
+
+/** A stub {@link Resolution} with per-tier package lists + a tlpdb revision. */
+function resolutionWith(revision, tierPackages) {
+  return {
+    tlpdbRevision: revision,
+    tiers: Object.entries(tierPackages).map(([tier, packages]) => ({ tier, packages })),
+  };
+}
+
+describe('manifestSidecar — provided-package index + snapshot facts', () => {
+  test('emits per-tier provides (=packages) for only the named tiers, in order', () => {
+    const r = resolutionWith(78233, {
+      core: ['amsmath', 'latex'],
+      academic: ['fandol', 'siunitx'],
+    });
+    const sc = manifestSidecar(r, '2026', ['core', 'academic']);
+    assert.equal(sc.schemaVersion, 1);
+    assert.deepEqual(sc.texlive, { release: '2026', tlpdbRevision: 78233 });
+    assert.deepEqual(sc.tiers, [
+      { name: 'core', provides: ['amsmath', 'latex'] },
+      { name: 'academic', provides: ['fandol', 'siunitx'] },
+    ]);
+  });
+
+  test('carries font-only packages (e.g. fandol) that ship no .sty — the full package list', () => {
+    const r = resolutionWith(78233, { academic: ['ctex', 'fandol', 'xecjk'] });
+    const sc = manifestSidecar(r, '2026', ['academic']);
+    assert.ok(sc.tiers[0].provides.includes('fandol'));
+  });
+
+  test('skips a requested tier the resolution does not know, and null release becomes null', () => {
+    const r = resolutionWith(78233, { core: ['latex'] });
+    const sc = manifestSidecar(r, null, ['core', 'ghost']);
+    assert.deepEqual(sc.tiers.map((t) => t.name), ['core']);
+    assert.equal(sc.texlive.release, null);
   });
 });

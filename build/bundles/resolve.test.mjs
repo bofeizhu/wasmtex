@@ -23,6 +23,7 @@ import { parseTlpdb } from './tlpdb.mjs';
 import { TIERS } from './tiers.mjs';
 import {
   defaultTlpdbPath,
+  extractRelease,
   extractRevision,
   isNonPackageDepend,
   resolveTiers,
@@ -203,17 +204,41 @@ const tierOf = (name) => R.tiers.find((t) => t.tier === name);
 const BASELINE = {
   packageCount: 8422,
   revision: 78233,
+  release: '2026',
   core: { collections: 3, packages: 157, files: 6106, sizeBlocks: 25809 },
   academic: { collections: 7, packages: 2414, files: 31363, sizeBlocks: 190751 },
   totalFiles: 37469,
   totalSizeBlocks: 216560,
 };
 
+describe('extractRevision / extractRelease — 00texlive.config parsing (synthetic)', () => {
+  test('reads `depend revision/N` and `depend release/YYYY`', () => {
+    const m = db([
+      {
+        name: '00texlive.config',
+        category: 'TLCore',
+        depends: ['container_format/xz', 'frozen/0', 'minrelease/2016', 'release/2026', 'revision/78233'],
+      },
+    ]);
+    assert.equal(extractRevision(m), 78233);
+    assert.equal(extractRelease(m), '2026');
+  });
+
+  test('returns null when the config stanza or the fields are absent', () => {
+    assert.equal(extractRevision(db([])), null);
+    assert.equal(extractRelease(db([])), null);
+    const noFields = db([{ name: '00texlive.config', category: 'TLCore', depends: ['frozen/0'] }]);
+    assert.equal(extractRevision(noFields), null);
+    assert.equal(extractRelease(noFields), null);
+  });
+});
+
 describe('resolveTiers — real pinned tlpdb', { skip: !HAVE_TLPDB }, () => {
-  test('tlpdb parsed and snapshot revision extracted', () => {
+  test('tlpdb parsed and snapshot revision + release extracted', () => {
     assert.equal(R.packageCount, BASELINE.packageCount);
     assert.equal(R.tlpdbRevision, BASELINE.revision);
     assert.equal(extractRevision(REAL_DB), BASELINE.revision);
+    assert.equal(extractRelease(REAL_DB), BASELINE.release);
   });
 
   test('assignment is DISJOINT (no file in two tiers, no cross-tier collision)', () => {

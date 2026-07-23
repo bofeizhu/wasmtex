@@ -5,6 +5,43 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M4 item 2: tlpdb parser + tier map (build/bundles/)
+
+**Done.** The bundle-tiering foundation: `build/bundles/tlpdb.mjs` (a
+zero-dep parser of TeX Live's `texlive.tlpdb`), `tiers.mjs` (the
+committed core/academic tier definition as editable data — N-tier
+general), `resolve.mjs` (first-tier-wins DISJOINT `file → tier`
+resolution + per-tier `provides` index + CLI), and 32 `node:test` tests.
+No build/container change — pure local tooling.
+
+**Verified against ground truth** (pinned TL2026 tlpdb, rev 78233, 8422
+packages): all 10 plan collection names + `fandol` exist verbatim — the
+tier definitions were accurate. Real per-tier numbers: **core 157 pkgs /
+6106 files / ~100.8 MiB** (est), **academic 2414 pkgs / 31363 files /
+~745 MiB** (est). The est is size-blocks×4096, a conservative UPPER
+bound (per-file ceil-rounded); today's core-equivalent `texlive-basic`
+packs ~2:1 (100 MiB est → 52.7 MB real), so **academic likely ~300–400
+MB packed** — large but on-demand-only. `collection-latexextra` (1652
+deps) + `collection-langchinese` dominate academic. Disjointness proven
+two independent ways (0 cross-tier file collisions).
+
+**Review (approve + fixes folded).** The tests weren't run by any CI —
+wired `node --test build/bundles/*.test.mjs` into build.yml's build job
+(was a bare placeholder; the synthetic half is CI-runnable, the
+real-tlpdb groups skip green without the ISO). Comment nits fixed
+(`node --test build/bundles/` errors on Node 24 → name files
+explicitly; a stale test pointer). Deferred to item 3: a full
+core-containment test (the invariant was PROVEN in review by diffing
+resolved core against `dist/texlive-basic.js`'s file_packager metadata —
+0 unexplained content files, the 49 extras are install-generated); and
+the `resolve.mjs` hardcoded `busytex-2026` default path (same
+annual-rebase-drift class as the old clean-artifacts bug — env-
+overridable, derive from pins.lock later).
+
+**Next (item 3) needs a user call first:** materializing `academic`
+(~300–400 MB) is the first CI-container-rebuild cost — surfaced to the
+user before triggering.
+
 ## 2026-07-23 — M3 COMPLETE (Build logistics & CI): loop STOP-target reached
 
 **Milestone accepted.** The tester independently verified the revised

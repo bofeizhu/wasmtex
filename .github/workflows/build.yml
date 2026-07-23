@@ -28,18 +28,20 @@ on:
   pull_request:
 
 jobs:
-  # Placeholder check kept on every push/PR. The canonical containerized artifact
-  # pipeline is .github/workflows/artifacts-build.yml (M3 item 7, slice B1), which
-  # also hosts the functional gates (slice B2). This stub keeps a `build` status
-  # present without duplicating that pipeline.
+  # Runs the zero-dep unit tests for build-side TOOLING (build/bundles/ — the M4
+  # tlpdb parser + tier resolver; future build/ tooling lands here too). These are
+  # node:test suites with no npm deps; the real-tlpdb groups skip GREEN when the
+  # ISO-staged tlpdb is absent (as it is on a stock CI checkout), so only the
+  # synthetic invariants run here — enough to catch a parser/resolver regression.
+  # The canonical containerized artifact pipeline + functional gates live in
+  # .github/workflows/artifacts-build.yml (M3 item 7). This job also keeps a
+  # `build` status present on every push/PR.
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Placeholder for containerized artifact pipeline
-        run: |
-          echo "Placeholder: the canonical containerized artifact pipeline is"
-          echo ".github/workflows/artifacts-build.yml (M3 item 7 — build logistics"
-          echo "& CI, DESIGN.md §9 revision). The functional gates (conformance"
-          echo "corpus + demo->PDF smoke) run there against the CI-built dist/."
-          exit 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: build/bundles tooling unit tests (node --test)
+        run: node --test build/bundles/tlpdb.test.mjs build/bundles/resolve.test.mjs

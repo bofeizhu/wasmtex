@@ -29,6 +29,7 @@
 
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { mountViaRunDependencies } from '../worker/engine-host';
 import type {
   BusytexFactory,
   EngineModule,
@@ -76,21 +77,36 @@ export function createNodeModuleLoader(): EngineModuleLoader {
       return factory as BusytexFactory;
     },
     installDataPackage(module: EngineModule, dataPackageLocation: string): void {
-      const source = readFileSync(dataPackageLocation, 'utf8');
-      // Scoped eval: inject the carrier + Node-safe stand-ins for the browser
-      // globals the file_packager probes. `location`/`self` (any objects) steer
-      // its IndexedDB check onto the graceful-fallback path; `require`/`process`
-      // drive its Node `.data` read.
-      const run = new Function(
-        'BusytexPipeline',
-        'require',
-        'process',
-        'location',
-        'self',
-        'console',
-        source,
-      );
-      run(module, require, process, {}, {}, quietConsole());
+      evalDataPackage(module, dataPackageLocation);
+    },
+    mountDataPackage(module: EngineModule, dataPackageLocation: string): Promise<void> {
+      // POST-INIT: the same scoped eval, but `Module.calledRun` is now true, so
+      // the file_packager's `if (Module['calledRun']) runWithFS()` branch mounts
+      // into the live FS. `runWithFS` reads the `.data` via async `fs.readFile`,
+      // so the mount completes on a later tick; resolve when it is FS-visible.
+      return mountViaRunDependencies(module, () => evalDataPackage(module, dataPackageLocation));
     },
   };
+}
+
+/**
+ * Execute a file_packager data-package script under Node with the carrier +
+ * Node-safe stand-ins for the browser globals it probes. `location`/`self` (any
+ * objects) steer its IndexedDB check onto the graceful-fallback path;
+ * `require`/`process` drive its Node `.data` read. Shared by both the pre-init
+ * (preRun) install and the post-init mount — the script self-selects via
+ * `Module.calledRun`.
+ */
+function evalDataPackage(module: EngineModule, dataPackageLocation: string): void {
+  const source = readFileSync(dataPackageLocation, 'utf8');
+  const run = new Function(
+    'BusytexPipeline',
+    'require',
+    'process',
+    'location',
+    'self',
+    'console',
+    source,
+  );
+  run(module, require, process, {}, {}, quietConsole());
 }

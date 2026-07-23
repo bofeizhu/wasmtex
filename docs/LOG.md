@@ -5,6 +5,45 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M4 item 5: on-demand bundle mount (the crux capability)
+
+**Done, reviewer-approved. The M4 technical unknown resolved positively.**
+`bundles.onDemand` is now real: a tier's file_packager `.data` mounts into
+the RUNNING engine after init (was inert). SPIKE first (the plan's
+mandate): the generated loader already handles post-init —
+`if (Module.calledRun) runWithFS()` — so NO WORKERFS/re-init fallback was
+needed.
+
+**The load-bearing subtlety — snapshot/restore orthogonality (verified by
+review against the real Emscripten glue).** The worker snapshots ONLY
+linear memory (heap.slice(0, 64 MiB) header) and zeroes-past-header on
+reset between jobs. The on-demand mount is JS-HEAP-only (Emscripten FS
+nodes + the LZ4 `.data` as a JS ArrayBuffer, decompressing into per-
+callMain scratch the reset zeroes), so it is ORTHOGONAL to the snapshot —
+no re-snapshot needed. Proven: a mid-session mount (snapshot predates the
+tier) compiles siunitx + a CJK doc across 3 subsequent resets, all green.
+
+**Mechanism:** `mountViaRunDependencies` (hooks monitorRunDependencies,
+resolves on return-to-0 = files FS-visible; verified no race, no spurious
+main re-run since dependenciesFulfilled is null post-init);
+`EngineHost.loadBundle(name)` is the reusable seam items 6–7 call;
+`EngineModuleLoader.mountDataPackage` for the worker (importScripts) +
+node loaders. Eager-at-init trigger is the item-5 stand-in (§5.4 lazy
+triggering is 6–7). No wire-protocol change; storage-less/cold-start,
+cancellation, jobId correlation intact. 213 runtime tests (+18); worker
+IIFE clean (no node: leakage); manifest-driven (not hardcoded).
+On-demand academic mount ≈3.6–8.6 s (496 MB async read + LZ4).
+
+**Review: approve.** Fix folded: `loadedBundles.clear()` at the top of
+`load()` — a re-init on the same host (after a mid-mount init failure)
+against a fresh engine would otherwise keep a stale set, making eager
+loadBundle no-op and bundlesLoaded lie. Nits deferred to items 6–7 (which
+drive the seam): in-flight loadBundle idempotency (concurrent same-name
+double-mount), alias-tier canonicalization (don't mount texlive-basic as
+a 3rd tier), preload/onDemand duplicate-name dedupe. Items 8–9 must run
+the on-demand survival tests against the container-built tiered artifact
+(they're runIf-gated on the 496 MB tier being present).
+
 ## 2026-07-24 — M4 item 4: manifest.json (schemaVersion 2)
 
 **Done, reviewer-approved (no blockers).** `build/manifest/gen-assets.mjs`

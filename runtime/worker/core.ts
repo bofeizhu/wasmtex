@@ -130,6 +130,15 @@ export type EngineLogSink = (stream: LogStream, line: string) => void;
 export interface EngineHost {
   /** Load + instantiate the engine and preload the configured bundle(s). Called once per session. */
   load(assets: AssetsConfig): Promise<void>;
+  /**
+   * Mount an on-demand tier into the live engine AFTER {@link load} (DESIGN.md
+   * §5.4). Idempotent per name (a preload tier, or one already loaded, is a
+   * no-op); resolves once the tier's files are visible to the engine FS. The
+   * mount persists across subsequent jobs' memory resets (it is a JS-heap
+   * operation — see the real host's `loadBundle`). Item 5 drives this eagerly for
+   * each configured `onDemand` tier; items 6–7 drive it lazily (§5.4 scan/retry).
+   */
+  loadBundle(name: string): Promise<void>;
   /** Run one applet against the (possibly freshly-staged) job FS, streaming lines to `onLine`. */
   run(step: EngineRunStep, onLine: EngineLogSink): EngineRunResult;
 }
@@ -358,7 +367,20 @@ export function createWorkerCore(deps: WorkerCoreDeps): WorkerCore {
     }
     try {
       await host.load(msg.assets);
-      bundlesLoaded = [...msg.assets.bundles.preload];
+      const mounted = [...msg.assets.bundles.preload];
+      // On-demand trigger (M4 item 5): eagerly mount each configured on-demand
+      // tier into the live engine, AFTER load() took the memory snapshot. This
+      // proves the §5.4 mount mechanism + snapshot survival end to end while the
+      // real §5.4 triggers (static \usepackage scan / missing-file retry) are
+      // items 6–7. A tier that fails to mount fails init (an on-demand tier the
+      // caller explicitly configured could not be satisfied) — items 6–7's lazy
+      // path makes a miss recoverable instead. `bundlesLoaded` reflects exactly
+      // the tiers actually mounted, in preload-then-on-demand order.
+      for (const name of msg.assets.bundles.onDemand) {
+        await host.loadBundle(name);
+        mounted.push(name);
+      }
+      bundlesLoaded = mounted;
       loaded = true;
       post(initializedMessage(msg.jobId));
     } catch (error) {

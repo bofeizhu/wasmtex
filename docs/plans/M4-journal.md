@@ -187,3 +187,156 @@ change (engine-host reads only `inventory.assets`).
   the presence check's comment is tied to run.mjs's five required files. A
   follow-up could promote `manifest.json` to first-class there once `assets.json`
   is dropped at M5.
+
+---
+
+## Item 5 — On-demand mount (worker)
+
+Dated 2026-07-24. Goal: make `bundles.onDemand` real — load a tier's file_packager
+`.data` into the RUNNING engine AFTER init, wire `stats.bundlesLoaded`, fire
+`onAssetProgress` for on-demand fetches. The two hard parts (flagged in M4.md) were
+(1) the post-init data-package mount — a technical unknown — and (2) its interaction
+with the §5.3 memory snapshot/restore. Runtime-only; validated against the on-disk
+native tiered `dist/` (core + academic); no container build. This was SPIKED before
+implementing, per the plan.
+
+### Spike verdict — post-init mount WORKS NATIVELY (no fallback needed)
+
+Threw a Node harness (scratchpad, not committed) that mimics `engine-host.ts`:
+load engine + core (preRun), snapshot the low 64 MiB, then post-init mount academic
+and reset/compile. The decisive finding is in the generated loader itself — the
+file_packager script (`dist/academic.js`) ends with:
+
+```js
+if (Module['calledRun']) { runWithFS(); }         // POST-init: mount into the live FS now
+else { Module['preRun'].push(runWithFS); }         // PRE-init: defer to the factory's run()
+```
+
+So the packaged loader **already handles the post-init case**: after `run()` has
+executed (`Module.calledRun === true`), re-executing the data-package script calls
+`runWithFS()` directly, which `FS_createPath`s the tree and `LZ4.loadPackage`s the
+files into the LIVE Emscripten FS. No WORKERFS fallback, no re-init-with-more-preloads
+— the straightforward path works. Spike results (node, native dist):
+
+| step | outcome |
+| --- | --- |
+| before mount: `siunitx.sty` in FS | **false**; a siunitx doc compiles `ok:false` (missing package) |
+| post-init mount academic (496 MB `.data`) | `siunitx.sty`/`ctex.sty` now in FS; ~3.6 s (async `fs.readFile` + LZ4) |
+| siunitx doc after mount | **ok, exit 0, valid PDF** |
+| CJK ctex + bundled fandol doc | **ok, exit 0, valid PDF** |
+| siunitx again (3rd job) | **ok** — tier still alive after two resets |
+
+### Snapshot interaction — the mount is JS-HEAP-ONLY, so NO re-snapshot is needed
+
+The load-bearing subtlety: the worker snapshots LINEAR memory after init and rolls it
+back (`fill(0)` + restore the 64 MiB header) after every `callMain`. The fear was that
+a tier mounted AFTER the snapshot would be LOST on the next reset. It is not — and the
+spike proved WHY, not just that:
+
+- After a post-init mount, the low-64 MiB header is **byte-identical** to the
+  snapshot, AND the zero-past-header invariant **still holds**. I.e. the mount writes
+  **nothing** to linear memory.
+- That is because the Emscripten FS is pure JS: `FS_createPath` builds JS-heap nodes,
+  `LZ4.loadPackage` holds the compressed `.data` as a JS `ArrayBuffer` and maps the
+  file table in the JS heap. Reads decompress on demand into per-`callMain` wasm
+  scratch that the reset then zeroes. This is the SAME reason the *preload* tier and
+  the MEMFS survive resets today (M1 study) — the on-demand tier is that identical
+  operation at a later time.
+- **Chosen approach: mount, do NOT re-snapshot.** The snapshot is linear-memory-only
+  and the mount is JS-heap-only, so they are orthogonal — the existing snapshot stays
+  valid and the tier persists across every future reset. Re-snapshotting would be a
+  harmless no-op (the header is unchanged), so it is pure cost; omitted. Proven by a
+  committed real-wasm test that mounts academic MID-SESSION (after init, between two
+  jobs) and compiles a doc that had just failed against core alone, then a CJK doc,
+  then siunitx again — three jobs, three resets, all green.
+
+### Completion detection — `monitorRunDependencies`
+
+Post-init the mount finishes asynchronously (Emscripten fetches the `.data`: worker
+XHR / node `fs.readFile`), so the host must AWAIT it. `runWithFS` adds exactly one run
+dependency for the `.data` and removes it once `LZ4.loadPackage` has mounted; Emscripten
+calls `Module.monitorRunDependencies(n)` on each transition. Post-init the count starts
+and ends at 0 (`callMain` asserts 0), and `dependenciesFulfilled` is null after init
+(the run-caller nulls itself once `calledRun`), so a completing dependency does NOT
+re-trigger `run()`. The shared, environment-agnostic `mountViaRunDependencies(module,
+execute)` helper installs the hook, runs the script, and resolves on the first return
+to 0 (or rejects on a synchronous throw), restoring any prior hook. One place, both
+loaders (worker `importScripts`, node scoped eval) funnel through it.
+
+### Trigger + wiring (item-5 scope)
+
+- **Host seam:** new `EngineHost.loadBundle(name)` (real impl in `engine-host.ts`)
+  mounts one tier post-init, idempotent per name (preload tiers seeded at `load`, prior
+  on-demand tiers remembered), resolving once FS-visible. This is the reusable seam
+  items 6–7 will call lazily.
+- **Loader seam:** new `EngineModuleLoader.mountDataPackage(module, location):
+  Promise<void>` (the post-init sibling of `installDataPackage`), implemented for both
+  the worker and node loaders via `mountViaRunDependencies`.
+- **Wired trigger:** `core.onInit` eagerly mounts each configured `onDemand` tier AFTER
+  `host.load` (i.e. after the snapshot), then sets `bundlesLoaded` to the actually-mounted
+  set in preload-then-on-demand order. Eager-at-init is the sanctioned item-5 trigger
+  (M4.md); the point it proves is post-SNAPSHOT mount + survival, which it does. A tier
+  that fails to mount fails init (`init-failed`) — the caller explicitly asked for it;
+  items 6–7's lazy path makes a genuine miss recoverable instead.
+- **`onAssetProgress`:** `client.ts initLoadedAssets` now includes the `onDemand` tiers
+  (they load during init under the eager trigger), so the existing init progress bracket
+  reports each on-demand `*.js`/`*.data` as start (0) → done (= manifest bytes). Same
+  fidelity as M1 (start/end, no per-byte — Emscripten fetches internally); items 6–7 will
+  report lazy-load progress from the load point instead.
+
+### API / type changes (no wire-protocol change)
+
+All runtime-internal — the `ClientMessage`/`WorkerMessage` wire is UNCHANGED (no
+`PROTOCOL_VERSION` bump). Added: `EngineHost.loadBundle`; `EngineModuleLoader.mount
+DataPackage`; the exported `mountViaRunDependencies` helper; `EngineModule.monitor
+RunDependencies?`/`calledRun?` (structural Emscripten fields). Refactored
+`preloadBundleLocations` onto a shared single-name `resolveBundleJsLocation` (used by
+both preload and `loadBundle`). `bundlesLoaded` now reflects on-demand tiers.
+
+### Tests + verification (all green)
+
+- `typecheck` clean; full runtime suite **213 pass** (was 195; +18):
+  - worker-core (fake host): eager on-demand mount → `loadBundle` called + `bundlesLoaded`
+    = preload-then-on-demand; multiple tiers in order; none → no calls; a mount failure →
+    correlated `init-failed` + the next compile rejected as not-initialised.
+  - engine-host (fake loader): `loadBundle` resolves the tier's bundle-js and routes to
+    `mountDataPackage` (baseUrl+path and `entry.url`); idempotent; preload tier = no-op;
+    pre-`load()` rejects; unknown name rejects; a mount failure is not cached (retry
+    re-mounts). Plus `mountViaRunDependencies` unit tests (async/sync resolve, throw
+    rejects, prior-hook restore+chain).
+  - typeset-integration (REAL wasm, core + academic, skips if academic absent): siunitx
+    FAILS against core alone (`bundlesLoaded=['core']`); `host.loadBundle` mounts academic
+    mid-session and the failed doc then compiles + a CJK doc + siunitx again survive three
+    resets; public API (`createTypesetter`, onDemand:['academic']) compiles siunitx AND a
+    CJK doc across two jobs with `bundlesLoaded=['core','academic']` and `onAssetProgress`
+    reporting `academic.data` start(0)/done(=bytes).
+- Worker IIFE rebuilt: **no `node:` leakage**, carries the mount logic. `build:node-harness`
+  rebuilt. `license-audit.sh` all checks pass (no new files; touched files keep SPDX MIT;
+  no GPL/AGPL). Provenance: original work; the only third-party artifact READ was our own
+  generated `dist/*.js` file_packager loader (behavioural inspection of an Emscripten build
+  output, MIT-derived) — no GPL/AGPL or other-wrapper source opened.
+- Real numbers (native dist, node): init engine+core ≈ 0.6 s; academic post-init mount
+  ≈ 3.6–8.5 s (496 MB `.data` via async `fs.readFile` + LZ4, cold vs. under concurrent
+  test load); siunitx PDF 7313 B; CJK (ctex+fandol) PDF 4336 B.
+
+### Standing notes / deferred
+
+- **Browser-worker path is validated STRUCTURALLY, not yet in a real browser.** The
+  worker `mountDataPackage` is the same `carrier + importScripts` as preload, routed
+  through the same `mountViaRunDependencies` completion the node path exercises, against
+  the identical file_packager `calledRun→runWithFS` branch. A real-browser on-demand mount
+  belongs to the demo/Playwright smoke (as with the M1 worker path); node is the item-5
+  gate. Noted for the demo-smoke follow-up.
+- **On-demand fetch-error UX is coarse for item 5.** A mount that fails to FETCH surfaces
+  as: worker → a thrown `NetworkError` from Emscripten's XHR (→ worker `onerror` →
+  `WorkerCrashedError`, no silent hang); node → local files that were inventory-validated,
+  so `fs.readFile` does not fail in practice. Under the eager-at-init trigger a mount
+  failure is `init-failed`. Granular, recoverable on-demand error handling (retry/continue,
+  distinguishing "not in any tier" from "fetch failed") is items 6–7, where lazy §5.4
+  resolution makes it matter. No wall-clock mount timeout was added (it would false-fail on
+  a large tier over a slow link); completion rests on the run-dependency signal.
+- **Eager-at-init is a stand-in trigger.** It proves the mechanism (post-snapshot mount +
+  survival + progress + `bundlesLoaded`) but is not lazy. Items 6–7 replace it with the
+  §5.4 static `\usepackage` scan and the missing-file retry, both calling the same
+  `host.loadBundle` seam; `initLoadedAssets`'s on-demand inclusion and the `onAssetProgress`
+  bracket move to the lazy-load point then.

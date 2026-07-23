@@ -48,12 +48,20 @@ class FakeHost implements EngineHost {
   loadError: unknown = null;
   readonly loadCalls: AssetsConfig[] = [];
   readonly runCalls: EngineRunStep[] = [];
+  readonly loadBundleCalls: string[] = [];
+  /** When set, `loadBundle` throws it (simulates an on-demand tier that fails to mount). */
+  loadBundleError: unknown = null;
   scripts: FakeRunScript[] = [];
   private next = 0;
 
   async load(assets: AssetsConfig): Promise<void> {
     this.loadCalls.push(assets);
     if (this.loadError !== null) throw this.loadError;
+  }
+
+  async loadBundle(name: string): Promise<void> {
+    this.loadBundleCalls.push(name);
+    if (this.loadBundleError !== null) throw this.loadBundleError;
   }
 
   run(step: EngineRunStep, onLine: EngineLogSink): EngineRunResult {
@@ -189,6 +197,111 @@ describe('core — init', () => {
     expect(messages.filter((m) => m.type === 'initialized')).toHaveLength(2);
     // The second init is acknowledged, correlated to its own id.
     expect(messages.filter((m) => m.jobId === secondId).map((m) => m.type)).toEqual(['initialized']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// init — on-demand tier mounting (M4 item 5)
+// ---------------------------------------------------------------------------
+
+/** An init message whose bundle selection overrides the default ASSETS. */
+function initMessageWithBundles(
+  jobId: JobId,
+  bundles: { preload: string[]; onDemand: string[] },
+): InitMessage {
+  return { type: 'init', v: 1, jobId, assets: { ...ASSETS, bundles } };
+}
+
+/** Two scripts for a xelatex → xdvipdfmx happy-path compile that yields a PDF result. */
+function happyCompileScripts(): FakeRunScript[] {
+  return [
+    { exitCode: 0, stdout: ['This is XeTeX'] },
+    { exitCode: 0, outputs: { 'hello.pdf': PDF_BYTES } },
+  ];
+}
+
+describe('core — on-demand tier mounting (item 5 eager trigger)', () => {
+  it('mounts each configured on-demand tier post-init and reflects them in bundlesLoaded (preload then on-demand)', async () => {
+    const host = new FakeHost();
+    host.scripts = happyCompileScripts();
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+
+    await core.handle(initMessageWithBundles(newJobId(), { preload: ['core'], onDemand: ['academic'] }));
+    expect(host.loadCalls).toHaveLength(1);
+    expect(host.loadBundleCalls).toEqual(['academic']); // the on-demand tier was mounted at init
+
+    const jobId = newJobId();
+    await core.handle(compileMessage(jobId, 'xetex'));
+    const result = messages.filter((m) => m.jobId === jobId).at(-1);
+    expect(result?.type).toBe('result');
+    if (result?.type === 'result') {
+      // preload FIRST, then on-demand — the actually-mounted tiers, in order.
+      expect(result.stats.bundlesLoaded).toEqual(['core', 'academic']);
+    }
+  });
+
+  it('mounts multiple on-demand tiers in configured order', async () => {
+    const host = new FakeHost();
+    host.scripts = happyCompileScripts();
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+
+    await core.handle(
+      initMessageWithBundles(newJobId(), { preload: ['core'], onDemand: ['academic', 'extra'] }),
+    );
+    expect(host.loadBundleCalls).toEqual(['academic', 'extra']);
+
+    const jobId = newJobId();
+    await core.handle(compileMessage(jobId, 'xetex'));
+    const result = messages.filter((m) => m.jobId === jobId).at(-1);
+    if (result?.type === 'result') {
+      expect(result.stats.bundlesLoaded).toEqual(['core', 'academic', 'extra']);
+    }
+  });
+
+  it('with no on-demand tiers, mounts nothing and bundlesLoaded is just the preload set', async () => {
+    const host = new FakeHost();
+    host.scripts = happyCompileScripts();
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+
+    await core.handle(initMessageWithBundles(newJobId(), { preload: ['core'], onDemand: [] }));
+    expect(host.loadBundleCalls).toEqual([]); // loadBundle never called
+
+    const jobId = newJobId();
+    await core.handle(compileMessage(jobId, 'xetex'));
+    const result = messages.filter((m) => m.jobId === jobId).at(-1);
+    if (result?.type === 'result') {
+      expect(result.stats.bundlesLoaded).toEqual(['core']);
+    }
+  });
+
+  it('an on-demand tier that fails to mount fails init with a correlated `fatal` init-failed', async () => {
+    const host = new FakeHost();
+    host.loadBundleError = new Error('academic.data 404');
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+
+    const jobId = newJobId();
+    await core.handle(initMessageWithBundles(jobId, { preload: ['core'], onDemand: ['academic'] }));
+
+    expect(host.loadCalls).toHaveLength(1); // the engine + preload DID load
+    expect(host.loadBundleCalls).toEqual(['academic']); // the on-demand mount was attempted
+    expect(messages).toHaveLength(1);
+    const fatal = messages[0];
+    expect(fatal?.type).toBe('fatal');
+    if (fatal?.type === 'fatal') {
+      expect(fatal.code).toBe('init-failed');
+      expect(fatal.message).toContain('academic.data 404');
+    }
+    expectAllCorrelated(messages, jobId);
+
+    // init did not complete: a subsequent compile is rejected as not-initialised.
+    const compileId = newJobId();
+    await core.handle(compileMessage(compileId, 'xetex'));
+    const after = messages.filter((m) => m.jobId === compileId).at(-1);
+    expect(after?.type).toBe('fatal');
   });
 });
 

@@ -29,9 +29,10 @@ import {
   createTypesetter,
   typesetterDiagnostics,
   CancelledError,
+  type AssetProgress,
   type WorkerFactory,
 } from '../src/index';
-import { createWorkerCore } from '../worker/core';
+import { createWorkerCore, type EngineLogSink } from '../worker/core';
 import { EmscriptenEngineHost } from '../worker/engine-host';
 import { createNodeModuleLoader, createNodeWorkerFactory } from '../node/harness';
 
@@ -501,5 +502,203 @@ describe('public API over real wasm (createTypesetter, in-process adapter, node)
       );
     },
     120_000,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// On-demand tier mounting over real wasm (M4 item 5). These drive the tiered
+// dist (core + academic) — the post-init file_packager mount of a second tier
+// into the LIVE engine, and its survival across the per-job memory reset. They
+// skip unless BOTH tiers are present (academic is ~496 MB — not always built in
+// CI), like the tests above skip without dist/.
+// ---------------------------------------------------------------------------
+
+const ON_DEMAND_DEPS = [
+  'assets.json',
+  'busytex.js',
+  'busytex.wasm',
+  'core.js',
+  'core.data',
+  'academic.js',
+  'academic.data',
+];
+const onDemandPresent = ON_DEMAND_DEPS.every((f) => existsSync(distDir + f));
+
+if (!onDemandPresent) {
+  console.warn(
+    `[typeset-integration] tiered dist (core + academic) not all present under ${distDir}; ` +
+      'skipping the on-demand mount tests. Build the tiered artifact (make artifacts) to run them.',
+  );
+}
+
+/** Init AssetsConfig from the real inventory with an explicit tier selection. */
+function tieredAssets(preload: string[], onDemand: string[]): AssetsConfig {
+  const inventory = JSON.parse(readFileSync(distDir + 'assets.json', 'utf8')) as AssetsInventory;
+  return { baseUrl: distDir, inventory, bundles: { preload, onDemand } };
+}
+
+// A doc whose \usepackage{siunitx} is served ONLY by academic (absent from core).
+const SIUNITX_DOC =
+  '\\documentclass{article}\n\\usepackage{siunitx}\n\\begin{document}\n' +
+  'The speed of light is \\SI{299792458}{\\meter\\per\\second}.\n\\end{document}\n';
+// A Chinese doc via ctex + the bundled fandol font — both academic-only.
+const CJK_DOC = '\\documentclass{ctexart}\n\\begin{document}\n你好，世界。\n\\end{document}\n';
+const XELATEX_FMT = '/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt';
+
+describe('on-demand tier mounting (real wasm, core + academic)', () => {
+  it.runIf(onDemandPresent)(
+    'a siunitx doc FAILS against core alone (the academic tier is not loaded)',
+    async () => {
+      const messages: WorkerMessage[] = [];
+      const host = new EmscriptenEngineHost(createNodeModuleLoader());
+      const core = createWorkerCore({ host, post: (m) => messages.push(m) });
+      await core.handle({ type: 'init', v: 1, jobId: newJobId(), assets: tieredAssets(['core'], []) });
+      expect(messages.at(-1)?.type).toBe('initialized');
+
+      const jobId = newJobId();
+      await core.handle({
+        type: 'compile',
+        v: 1,
+        jobId,
+        files: { 'main.tex': SIUNITX_DOC },
+        entry: 'main.tex',
+        engine: 'xetex',
+        passes: 'auto',
+        bibliography: 'off',
+        index: 'off',
+        synctex: false,
+      });
+
+      const result = messages.filter((m) => m.jobId === jobId).at(-1);
+      if (result?.type !== 'result') throw new Error('no result message');
+      expect(result.ok).toBe(false);
+      expect(result.pdf).toBeUndefined();
+      // The failure names the missing package/file (kpathsea / LaTeX error).
+      expect(/siunitx/i.test(result.log) && /not found|Package|Error|undefined/i.test(result.log)).toBe(true);
+      // bundlesLoaded reflects reality: only core is mounted.
+      expect(result.stats.bundlesLoaded).toEqual(['core']);
+      console.log('[typeset-integration] siunitx-without-academic: ok=false (expected)');
+    },
+    120_000,
+  );
+
+  it.runIf(onDemandPresent)(
+    'host.loadBundle mounts academic mid-session: a doc that failed against core alone then compiles, and the tier survives a later job',
+    async () => {
+      const host = new EmscriptenEngineHost(createNodeModuleLoader());
+      // core only — the memory snapshot is taken here, BEFORE academic exists.
+      await host.load(tieredAssets(['core'], []));
+
+      const compile = (
+        entry: string,
+        body: string,
+      ): { ok: boolean; code: number; pdf?: Uint8Array | undefined; log: string } => {
+        const job = entry.replace(/\.tex$/, '');
+        const lines: string[] = [];
+        const sink: EngineLogSink = (_stream, line) => lines.push(line);
+        const r1 = host.run(
+          {
+            applet: 'xelatex',
+            argv: [
+              '--no-shell-escape',
+              '--interaction=nonstopmode',
+              '--halt-on-error',
+              '--no-pdf',
+              '--fmt',
+              XELATEX_FMT,
+              entry,
+            ],
+            stage: { files: { [entry]: body }, cwd: '.' },
+            collect: [],
+          },
+          sink,
+        );
+        if (r1.exitCode !== 0) return { ok: false, code: r1.exitCode, log: lines.join('\n') };
+        const r2 = host.run(
+          { applet: 'xdvipdfmx', argv: ['-o', `${job}.pdf`, `${job}.xdv`], collect: [`${job}.pdf`] },
+          sink,
+        );
+        const pdf = r2.outputs.get(`${job}.pdf`);
+        return { ok: r2.exitCode === 0 && pdf !== undefined, code: r2.exitCode, pdf, log: lines.join('\n') };
+      };
+
+      // BEFORE the mount: siunitx cannot resolve against core alone.
+      const before = compile('main.tex', SIUNITX_DOC);
+      expect(before.ok).toBe(false);
+
+      // Mount academic INTO THE LIVE ENGINE, post-snapshot, between jobs (§5.4).
+      const tMount = Date.now();
+      await host.loadBundle('academic');
+      const mountMs = Date.now() - tMount;
+
+      // AFTER the mount: the identical doc now compiles (the reset before this job
+      // did NOT lose the just-mounted tier — the crux of the snapshot interaction).
+      const after = compile('main.tex', SIUNITX_DOC);
+      expect(after.ok).toBe(true);
+      const pdf = after.pdf!;
+      expect(pdf.length).toBeGreaterThan(1000);
+      expect(Array.from(pdf.slice(0, 5))).toEqual([0x25, 0x50, 0x44, 0x46, 0x2d]);
+
+      // The tier SURVIVES yet another job (another memory reset): a CJK ctex +
+      // bundled-fandol doc compiles too.
+      const cjk = compile('cjk.tex', CJK_DOC);
+      expect(cjk.ok).toBe(true);
+      expect(cjk.pdf!.length).toBeGreaterThan(1000);
+
+      // Idempotent: a redundant loadBundle is a no-op and the engine still works.
+      await host.loadBundle('academic');
+      const again = compile('again.tex', SIUNITX_DOC);
+      expect(again.ok).toBe(true);
+
+      console.log(
+        `[typeset-integration] mid-session mount: academic in ${mountMs} ms; ` +
+          `post-mount pdf ${pdf.length} B, CJK pdf ${cjk.pdf!.length} B (survived 3 resets)`,
+      );
+    },
+    180_000,
+  );
+
+  it.runIf(onDemandPresent)(
+    'public API: preload core + onDemand academic — siunitx AND a CJK doc compile across jobs; bundlesLoaded reflects both; onAssetProgress reports the on-demand tier',
+    async () => {
+      const config = tieredAssets(['core'], ['academic']);
+      const progress: AssetProgress[] = [];
+      const tex = await createTypesetter({
+        assetsBaseUrl: config.baseUrl,
+        bundles: config.bundles,
+        inventory: config.inventory,
+        onAssetProgress: (p) => progress.push(p),
+        workerFactory: inProcessFactory(),
+      });
+
+      // Job A: siunitx (academic-only) — resolves because academic mounted at init.
+      const a = await tex.typeset({ engine: 'xetex', entry: 'main.tex', files: { 'main.tex': SIUNITX_DOC } }).done;
+      expect(a.ok).toBe(true);
+      expect(a.stats.bundlesLoaded).toEqual(['core', 'academic']); // preload then on-demand
+      expect(a.pdf!.length).toBeGreaterThan(1000);
+      expect(Array.from(a.pdf!.slice(0, 5))).toEqual([0x25, 0x50, 0x44, 0x46, 0x2d]);
+
+      // Job B on the SAME typesetter (survives the per-job memory reset): CJK.
+      const b = await tex.typeset({ engine: 'xetex', entry: 'cjk.tex', files: { 'cjk.tex': CJK_DOC } }).done;
+      expect(b.ok).toBe(true);
+      expect(b.stats.bundlesLoaded).toEqual(['core', 'academic']);
+      expect(b.pdf!.length).toBeGreaterThan(1000);
+
+      // onAssetProgress reported the on-demand tier's blobs — start (0) and done
+      // (=== totalBytes, the manifest's real size) — via the init bracket (item 5
+      // loads on-demand tiers during init; see client.ts initLoadedAssets note).
+      const academicData = progress.filter((p) => p.assetId === 'academic.data');
+      expect(academicData.some((p) => p.loadedBytes === 0)).toBe(true);
+      expect(academicData.some((p) => p.totalBytes > 0 && p.loadedBytes === p.totalBytes)).toBe(true);
+      const academicJs = progress.filter((p) => p.assetId === 'academic.js');
+      expect(academicJs.length).toBeGreaterThan(0);
+
+      await tex.dispose();
+      console.log(
+        `[typeset-integration] public-API on-demand: siunitx ${a.pdf!.length} B, CJK ${b.pdf!.length} B, ` +
+          `bundlesLoaded=${JSON.stringify(a.stats.bundlesLoaded)}`,
+      );
+    },
+    180_000,
   );
 });

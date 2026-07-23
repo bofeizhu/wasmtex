@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   EmscriptenEngineHost,
+  mountViaRunDependencies,
   resolveAssetLocation,
   type BusytexFactory,
   type EngineModule,
@@ -67,6 +68,13 @@ class FakeLoader implements EngineModuleLoader {
   installDataPackage(_module: EngineModule, location: string): void {
     this.dataPackageLocations.push(location);
   }
+
+  readonly mountedPackageLocations: string[] = [];
+  mountError: unknown = null;
+  async mountDataPackage(_module: EngineModule, location: string): Promise<void> {
+    this.mountedPackageLocations.push(location);
+    if (this.mountError !== null) throw this.mountError;
+  }
 }
 
 /**
@@ -103,6 +111,10 @@ function inventory(withUrls: boolean): AssetsInventory {
       { path: 'busytex.wasm', role: 'engine-wasm', ...u('https://cdn.example/e.wasm') },
       { path: 'texlive-basic.js', role: 'bundle-js', ...u('wasmtex-assets://b/tl.js') },
       { path: 'texlive-basic.data', role: 'bundle-data', ...u('wasmtex-assets://b/tl.data') },
+      // A second (on-demand) tier present in the inventory but NOT preloaded, so
+      // loadBundle('academic') has a bundle-js entry to resolve.
+      { path: 'academic.js', role: 'bundle-js', ...u('wasmtex-assets://b/ac.js') },
+      { path: 'academic.data', role: 'bundle-data', ...u('wasmtex-assets://b/ac.data') },
     ],
   };
 }
@@ -139,5 +151,141 @@ describe('EmscriptenEngineHost.load — entry.url honoring', () => {
     const locateFile = captured().locateFile!;
     expect(locateFile('busytex.wasm')).toBe('/dist/busytex.wasm');
     expect(locateFile('texlive-basic.data')).toBe('/dist/texlive-basic.data');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadBundle — post-init on-demand mount (M4 item 5), fake loader, no wasm
+// ---------------------------------------------------------------------------
+
+describe('EmscriptenEngineHost.loadBundle — on-demand mount', () => {
+  it('resolves the on-demand tier bundle-js and mounts it via the loader (baseUrl + path)', async () => {
+    const { factory } = fakeFactory();
+    const loader = new FakeLoader(factory);
+    const host = new EmscriptenEngineHost(loader);
+    await host.load(assetsWith(inventory(false)));
+
+    // load() installed only the PRELOAD tier's data package (in preRun); nothing mounted yet.
+    expect(loader.dataPackageLocations).toEqual(['/dist/texlive-basic.js']);
+    expect(loader.mountedPackageLocations).toEqual([]);
+
+    await host.loadBundle('academic');
+    // The on-demand tier goes through mountDataPackage (the post-init path), NOT installDataPackage.
+    expect(loader.mountedPackageLocations).toEqual(['/dist/academic.js']);
+    expect(loader.dataPackageLocations).toEqual(['/dist/texlive-basic.js']); // unchanged
+  });
+
+  it('honors an entry.url override for the on-demand tier bundle-js', async () => {
+    const { factory } = fakeFactory();
+    const loader = new FakeLoader(factory);
+    const host = new EmscriptenEngineHost(loader);
+    await host.load(assetsWith(inventory(true)));
+
+    await host.loadBundle('academic');
+    expect(loader.mountedPackageLocations).toEqual(['wasmtex-assets://b/ac.js']);
+  });
+
+  it('is idempotent: mounting the same tier twice mounts once', async () => {
+    const { factory } = fakeFactory();
+    const loader = new FakeLoader(factory);
+    const host = new EmscriptenEngineHost(loader);
+    await host.load(assetsWith(inventory(false)));
+
+    await host.loadBundle('academic');
+    await host.loadBundle('academic');
+    expect(loader.mountedPackageLocations).toEqual(['/dist/academic.js']); // exactly one mount
+  });
+
+  it('treats an already-preloaded tier as a no-op (never re-mounts a preload tier)', async () => {
+    const { factory } = fakeFactory();
+    const loader = new FakeLoader(factory);
+    const host = new EmscriptenEngineHost(loader);
+    await host.load(assetsWith(inventory(false))); // preload: ['texlive-basic']
+
+    await host.loadBundle('texlive-basic');
+    expect(loader.mountedPackageLocations).toEqual([]); // already mounted at load; not re-mounted
+  });
+
+  it('rejects loadBundle before load() has resolved', async () => {
+    const { factory } = fakeFactory();
+    const loader = new FakeLoader(factory);
+    const host = new EmscriptenEngineHost(loader);
+    await expect(host.loadBundle('academic')).rejects.toThrow(/before load\(\) resolved/);
+  });
+
+  it('rejects an unknown tier name (no matching bundle-js in the inventory)', async () => {
+    const { factory } = fakeFactory();
+    const loader = new FakeLoader(factory);
+    const host = new EmscriptenEngineHost(loader);
+    await host.load(assetsWith(inventory(false)));
+    await expect(host.loadBundle('nope')).rejects.toThrow(/bundle 'nope' has no matching bundle-js/);
+    expect(loader.mountedPackageLocations).toEqual([]);
+  });
+
+  it('propagates a loader mount failure and does not record the tier as loaded (a retry re-mounts)', async () => {
+    const { factory } = fakeFactory();
+    const loader = new FakeLoader(factory);
+    loader.mountError = new Error('academic.data fetch failed');
+    const host = new EmscriptenEngineHost(loader);
+    await host.load(assetsWith(inventory(false)));
+
+    await expect(host.loadBundle('academic')).rejects.toThrow(/academic\.data fetch failed/);
+    // A subsequent successful retry mounts again (the failed attempt was not cached as loaded).
+    loader.mountError = null;
+    await host.loadBundle('academic');
+    expect(loader.mountedPackageLocations).toEqual(['/dist/academic.js', '/dist/academic.js']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mountViaRunDependencies — the environment-agnostic completion protocol
+//
+// The real file_packager loader (post-init) adds one run dependency for its
+// `.data` synchronously, then removes it once the LZ4 files are mounted;
+// Emscripten calls `monitorRunDependencies(n)` on each transition. These tests
+// drive that protocol with a fake Module, no wasm.
+// ---------------------------------------------------------------------------
+
+describe('mountViaRunDependencies — post-init mount completion', () => {
+  it('resolves when the run-dependency count returns to 0 after an async removal', async () => {
+    const module = {} as EngineModule;
+    const promise = mountViaRunDependencies(module, () => {
+      module.monitorRunDependencies?.(1); // addRunDependency (the .data), synchronous
+      setTimeout(() => module.monitorRunDependencies?.(0), 0); // removed once mounted
+    });
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  it('resolves for a fully synchronous mount (monitor 1 then 0 during execute)', async () => {
+    const module = {} as EngineModule;
+    await expect(
+      mountViaRunDependencies(module, () => {
+        module.monitorRunDependencies?.(1);
+        module.monitorRunDependencies?.(0);
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects when the data-package script throws synchronously', async () => {
+    const module = {} as EngineModule;
+    await expect(
+      mountViaRunDependencies(module, () => {
+        throw new Error('importScripts 404');
+      }),
+    ).rejects.toThrow(/importScripts 404/);
+  });
+
+  it('restores (and chains) any previous monitorRunDependencies after settling', async () => {
+    const previousCalls: number[] = [];
+    const previous = (n: number): void => {
+      previousCalls.push(n);
+    };
+    const module = { monitorRunDependencies: previous } as unknown as EngineModule;
+    await mountViaRunDependencies(module, () => {
+      module.monitorRunDependencies?.(1);
+      module.monitorRunDependencies?.(0);
+    });
+    expect(module.monitorRunDependencies).toBe(previous); // hook restored, not left dangling
+    expect(previousCalls).toEqual([1, 0]); // the pre-existing hook still saw every transition
   });
 });

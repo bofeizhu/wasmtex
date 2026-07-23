@@ -89,6 +89,16 @@ export interface EngineModule {
   HEAPU8: Uint8Array;
   HEAP32: Int32Array;
   LZ4?: unknown;
+  /**
+   * Emscripten's run-dependency observer hook: called with the current
+   * outstanding-dependency count on every add/remove. Absent by default; the
+   * host installs one transiently to detect when a POST-INIT data-package mount
+   * has finished (its `.data` run dependency added then removed). See
+   * {@link mountViaRunDependencies}.
+   */
+  monitorRunDependencies?: ((remaining: number) => void) | undefined;
+  /** Set to `true` by Emscripten once `run()` has executed — the signal the file_packager loader uses to mount into the LIVE FS instead of deferring to preRun. */
+  calledRun?: boolean;
   [key: string]: unknown;
 }
 
@@ -106,6 +116,64 @@ export type BusytexFactory = (options: EngineModule) => Promise<EngineModule>;
 export interface EngineModuleLoader {
   loadFactory(engineJsLocation: string): Promise<BusytexFactory>;
   installDataPackage(module: EngineModule, dataPackageLocation: string): void;
+  /**
+   * Mount a file_packager data package into an ALREADY-INITIALISED engine (the
+   * §5.4 on-demand path). Unlike {@link installDataPackage} (which registers the
+   * package's `runWithFS` into `module.preRun` so the factory's `run()` awaits
+   * it), this executes the data-package script AFTER `run()` — where the loader's
+   * own `if (Module['calledRun']) runWithFS()` branch mounts into the live FS
+   * immediately. The mount's FS reads are async (Emscripten fetch / node `fs`), so
+   * this resolves only once the package's files are FS-visible — see
+   * {@link mountViaRunDependencies}. Rejects if the data-package script throws
+   * synchronously.
+   */
+  mountDataPackage(module: EngineModule, dataPackageLocation: string): Promise<void>;
+}
+
+/**
+ * Await a POST-INIT data-package mount driven by the file_packager loader's own
+ * `if (Module['calledRun']) runWithFS()` branch. That branch runs synchronously
+ * when the script executes, but `runWithFS` finishes the mount asynchronously:
+ * it adds ONE run dependency for the package `.data`, fetches it (worker: XHR /
+ * node: `fs.readFile`), then `LZ4.loadPackage`s the files and removes the
+ * dependency. Emscripten calls `Module.monitorRunDependencies(n)` on every
+ * add/remove, so the first return to `0` after execution is the mount-complete
+ * signal (post-init nothing else touches the count — `callMain` asserts it is 0).
+ *
+ * `execute` runs the environment-specific script load (worker `importScripts` /
+ * node scoped eval). A synchronous throw from it rejects; the previous
+ * `monitorRunDependencies` (there is none post-init in practice) is restored so
+ * the hook is not left installed.
+ *
+ * Environment-agnostic: both the worker and node loaders funnel through here so
+ * the completion protocol lives in exactly one place.
+ */
+export function mountViaRunDependencies(
+  module: EngineModule,
+  execute: () => void,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const previous = module.monitorRunDependencies;
+    let settled = false;
+    const finish = (done: () => void): void => {
+      if (settled) return;
+      settled = true;
+      module.monitorRunDependencies = previous;
+      done();
+    };
+    module.monitorRunDependencies = (remaining: number): void => {
+      if (typeof previous === 'function') previous(remaining);
+      // The package adds its `.data` dependency (remaining ≥ 1) synchronously
+      // during `execute`, then removes it once the files are mounted. Post-init
+      // the count starts and ends at 0, so the first 0 means FS-visible.
+      if (remaining === 0) finish(resolve);
+    };
+    try {
+      execute();
+    } catch (error) {
+      finish(() => reject(error instanceof Error ? error : new Error(String(error))));
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -185,19 +253,28 @@ function locateNameLocation(base: string, inventory: AssetsInventory, requestedN
   return match ? resolveAssetLocation(base, match) : joinLocation(base, requestedName);
 }
 
+/**
+ * Resolve one bundle NAME to its `bundle-js` load location (honors entry.url).
+ * The match is lenient: an inventory `bundle-js` basename equal to `name`,
+ * `name.js`, or `name` with `.js` stripped. Throws when no `bundle-js` asset
+ * matches — the same loud failure for a mistyped preload OR on-demand tier name.
+ * Shared by preload (init) and {@link EmscriptenEngineHost.loadBundle} (on-demand).
+ */
+function resolveBundleJsLocation(base: string, inventory: AssetsInventory, name: string): string {
+  const match = inventory.assets.find((a) => {
+    if (a.role !== 'bundle-js') return false;
+    const b = basenameOf(a.path);
+    return b === name || b === `${name}.js` || b.replace(/\.js$/, '') === name;
+  });
+  if (!match) {
+    throw new Error(`bundle '${name}' has no matching bundle-js asset in the inventory`);
+  }
+  return resolveAssetLocation(base, match);
+}
+
 /** Resolve each preload bundle NAME to its `bundle-js` load location (honors entry.url). */
 function preloadBundleLocations(base: string, assets: AssetsConfig): string[] {
-  const bundleJs = assets.inventory.assets.filter((a) => a.role === 'bundle-js');
-  return assets.bundles.preload.map((name) => {
-    const match = bundleJs.find((a) => {
-      const b = basenameOf(a.path);
-      return b === name || b === `${name}.js` || b.replace(/\.js$/, '') === name;
-    });
-    if (!match) {
-      throw new Error(`preload bundle '${name}' has no matching bundle-js asset in the inventory`);
-    }
-    return resolveAssetLocation(base, match);
-  });
+  return assets.bundles.preload.map((name) => resolveBundleJsLocation(base, assets.inventory, name));
 }
 
 /** Recursively create `dir` in the MEMFS (idempotent). */
@@ -235,6 +312,10 @@ const NOOP_SINK: EngineLogSink = () => {};
 export class EmscriptenEngineHost implements EngineHost {
   private module: EngineModule | null = null;
   private memHeader: Uint8Array | null = null;
+  /** Retained from {@link load} so {@link loadBundle} can resolve an on-demand tier NAME to its bundle-js location. */
+  private assets: AssetsConfig | null = null;
+  /** Bundle names already mounted (preload tiers seeded at load; on-demand tiers added by {@link loadBundle}) — makes loadBundle idempotent. */
+  private readonly loadedBundles = new Set<string>();
 
   // Per-run transcript wiring. `print`/`printErr` are installed once on the
   // Module and route here; `sink`/`capture` are swapped in around each callMain
@@ -309,6 +390,39 @@ export class EmscriptenEngineHost implements EngineHost {
     }
     this.memHeader = heap.slice(0, MEM_HEADER_SIZE);
     this.module = instance;
+    // Retain for on-demand resolution; the preload tiers are already mounted.
+    // Clear first: load() may run again on the SAME host (a prior init that
+    // failed mid-mount leaves the core accepting a re-init) against a FRESH
+    // engine whose FS has only the preload tier — a stale set would make an
+    // eager loadBundle() no-op and bundlesLoaded silently lie.
+    this.assets = assets;
+    this.loadedBundles.clear();
+    for (const name of assets.bundles.preload) this.loadedBundles.add(name);
+  }
+
+  /**
+   * Mount an on-demand tier into the LIVE engine, AFTER {@link load} took the
+   * memory snapshot (DESIGN.md §5.4). Idempotent: a name already mounted (a
+   * preload tier, or one loaded earlier) is a no-op. Resolves once the tier's
+   * files are FS-visible (kpathsea then finds them — core already ships the full
+   * ls-R, so no filename-database refresh is needed).
+   *
+   * NO re-snapshot is taken. The file_packager mount is a JS-HEAP operation — the
+   * MEMFS nodes, the LZ4 metadata, and the compressed `.data` all live in the JS
+   * heap, orthogonal to the snapshotted linear memory — so the mounted tier
+   * survives every post-`callMain` reset exactly as the preload tier does. Proven
+   * by the item-5 spike (docs/plans/M4-journal.md): after a post-init mount the
+   * low-64 MiB header is byte-identical to the snapshot AND the zero-past-header
+   * invariant still holds, i.e. the mount touches no linear memory.
+   */
+  async loadBundle(name: string): Promise<void> {
+    const module = this.requireModule();
+    const assets = this.assets;
+    if (assets === null) throw new Error('engine host used before load() resolved');
+    if (this.loadedBundles.has(name)) return;
+    const location = resolveBundleJsLocation(assets.baseUrl, assets.inventory, name);
+    await this.loader.mountDataPackage(module, location);
+    this.loadedBundles.add(name);
   }
 
   run(step: EngineRunStep, onLine: EngineLogSink): EngineRunResult {
@@ -464,6 +578,17 @@ export function createWorkerModuleLoader(): EngineModuleLoader {
       // module.preRun and mounts the bundle during the factory's preRun.
       scope.BusytexPipeline = module;
       importScripts(dataPackageLocation);
+    },
+    mountDataPackage(module: EngineModule, dataPackageLocation: string): Promise<void> {
+      // POST-INIT: the same carrier + importScripts, but now `Module.calledRun`
+      // is true, so the script's own `if (Module['calledRun']) runWithFS()`
+      // branch mounts into the live FS. Emscripten fetches the `.data` (the
+      // worker's own fetch/XHR — an asset load, no new network surface), so the
+      // mount finishes asynchronously; resolve when it is FS-visible.
+      return mountViaRunDependencies(module, () => {
+        scope.BusytexPipeline = module;
+        importScripts(dataPackageLocation);
+      });
     },
   };
 }

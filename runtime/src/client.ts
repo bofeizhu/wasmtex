@@ -397,9 +397,16 @@ function applyLocateAsset(
 
 /**
  * The assets the worker loads during init — engine wasm + its JS loader, plus
- * each preload bundle's JS + data blob (matched by name, leniently). Used ONLY
- * to derive coarse {@link AssetProgress} events; best-effort, so an unmatched
- * bundle name is simply not reported here (init itself surfaces a real mismatch).
+ * each preload AND on-demand tier's JS + data blob (matched by name, leniently).
+ * Used ONLY to derive coarse {@link AssetProgress} events; best-effort, so an
+ * unmatched bundle name is simply not reported here (init itself surfaces a real
+ * mismatch).
+ *
+ * On-demand tiers are included because M4 item 5 mounts the configured `onDemand`
+ * tiers eagerly DURING init (the worker mounts them before replying
+ * `initialized`), so the init progress bracket correctly reports them as fetched.
+ * When items 6–7 make on-demand loading lazy (§5.4), their progress will be
+ * reported from the lazy-load point instead of this init bracket.
  */
 function initLoadedAssets(config: AssetsConfig): readonly AssetEntry[] {
   const { inventory, bundles } = config;
@@ -407,7 +414,7 @@ function initLoadedAssets(config: AssetsConfig): readonly AssetEntry[] {
   for (const a of inventory.assets) {
     if (a.role === 'engine-wasm' || a.role === 'engine-js') out.push(a);
   }
-  for (const name of bundles.preload) {
+  for (const name of [...bundles.preload, ...bundles.onDemand]) {
     for (const a of inventory.assets) {
       if (a.role !== 'bundle-js' && a.role !== 'bundle-data') continue;
       const b = basename(a.path);

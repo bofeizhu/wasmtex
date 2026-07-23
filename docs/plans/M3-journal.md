@@ -704,3 +704,57 @@ AND starts `./`/`/` — a colon-suffixed filename can no longer hijack a block),
 format citation moved from `db.c` to the kpathsea manual. Post-fix: 8/8
 property tests green (idempotence, 50-shuffle order-independence, dup-header
 merge, content preservation, raw-byte sort, magic header, edge cases).
+
+## Item 7 — CI wires the wasm path
+
+Item 7 lands in slices because the standing no-local-build directive
+(docs/plans/M3.md) makes CI the *only* place the toolchain container runs, so the
+plumbing is proven before the heavy build job is wired.
+
+### Slice A — GHCR toolchain smoke (2026-07-23)
+
+**Image published.** The canonical arm64 toolchain image was pushed to GHCR:
+`ghcr.io/bofeizhu/wasmtex-toolchain:arm64-emsdk3.1.43`, 1.41 GB across 4 layers,
+manifest digest
+`sha256:8d1a570a366f485d9d12fb7d23519432b628db62de76235bd9e161af162a68cd`. Both
+`registry_ref` and `registry_digest` are pinned additively in pins.lock
+[toolchain-image-arm64] beside the existing `image_id` (`sha256:5d4af653…`, the
+local config id / reproducibility anchor). The GHCR package auto-linked to this
+repo — inheriting *private* visibility — via the
+`org.opencontainers.image.source=https://github.com/bofeizhu/wasmtex` OCI label
+already baked into build/toolchain/Dockerfile; no manual linking step.
+
+**Smoke workflow authored** — `.github/workflows/toolchain-smoke.yml`. It does
+NOT build artifacts (that is slice B); it proves the plumbing slice B depends on:
+(1) an arm64 runner (`ubuntu-24.04-arm`) logs in to GHCR with the repo-scoped
+`GITHUB_TOKEN` (`permissions: packages: read`); (2) pulls the image by **digest**,
+never the tag; (3) **identity gate** — `docker image inspect .Id` of the pulled
+image must equal the pinned `image_id`, the registry digest thereby proving it
+resolves to the exact canonical image bytes (mismatch = hard fail printing both
+ids); (4) toolchain sanity inside the container (`bash -lc`, whose login shell
+sources the emsdk profile): emcc 3.1.43, aarch64, plus node / bsdtar / python3;
+(5) disk / image-size / pull-time telemetry to the job summary — load-bearing
+input for sizing slice B's full build against the 14 GB runner-disk wall
+(M3-notes). Coordinates are parsed from pins.lock with the same section-scoped
+awk-block build/artifacts/build.sh uses for `pinned_id`, fail-loud on any empty
+value.
+
+**Triggers.** `workflow_dispatch` + push to `main` filtered to
+[`build/sources/pins.lock`, `build/toolchain/**`,
+`.github/workflows/toolchain-smoke.yml`]. The commit that lands the workflow also
+touches pins.lock, so it self-fires the first run.
+
+**Open question the first run answers.** Can Actions' `GITHUB_TOKEN` (with
+`packages: read`) pull a *private* package that is repo-linked only via the OCI
+source label — or does repo-linkage not by itself grant Actions pull access? The
+first run is the experiment. **Fallback if it cannot** (a one-time user action,
+not something CI self-serves): the package's settings → *Manage Actions access* →
+add this repository, or flip the package to public visibility. Recorded so the
+follow-up is unambiguous whichever way the run lands.
+
+No docker/container command ran on the dev machine for this slice — workflow
+authoring plus awk-parse and YAML/`bash -n` validation only.
+
+**Deviations.** None from DESIGN.md. This is CI plumbing; the §5 runtime
+contracts and §6 reproducibility anchor are untouched (the identity gate in fact
+enforces §6's image-bytes pin at pull time).

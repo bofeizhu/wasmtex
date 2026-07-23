@@ -1,0 +1,221 @@
+# SPDX-License-Identifier: MIT
+# Provenance: original work authored in the WasmTeX repository (see LICENSE).
+#   Not derived from any third-party source.
+#
+# WasmTeX toolchain smoke — GHCR pull + identity gate (M3 item 7, slice A).
+# =============================================================================
+# The FIRST job of the CI-only container lane. STANDING RULE (docs/plans/M3.md):
+# no container builds run on the dev machine — from here on the pinned toolchain
+# image is exercised only on CI runners. Slice A does NOT build artifacts; it
+# proves the plumbing that slice B (the full containerized wasm build) depends on:
+#
+#   1. A GitHub Actions arm64 runner authenticates to GHCR with the repo-scoped
+#      GITHUB_TOKEN and PULLS the private, repo-linked toolchain package by its
+#      pinned manifest digest (never the mutable tag).
+#   2. IDENTITY GATE: the pulled image's config id (docker image inspect .Id)
+#      equals the image_id pinned in build/sources/pins.lock
+#      [toolchain-image-arm64] — i.e. the registry digest resolves to the EXACT
+#      canonical image bytes the reproducible build is anchored to (DESIGN.md §6).
+#      Any mismatch fails the job loudly, printing both ids.
+#   3. The toolchain inside the image is the expected one: emcc 3.1.43, aarch64,
+#      plus node / bsdtar / python3 present.
+#   4. Runner disk / image size / pull time telemetry -> the job summary. The
+#      disk numbers are load-bearing: they calibrate slice B's full build job
+#      against the 14 GB runner-disk wall (docs/plans/M3-notes.md).
+# =============================================================================
+name: toolchain-smoke
+
+on:
+  workflow_dispatch:
+  # Filtered to the inputs that define which image CI must pull / how it is
+  # exercised. The commit that lands this workflow also touches pins.lock, so it
+  # fires the first run by itself.
+  push:
+    branches: [main]
+    paths:
+      - build/sources/pins.lock
+      - build/toolchain/**
+      - .github/workflows/toolchain-smoke.yml
+
+# Least privilege: read the checkout, pull the GHCR package. Nothing is written.
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  toolchain-smoke:
+    runs-on: ubuntu-24.04-arm
+    # A hung pull must fail fast, not run to the 360-min default.
+    timeout-minutes: 30
+    # Explicit bash = `bash -eo pipefail {0}` (the default run shell omits
+    # pipefail): a failed `df`/`docker` in a telemetry pipeline must fail the
+    # step, not silently zero the disk numbers slice B's sizing depends on.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      # Parse the pinned image coordinates from pins.lock with the SAME awk-block
+      # pattern build/artifacts/build.sh uses for `pinned_id`: section-scoped to
+      # [toolchain-image-arm64], value de-spaced, first match wins (so the later
+      # [toolchain-image] amd64 block cannot bleed in). Fail loud if any is empty
+      # — a renamed block or dropped key must stop the job, not pull nothing.
+      - id: pins
+        name: Parse pinned toolchain image coordinates (pins.lock)
+        run: |
+          lock="build/sources/pins.lock"
+          [ -r "$lock" ] || { echo "!! $lock missing/unreadable" >&2; exit 1; }
+          parse() {
+            awk -F= -v key="$1" '
+              /^\[/ { s = $0 }
+              s == "[toolchain-image-arm64]" && $1 ~ ("^ *" key " *$") {
+                gsub(/ /, "", $2); print $2; exit
+              }' "$lock"
+          }
+          registry_ref="$(parse registry_ref)"
+          registry_digest="$(parse registry_digest)"
+          image_id="$(parse image_id)"
+
+          missing=0
+          [ -n "$registry_ref" ]    || { echo "!! registry_ref empty in [toolchain-image-arm64] ($lock)" >&2;    missing=1; }
+          [ -n "$registry_digest" ] || { echo "!! registry_digest empty in [toolchain-image-arm64] ($lock)" >&2; missing=1; }
+          [ -n "$image_id" ]        || { echo "!! image_id empty in [toolchain-image-arm64] ($lock)" >&2;        missing=1; }
+          [ "$missing" -eq 0 ] || exit 1
+
+          # Digest-form pull target: repo path (tag stripped) @ manifest digest —
+          # never the mutable tag.
+          image_ref="${registry_ref%:*}@${registry_digest}"
+
+          {
+            echo "registry_ref=$registry_ref"
+            echo "registry_digest=$registry_digest"
+            echo "image_id=$image_id"
+            echo "image_ref=$image_ref"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "registry_ref    = $registry_ref"
+          echo "registry_digest = $registry_digest"
+          echo "image_id        = $image_id"
+          echo "image_ref       = $image_ref"
+
+      # Repo-scoped GITHUB_TOKEN + `packages: read`. Whether this pulls a PRIVATE,
+      # repo-linked package is the open question the first run answers (journal
+      # item 7); fallback is a one-time package-settings grant, a user action.
+      - name: Log in to GHCR (read-only, GITHUB_TOKEN)
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+      - id: pull
+        name: Pull canonical image by digest + record runner telemetry
+        env:
+          IMAGE_REF: ${{ steps.pins.outputs.image_ref }}
+        run: |
+          echo "Pull target (digest form): $IMAGE_REF"
+
+          df_before="$(df -h /)"
+          avail_before_gb="$(df -BG --output=avail / | awk 'NR==2 { gsub(/[^0-9]/, ""); print }')"
+
+          start="$(date +%s)"
+          docker pull "$IMAGE_REF"
+          end="$(date +%s)"
+          pull_secs=$(( end - start ))
+
+          df_after="$(df -h /)"
+          avail_after_gb="$(df -BG --output=avail / | awk 'NR==2 { gsub(/[^0-9]/, ""); print }')"
+
+          size_bytes="$(docker image inspect --format '{{.Size}}' "$IMAGE_REF")"
+          size_h="$(numfmt --to=iec --suffix=B "$size_bytes")"
+          used_gb=$(( avail_before_gb - avail_after_gb ))
+
+          {
+            echo "## Toolchain smoke — runner telemetry"
+            echo ""
+            echo "Runner: \`ubuntu-24.04-arm\` (\`${RUNNER_OS}/${RUNNER_ARCH}\`)"
+            echo ""
+            echo "| metric | value |"
+            echo "| --- | --- |"
+            echo "| image (digest ref) | \`${IMAGE_REF}\` |"
+            echo "| image size on disk | ${size_h} (${size_bytes} bytes) |"
+            echo "| pull wall time | ${pull_secs}s |"
+            echo "| free disk on \`/\` before pull | ${avail_before_gb} GB |"
+            echo "| free disk on \`/\` after pull | ${avail_after_gb} GB |"
+            echo "| disk consumed by pull | ${used_gb} GB |"
+            echo ""
+            echo "<details><summary><code>df -h /</code> before pull</summary>"
+            echo ""
+            echo '```'
+            echo "$df_before"
+            echo '```'
+            echo "</details>"
+            echo ""
+            echo "<details><summary><code>df -h /</code> after pull</summary>"
+            echo ""
+            echo '```'
+            echo "$df_after"
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Mirror the headline numbers into the step log for quick scanning.
+          echo "image size : $size_h ($size_bytes bytes)"
+          echo "pull time  : ${pull_secs}s"
+          echo "free /      : ${avail_before_gb} GB -> ${avail_after_gb} GB (consumed ${used_gb} GB)"
+
+      # IDENTITY GATE. The pinned image_id is the image CONFIG digest (local
+      # image id); registry_digest is the MANIFEST digest we pulled by. For the
+      # same image bytes the config digest is stable across push/pull, so the
+      # pulled .Id MUST equal the pinned image_id. Mismatch = the registry digest
+      # did not resolve to the canonical bytes -> hard fail with both ids.
+      - name: Identity gate — pulled image .Id must equal pinned image_id
+        env:
+          IMAGE_REF: ${{ steps.pins.outputs.image_ref }}
+          PINNED_ID: ${{ steps.pins.outputs.image_id }}
+        run: |
+          got_id="$(docker image inspect --format '{{.Id}}' "$IMAGE_REF")"
+          echo "pulled .Id : $got_id"
+          echo "pinned id  : $PINNED_ID"
+          if [ "$got_id" != "$PINNED_ID" ]; then
+            {
+              echo "!! IDENTITY GATE FAILED — the registry digest did NOT resolve to the"
+              echo "   canonical image bytes pinned in build/sources/pins.lock."
+              echo "     pulled .Id : $got_id"
+              echo "     pinned id  : $PINNED_ID  ([toolchain-image-arm64])"
+            } >&2
+            exit 1
+          fi
+          echo "Identity gate passed: registry digest resolves to the exact canonical image bytes."
+
+      # Login shell (bash -lc) so /etc/profile.d/emsdk.sh sources the emsdk env
+      # (bundled node onto PATH) — see build/toolchain/Dockerfile. emcc resolves
+      # via the image's ENV PATH; node only via the login-shell profile.
+      - name: Toolchain sanity inside the container
+        env:
+          IMAGE_REF: ${{ steps.pins.outputs.image_ref }}
+        run: |
+          docker run --rm "$IMAGE_REF" bash -lc '
+            set -e
+            emcc_v="$(emcc --version)"
+            node_v="$(node --version)"
+            arch="$(uname -m)"
+            bsdtar_v="$(bsdtar --version)"
+            py_v="$(python3 --version 2>&1)"
+
+            echo "emcc     : $emcc_v"
+            echo "node     : $node_v"
+            echo "uname -m : $arch"
+            echo "bsdtar   : $bsdtar_v"
+            echo "python3  : $py_v"
+
+            echo "-- assertions --"
+            case "$emcc_v" in
+              *3.1.43*) echo "ok: emcc 3.1.43" ;;
+              *) echo "FAIL: emcc is not 3.1.43" >&2; exit 1 ;;
+            esac
+            [ "$arch" = "aarch64" ] || { echo "FAIL: arch is $arch, expected aarch64" >&2; exit 1; }
+            echo "ok: aarch64"
+            command -v bsdtar >/dev/null 2>&1 || { echo "FAIL: bsdtar missing" >&2; exit 1; }
+            echo "ok: bsdtar present"
+          '

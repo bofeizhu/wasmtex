@@ -186,7 +186,9 @@ emsdk_commit        = d9c66fa2c2cd78daeb672967b2ef12bf18adf842
 emsdk_release       = bf3c159888633d232c0507f4c76cc156a43c32dc
 image_id            = sha256:5d4af6533004f8d9c71857dfc9babb2c0757263410fad4af199543b9c49630dc
 platform            = linux/arm64
-comment             = CANONICAL builder (M3 item 3). Native arm64. ubuntu_digest = the index->arm64/v8 platform digest; the Dockerfile FROM pins ubuntu_index_digest and --platform linux/arm64 selects this. emsdk_release = the emscripten-releases hash 3.1.43 resolves to; its linux-arm64 prebuilt (wasm-binaries-arm64.tbz2, 242978805 B) is CONFIRMED present — SAME emsdk pin as [toolchain-image]/native, only the platform binaries differ (linux-arm64). image_id is the repro anchor.
+registry_ref        = ghcr.io/bofeizhu/wasmtex-toolchain:arm64-emsdk3.1.43
+registry_digest     = sha256:8d1a570a366f485d9d12fb7d23519432b628db62de76235bd9e161af162a68cd
+comment             = CANONICAL builder (M3 item 3). Native arm64. ubuntu_digest = the index->arm64/v8 platform digest; the Dockerfile FROM pins ubuntu_index_digest and --platform linux/arm64 selects this. emsdk_release = the emscripten-releases hash 3.1.43 resolves to; its linux-arm64 prebuilt (wasm-binaries-arm64.tbz2, 242978805 B) is CONFIRMED present — SAME emsdk pin as [toolchain-image]/native, only the platform binaries differ (linux-arm64). image_id is the repro anchor. registry_digest (M3 item 7): the GHCR manifest digest of the SAME image bytes, pushed 2026-07-23 from the dev machine — CI pulls ghcr.io/bofeizhu/wasmtex-toolchain@registry_digest and must land on image_id.
 
 [toolchain-image]
 kind                = container

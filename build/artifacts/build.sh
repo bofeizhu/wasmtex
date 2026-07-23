@@ -2,39 +2,46 @@
 # SPDX-License-Identifier: MIT
 # Provenance: original work authored in the WasmTeX repository (see LICENSE).
 #   Not derived from any third-party source. Intentionally boring and readable
-#   (style-matched to build/toolchain/build-image.sh).
+#   (style-matched to build/toolchain/build-image.sh and build-native.sh).
 #
-# ============================================================================
-# !! PARKED (M3) — STALE PATH. This container flow still mounts the M0 staging
-#    tree `build/upstream/busytex` as /machinery (see `machinery=` below), which
-#    was RETIRED at M2 item 3 when the build config was forked into
-#    `build/engines/`. It therefore does NOT run as-is (the preflight fails on
-#    the missing machinery). It is intentionally left un-rewritten per the M2
-#    item-3 plan: it is fully re-pinned and re-pointed at `build/engines/` on
-#    arm64 at the M3 build-logistics milestone (DESIGN.md §9). Until then, use
-#    the active native flow, `build/artifacts/build-native.sh`.
-# ============================================================================
-#
-# WasmTeX M0 "faithful baseline" build — host side (M0 item 4).
+# WasmTeX CANONICAL artifact build — host side (M3 item 4).
 # =============================================================================
-# Runs the vendored busytex build inside the pinned wasmtex-toolchain image,
-# fully OFFLINE (`--network none`), against the verified cache at
-# ~/.cache/wasmtex/sources, and lands the artifacts in dist/. The heavy build
-# tree lives on a named docker volume (VM-native fs, fast under Rosetta); only
-# the small dist/ output crosses the host bind mount.
+# Runs OUR maintained engine build config (build/engines/) inside the pinned
+# CANONICAL arm64 toolchain image (build/sources/pins.lock [toolchain-image-arm64]),
+# fully OFFLINE (`--network none`), against the verified source cache at
+# ~/.cache/wasmtex/sources, and lands the artifacts in dist/. This is the
+# container mirror of build/artifacts/build-native.sh: the SAME stage sequence
+# (prep -> native -> basic -> wasm -> bundle -> dist, ending in the execution
+# gate), the SAME offline pre-staging, the SAME reproducibility epoch — but on a
+# native arm64 Linux GNU userland, which needs NONE of the native driver's
+# macOS-specific make overrides (Apple frameworks, cmake-4 policy floor, the
+# LDFLAGS trim, the URL-blank offline enforcement). See run-in-container.sh for
+# the enumerated native-vs-container delta.
 #
-# The `artifacts` target of the repo-root Makefile delegates here.
+# Per DESIGN.md §9's constitutional floor, ONLY container-built, pin-verified
+# artifacts are ever released; the native flow is a development vehicle. This is
+# that canonical builder (DESIGN.md §9 amendment: arm64 Linux, no Rosetta).
+#
+# The heavy build tree lives on a named docker volume (VM-native fs, fast — a
+# macOS bind mount would drag the multi-GB TL source tree + ~6.5 GB texmfrepo
+# ISO staging through virtiofs). Only the small dist/ output crosses the host
+# bind mount. WORK-TREE POLICY (reproducibility, M3 items 5/6): a full build
+# (STAGE=all) or its first phase (STAGE=prep) WIPES and recreates the volume, so
+# every build starts from a pristine tree — the build-twice repro gate must not
+# be contaminated by incremental state. A single-stage resume reuses the volume.
+#
+# The `artifacts-container` target of the repo-root Makefile delegates here.
 #
 # Usage:
 #   build/artifacts/build.sh                 # full pipeline (stage: all)
 #   WASMTEX_STAGE=native build/artifacts/build.sh   # one stage (prep|native|
-#                                                   #  basic|wasm|bundle|dist|all)
+#                                                   #  basic|wasm|bundle|dist|verify|all)
 # Env overrides:
 #   WASMTEX_CACHE_DIR   pinned-source cache (default ~/.cache/wasmtex/sources)
-#   WASMTEX_TOOLCHAIN_TAG   image tag (default wasmtex-toolchain:dev)
-#   WASMTEX_JOBS        make parallelism (MAKEFLAGS=-jN) in the container (def 2)
-#   SOURCE_DATE_EPOCH   repro epoch (default: busytex pin commit date)
-#   WASMTEX_VOLUME      docker volume for the build tree (default wasmtex-m0-work)
+#   WASMTEX_TOOLCHAIN_TAG   image tag (default wasmtex-toolchain:arm64-dev)
+#   WASMTEX_JOBS        make parallelism (MAKEFLAGS=-jN); default: container nproc
+#   SOURCE_DATE_EPOCH   repro epoch (default: TL 2026 freeze 2026-03-01)
+#   WASMTEX_VOLUME      docker volume for the build tree (default wasmtex-work)
 #   WASMTEX_ALLOW_IMAGE_MISMATCH=1  proceed even if the image id != pins.lock
 # =============================================================================
 set -euo pipefail
@@ -44,28 +51,31 @@ repo="$(cd "$here/../.." && pwd)"
 
 stage="${WASMTEX_STAGE:-all}"
 cache_dir="${WASMTEX_CACHE_DIR:-$HOME/.cache/wasmtex/sources}"
-image_tag="${WASMTEX_TOOLCHAIN_TAG:-wasmtex-toolchain:dev}"
-volume="${WASMTEX_VOLUME:-wasmtex-m0-work}"
-# Default -j1: GNU Make's pipe jobserver is unreliable under this host's
-# Rosetta x86_64 emulation (aborts with "write jobserver: Bad file descriptor"
-# for -jN>1); -j1 uses no jobserver and is safe. Raise WASMTEX_JOBS on a real
-# x86_64 builder. Supplied to make as env MAKEFLAGS inside the container, never
-# a command-line -jN. See the journal's "native attempt … jobserver" notes.
-jobs="${WASMTEX_JOBS:-1}"
-container_name="${WASMTEX_CONTAINER_NAME:-wasmtex-m0-build}"
-# busytex pin commit date (f2bd7b11, 2026-06-16 16:06:37 +0200); see the journal.
-source_date_epoch="${SOURCE_DATE_EPOCH:-1781618797}"
+image_tag="${WASMTEX_TOOLCHAIN_TAG:-wasmtex-toolchain:arm64-dev}"
+volume="${WASMTEX_VOLUME:-wasmtex-work}"
+container_name="${WASMTEX_CONTAINER_NAME:-wasmtex-build}"
+# make parallelism: native arm64 Linux has a working jobserver (the -j1
+# constraint was Rosetta-x86_64-only). Left EMPTY here so run-in-container.sh
+# defaults to the container's nproc; WASMTEX_JOBS overrides on either side.
+jobs="${WASMTEX_JOBS:-}"
+# TL 2026 freeze date, 2026-03-01T00:00:00Z = 1772323200 — the SAME epoch as the
+# native driver (build-native.sh), the source tag (texlive-2026.0) and the ISO,
+# so container and native artifacts are epoch-comparable (M3 items 5/6).
+source_date_epoch="${SOURCE_DATE_EPOCH:-1772323200}"
 
-machinery="$repo/build/upstream/busytex"
+engines="$repo/build/engines"
+manifest="$repo/build/manifest"
 dist="$repo/dist"
 
-# --- Preflight: pinned inputs + image identity -------------------------------
-# Existence check only: content integrity is fetch-time (fetch.sh verifies
-# every hash), not build-time — re-hashing the 4.8 GiB ISO per build is not
-# worth it. Run build/sources/fetch.sh to (re)verify the cache.
+# --- Preflight: pinned inputs + config + image identity ----------------------
+# Existence check only: content integrity is fetch-time (fetch.sh verifies every
+# hash), not build-time — re-hashing the 6.5 GiB ISO per build is not worth it.
+# Run build/sources/fetch.sh to (re)verify the cache. Names track the TL 2026
+# pins ([texlive-source-2026] / [texlive-iso-2026]); expat/fontconfig serve both
+# TL years (pins.lock).
 required_inputs=(
-  texlive-source-2023.0.tar.gz expat-2.5.0.tar.gz
-  fontconfig-2.13.96.tar.gz texlive2023-20230313.iso
+  texlive-source-2026.0.tar.gz expat-2.5.0.tar.gz
+  fontconfig-2.13.96.tar.gz texlive2026-20260301.iso
 )
 missing=0
 for f in "${required_inputs[@]}"; do
@@ -79,26 +89,33 @@ if [ "$missing" -ne 0 ]; then
   exit 1
 fi
 
-if [ ! -f "$machinery/Makefile" ]; then
-  echo "!! vendored busytex machinery not found at $machinery" >&2
+if [ ! -f "$engines/Makefile" ]; then
+  echo "!! engine build config not found at $engines/Makefile" >&2
   exit 1
 fi
 
-# Faithful-baseline builds must use the pinned toolchain image. Compare the
-# local image id against build/sources/pins.lock [toolchain-image]. A missing
-# lock file must fail loud, not degrade to accepting any image.
+# Released artifacts must come from the pinned CANONICAL image. Compare the local
+# image id against build/sources/pins.lock [toolchain-image-arm64]. A missing lock
+# file must fail loud, not degrade to accepting any image.
 lock="$repo/build/sources/pins.lock"
 [ -r "$lock" ] || { echo "!! $lock missing/unreadable — cannot verify image pin" >&2; exit 1; }
-pinned_id="$(awk -F= '/^\[/{s=$0} s=="[toolchain-image]" && $1 ~ /^ *image_id *$/ {gsub(/ /,"",$2); print $2; exit}' "$lock" || true)"
+pinned_id="$(awk -F= '/^\[/{s=$0} s=="[toolchain-image-arm64]" && $1 ~ /^ *image_id *$/ {gsub(/ /,"",$2); print $2; exit}' "$lock" || true)"
+# Empty pinned_id (renamed block, dropped key, awk drift at a future re-pin)
+# must fail loud, not degrade to accepting any image on the canonical builder.
+if [ -z "$pinned_id" ]; then
+  echo "!! image_id not found in [toolchain-image-arm64] ($lock) — cannot verify image pin" >&2
+  [ "${WASMTEX_ALLOW_IMAGE_MISMATCH:-0}" = "1" ] || exit 1
+  echo "   WASMTEX_ALLOW_IMAGE_MISMATCH=1 set; proceeding UNVERIFIED." >&2
+fi
 local_id="$(docker image inspect --format '{{.Id}}' "$image_tag" 2>/dev/null || true)"
 if [ -z "$local_id" ]; then
-  echo "!! image $image_tag not found — build it with build/toolchain/build-image.sh" >&2
+  echo "!! image $image_tag not found — build it with build/toolchain/build-image.sh arm64" >&2
   exit 1
 fi
 if [ -n "$pinned_id" ] && [ "$local_id" != "$pinned_id" ]; then
   echo "!! image id mismatch:" >&2
   echo "     local:  $local_id" >&2
-  echo "     pinned: $pinned_id  (build/sources/pins.lock)" >&2
+  echo "     pinned: $pinned_id  (build/sources/pins.lock [toolchain-image-arm64])" >&2
   if [ "${WASMTEX_ALLOW_IMAGE_MISMATCH:-0}" != "1" ]; then
     echo "   set WASMTEX_ALLOW_IMAGE_MISMATCH=1 to proceed anyway." >&2
     exit 1
@@ -107,36 +124,57 @@ if [ -n "$pinned_id" ] && [ "$local_id" != "$pinned_id" ]; then
 fi
 
 mkdir -p "$dist"
-docker volume create "$volume" >/dev/null
 
-# Reuse a single fixed container name; remove any prior instance so a failed
-# stage's container (kept for post-mortem — no --rm) does not block the rerun.
+# Reclaim any prior container FIRST (a kept post-mortem container holds the
+# volume open, so the wipe below would fail otherwise).
 docker rm -f "$container_name" >/dev/null 2>&1 || true
 
-echo ">> WasmTeX M0 artifacts build"
+# Work-tree policy (see header): a full build or its prep phase starts from a
+# pristine volume; a single-stage resume reuses the in-progress one.
+case "$stage" in
+  all|prep)
+    docker volume rm "$volume" >/dev/null 2>&1 || true
+    docker volume create "$volume" >/dev/null
+    ;;
+  verify)
+    # verify only reads /dist — no work volume required.
+    docker volume create "$volume" >/dev/null 2>&1 || true
+    ;;
+  *)
+    if ! docker volume inspect "$volume" >/dev/null 2>&1; then
+      echo "!! work volume $volume not found — run STAGE=prep (or STAGE=all) first" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+echo ">> WasmTeX canonical artifacts build (arm64 container)"
 echo "   stage:       $stage"
 echo "   image:       $image_tag ($local_id)"
 echo "   container:   $container_name  (kept on exit for post-mortem)"
 echo "   cache:       $cache_dir  (mounted ro, --network none)"
-echo "   work volume: $volume"
+echo "   config:      $engines  (build/engines, mounted ro)"
+echo "   work volume: $volume  ($([ "$stage" = all ] || [ "$stage" = prep ] && echo 'fresh (clean per build)' || echo 'reused (resume)'))"
 echo "   dist:        $dist"
-echo "   jobs:        MAKEFLAGS=-j$jobs   SOURCE_DATE_EPOCH=$source_date_epoch"
+echo "   jobs:        MAKEFLAGS=-j${jobs:-<nproc>}   SOURCE_DATE_EPOCH=$source_date_epoch"
 
 # --- Run the pipeline inside the pinned container, offline -------------------
-# bash -l sources the emsdk env (per the Dockerfile's login-shell profile).
-# No --rm: on a multi-hour build a crashed stage must leave its container so its
-# logs survive (`docker logs $container_name`); the rm -f above reclaims it next
-# run. `docker wait $container_name` gives a clean blocking completion signal.
+# bash -l sources the emsdk env (per the Dockerfile's login-shell profile), so
+# emcc/emar/node are on PATH. No --rm: on a multi-hour build a crashed stage must
+# leave its container so its logs survive (`docker logs $container_name`); the
+# rm -f above reclaims it next run. The foreground `docker run` below IS the
+# blocking completion signal.
 docker run \
   --name "$container_name" \
-  --platform linux/amd64 \
+  --platform linux/arm64 \
   --network none \
   -e "SOURCE_DATE_EPOCH=$source_date_epoch" \
   -e "FORCE_SOURCE_DATE=1" \
-  -e "WASMTEX_JOBS=$jobs" \
+  ${jobs:+-e "WASMTEX_JOBS=$jobs"} \
   -v "$cache_dir":/cache:ro \
-  -v "$machinery":/machinery:ro \
+  -v "$engines":/engines:ro \
   -v "$here":/glue:ro \
+  -v "$manifest":/manifest:ro \
   -v "$dist":/dist \
   -v "$volume":/work \
   "$image_tag" \

@@ -5,6 +5,39 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-23 — M3 item 4: the canonical container build is green
+
+**Done.** `coder` agent revived the parked container flow onto
+build/engines + the 2026 pins + the arm64 image: same stage sequence,
+offline pre-staging, and verify gate as the native driver — but
+--network none is the hard offline enforcement, none of the macOS
+overrides apply (enumerated delta journaled), and the work tree is a
+named volume WIPED per full build (repro discipline the dev flow
+deliberately doesn't have). First full in-container build: **~34 min**
+(native 10m, wasm 22.5m), execution gate green, and ALL gates green
+against the container-built dist/ — independently re-run (gate,
+186/186, conformance 4/4, smoke 4/4, audit). `--use-preload-cache`
+dropped from the bundle step: the M1-journaled IndexedDB deviation is
+REMOVED (§5.2 optional-adapter posture restored; texlive-basic.js
+−7.5 KB; A/B de-risked before the build).
+
+**The comparison preview (item 5/6 map).** Container vs native (same
+arch, different userland): glue JS BIT-IDENTICAL; busytex.wasm differs
+by 6,220 B of which ~95% is __FILE__ build-path leakage (116 strings ×
+51-char prefix delta — item 6 action: -ffile-prefix-map, then
+re-diff); the .fmt dumps differ with ZERO path leakage — the
+host-compiler signature of the native engine's format dumps, the
+plan's original suspicion confirmed (irrelevant to releases: shipped
+formats are container-dumped). Canonical comparisons remain the
+container pair.
+
+**Review (approve + fixes).** clean-artifacts pointed at the retired
+2023 work tree (fixed here, not chipped); empty pinned_id would have
+silently accepted any image on the canonical builder (fail-loud guard
+added); STAGE=verify needed no work volume (arm added, exercised
+live); set -e now covers the container script's preamble; a stale
+docker-wait comment corrected.
+
 ## 2026-07-23 — M3 items 2+3: ISO re-check; arm64 canonical container
 
 **Item 2.** historic/2026/ still has no consolidated ISO (404);

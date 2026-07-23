@@ -31,10 +31,12 @@
 #   make artifacts STAGE=verify    # execution gate alone (env imports + engine run)
 # STAGE defaults to `all`.
 #
-# `make artifacts-container` (PARKED for M3): the pinned-container flow built in
-# the original M0. Superseded as the M0 path by the native-first pivot; it
-# returns as the canonical builder at M3 (build logistics & CI). See
-# build/artifacts/README.md.
+# `make artifacts-container` (M3 item 4): the CANONICAL builder — the same engine
+# config, offline pre-staging, stage sequence and verify gate as the native flow,
+# run inside the pinned arm64 toolchain image (pins.lock [toolchain-image-arm64]),
+# fully offline. Per DESIGN.md §9 only container-built, pin-verified artifacts are
+# ever released; the native flow above is a development vehicle. Same STAGE knob.
+# See build/artifacts/README.md.
 # =============================================================================
 
 .PHONY: artifacts artifacts-container clean-artifacts rebase-check
@@ -45,7 +47,7 @@ STAGE ?= all
 artifacts:
 	WASMTEX_STAGE=$(STAGE) build/artifacts/build-native.sh
 
-# Container flow (parked for M3). Kept reachable, unchanged.
+# Container flow (M3 canonical builder). Same STAGE knob as `artifacts`.
 artifacts-container:
 	WASMTEX_STAGE=$(STAGE) build/artifacts/build.sh
 
@@ -84,9 +86,9 @@ rebase-check:
 	@echo "== rebase-check: all acceptance gates green =="
 
 # Remove the assembled dist/ output and the native build tree. Does not touch
-# the pinned source cache or the toolchain. The (parked) container flow's docker
+# the pinned source cache or the toolchain. The container flow's docker work
 # volume is also removed if present (harmless no-op without docker).
 clean-artifacts:
 	rm -rf dist
-	rm -rf "$${WASMTEX_WORK_DIR:-$$HOME/.cache/wasmtex/build/native/busytex}"
-	-docker volume rm $${WASMTEX_VOLUME:-wasmtex-m0-work} 2>/dev/null
+	rm -rf "$${WASMTEX_WORK_DIR:-$$HOME/.cache/wasmtex/build/native/busytex-2026}"
+	-docker volume rm $${WASMTEX_VOLUME:-wasmtex-work} 2>/dev/null

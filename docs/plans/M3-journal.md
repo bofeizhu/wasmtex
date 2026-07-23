@@ -233,3 +233,230 @@ quoting produced invalid C — the published command is now the verified
 `puts` variant, matching what actually ran); THIRD_PARTY_NOTICES' pin
 table moved to the 2026 ids (stale since the M2 item-9 retirement).
 Post-rebuild smoke re-verified: emcc 3.1.43, aarch64.
+
+---
+
+## Item 4 — Containerized build green (arm64 canonical builder)
+
+Dated 2026-07-23. Goal (M3 plan item 4): revive the M0-parked container flow
+(`build/artifacts/build.sh` + `run-in-container.sh`), re-pointed at `build/engines/`
++ the TL 2026 pins + the arm64 canonical image, and land a full `dist/` from a
+fully-offline in-container build with every gate green against it. Fold in the
+`--use-preload-cache` drop (the M1-journaled §5.2 deviation). This is the first
+time OUR engine config (forked native-only at M2) is built in the container.
+
+### Revival delta — the two scripts
+
+Both scripts had their `!! PARKED (M3) — STALE PATH` banners removed and headers
+rewritten for the canonical-builder role. Substantive re-pointing:
+
+**`build.sh` (host side):**
+
+| axis | M0-parked | revived (M3) |
+| --- | --- | --- |
+| config mount | `build/upstream/busytex` → `/machinery` | `build/engines` → `/engines` (+ `build/manifest` → `/manifest` for gen-assets) |
+| image tag | `wasmtex-toolchain:dev` | `wasmtex-toolchain:arm64-dev` |
+| `--platform` | `linux/amd64` | `linux/arm64` |
+| image-id pin | `[toolchain-image]` | `[toolchain-image-arm64]` |
+| required inputs | TL 2023 names | `texlive-source-2026.0.tar.gz`, `texlive2026-20260301.iso` |
+| `SOURCE_DATE_EPOCH` | `1781618797` (busytex 2023 commit) | `1772323200` (TL 2026 freeze — **matches the native driver**, so artifacts are epoch-comparable) |
+| jobs | `-j1` (Rosetta jobserver bug) | container `nproc` (native arm64 jobserver works; the `-j1` rule was Rosetta-only) |
+| work volume | `wasmtex-m0-work` | `wasmtex-work` (+ clean-per-build policy, below) |
+
+**`run-in-container.sh` (container side):**
+
+- Config file set: M0's 9-file `MACHINERY_FILES` (packfs.c/.py, cosmo_getpass.h,
+  ubuntu_package_preload.py, busytex_pipeline.js, busytex_worker.js) → the trimmed
+  **3-file** set (`Makefile busytex.c emcc_wrapper.py`) — the M2 item-3 fork
+  dropped packfs/Cosmopolitan/ubuntu-.deb/worker-glue entirely.
+- Build tree root `/work/busytex` → `/work` (mirrors `build-native.sh`'s `$work`
+  root layout, so the container and native trees are structurally identical).
+- `do_dist` **rewritten to match `build-native.sh` `do_dist` byte-for-byte**: it no
+  longer copies the vendored `busytex_pipeline.js`/`busytex_worker.js` into `dist/`
+  (dropped from the shipped set at M2 item 3), and it now runs the two steps the
+  M0 container side predated — `gen-assets.mjs` (the `assets.json` inventory) and
+  the **execution gate** (`verify-engine.mjs`). Checksums use Linux `sha256sum`,
+  whose `<hash>␠␠<path>` output is byte-identical to the native driver's
+  `shasum -a 256`, so `SHA256SUMS` is directly comparable across the two builds.
+- `do_prep` applies **no** source patches (`build/patches/*/*.patch`) — see the
+  delta note below.
+
+### Work-tree decision — named volume, clean per build
+
+**Chosen:** a **named docker volume** (`wasmtex-work`), **wiped and recreated on
+`STAGE=all`/`STAGE=prep`** (a single-stage resume reuses it).
+
+**Why a volume, not a bind mount:** the build tree is the multi-GB TL source tree
++ ~6.5 GB texmfrepo ISO staging + all build objects. A macOS host bind mount drags
+every one of those bytes through the slow virtiofs/gRPC-FUSE layer; a named volume
+lives on the VM-native ext4 and is fast (prep — including the 6.5 GB ISO `bsdtar`
+— completed in ~29 s on a fresh volume). Only the small `dist/` output crosses a
+bind mount. This is the same rationale M0 used.
+
+**Why clean-per-build (the new part):** M3 item 5 (build-twice reproducibility)
+and item 6 (three-way equivalence) require that each build start from a **pristine
+tree** — incremental configure caches, dumped `.fmt`, or leftover objects would
+confound a byte-for-byte diff. So a full build wipes the volume first. This
+deliberately diverges from the native driver, which is *incremental/resumable*
+(it keeps `busytex-2026/` across runs) — a development-speed choice that the
+canonical/repro builder must not inherit. Single-stage resumes still reuse the
+volume so a crashed multi-hour build can be babysat stage-by-stage against its
+partial tree.
+
+### Native-vs-container override delta (enumerated)
+
+`build-native.sh` injects a `macos_overrides` array on every `make`; the container
+driver injects **none** of it, because the image is a Linux GNU userland, not
+macOS. Each override is native-scoped and its *absence* is correct in-container:
+
+| native override | why native needs it | container: |
+| --- | --- | --- |
+| `CMAKE_native` / `CMAKE_wasm` `+= -DCMAKE_POLICY_VERSION_MINIMUM=3.5` | Homebrew cmake 4.x dropped the pre-3.5 policy expat 2.5.0 declares | apt cmake is **3.22** (< 4) → old `cmake_minimum_required` honoured as-is. Omit. |
+| `LDFLAGS_TEXLIVE_native = -lm -pthread` | trims the Linux static/`-ldl`/`--unresolved-symbols` flags Apple ld rejects | the Makefile **default** (full Linux LDFLAGS) is exactly right. Omit → default applies. |
+| `OPTS_BUSYTEX_LINK_native = … -framework CoreFoundation … AppKit` | XeTeX's macOS CoreText/AppKit font backend needs Apple frameworks | XeTeX on Linux uses the fontconfig/freetype backend, links no frameworks. Omit → Makefile default (Linux `-ldl -lm -pthread …`) applies. |
+| `URL_texlive` / `URL_expat` / `URL_fontconfig` / `URL_texlive_full_iso_cache` = (blank) | no network namespace on the host → a missed pre-stage must fail *closed* rather than curl an unpinned source | `--network none` is the hard enforcement; the URLs stay documentary. Omit. |
+
+Not a delta (host-agnostic, already folded into `build/engines/Makefile`):
+`OPTS_LIBS_wasm = AR=$(AR_wasm)` (emar for wasm archives) — fixes the hollow-wasm
+defect on a BSD-ar host; a harmless no-op under GNU ar (format-agnostic).
+
+**Source patches:** `build/patches/` holds two entries (`zlib-macos-fdopen`,
+`libpng-macos-fp-h`), both **RETIRED** at M2 item 4 (header-only, the `.patch`
+diffs removed) and both macOS-scoped anyway (a `TARGET_OS_MAC` false-positive that
+never fires on Linux). So `build-native.sh`'s `apply_macos_patches` is *already* a
+no-op today, and the container omitting patch application is exactly equivalent.
+
+### Dropping `--use-preload-cache` (M3 plan fold-in; §5.2 restored)
+
+Removed ` --use-preload-cache` from the `build/wasm/texlive-%.js` file_packager
+recipe in `build/engines/Makefile`, and added a header mod-list bullet. Upstream
+busytex built the bundle with that flag, so the generated `texlive-basic.js`
+**unconditionally** cached the ~50 MB `.data` into an `EM_PRELOAD_CACHE` IndexedDB
+store on every browser/worker load — the M1-journaled always-on-persistence
+deviation from DESIGN §5.2 ("the library never *requires* IndexedDB … persistence
+is an optional adapter"). This restores the strict posture.
+
+**De-risked empirically before the build** (A/B of `file_packager.py` in the
+pinned image, minimal preload bundle with vs without the flag):
+
+- **without** the flag: **zero** `EM_PRELOAD_CACHE`/`openDatabase`/`preloadFallback`/
+  `indexedDB` markers, **no** `throw 'using IndexedDB…'`, and `runWithFS` calls
+  `fetchRemotePackage` directly. `.js` 6074 B vs 13530 B with the flag.
+- Both loaders stay correct: the browser worker (`createWorkerModuleLoader`) only
+  ever had the IDB store/read *added on top* of a fetch it already did → removing it
+  is pure §5.2 posture, correctness unchanged. The node test/conformance loader
+  (`runtime/node/node-engine-loader.ts`) injects `require`/`process` (drives the
+  node `fs` read regardless) and `location`/`self` (now harmless no-ops — no IDB
+  probe left to steer); `window` stays uninjected so the `typeof window` deref is
+  never reached.
+
+**Bundle delta (native regen under the new Makefile, before the container build):**
+`texlive-basic.js` 1,459,979 → **1,452,511 B** (−7,468 B, the removed IDB machinery),
+new sha256 `9c3daf2b…` (was `1a8f4089…`); `texlive-basic.data` **byte-identical**
+(52,775,230 B, sha256 `5ead5862…` — the `.data` content is independent of the
+loader flag). The native execution gate passed on the regenerated bundle (XeTeX,
+`TeX Live 2026`, exit 0), confirming the change is sound before committing to the
+multi-hour container build. This regenerated native `dist/` is the clean item-5
+baseline (both sides now post-flag-drop, so the container-vs-native diff isolates
+*platform*, not this config change).
+
+### Docs / Makefile touched
+
+- Root `Makefile`: `artifacts-container` target + header comment flipped from
+  "PARKED for M3" to the canonical builder; `clean-artifacts` volume default
+  `wasmtex-m0-work` → `wasmtex-work`.
+- `build/artifacts/README.md`: PARKED/STALE banners removed; documents the two
+  drivers, the work-tree policy, and the offline mechanism.
+
+### Build run + timings
+
+Full `make artifacts-container` (STAGE=all) on the 8-vCPU native arm64 host,
+`--network none`, fresh `wasmtex-work` volume. Exit 0; container `wasmtex-build`
+exited 0. Per-stage wall (from the log's UTC banners):
+
+| stage | wall | note |
+| --- | --- | --- |
+| prep | ~29 s | config sync + 3 tarballs + 6.5 GB ISO `bsdtar`, fresh volume |
+| native | ~10 m 08 s | native multicall busytex (gcc arm64, `-j8`) |
+| basic | ~36 s | install-tl texlive-basic + `.fmt` dump |
+| wasm | ~22 m 33 s | wasm multicall (emsdk clang, `-j8`) — the long pole |
+| bundle | ~1 s | file_packager (no `--use-preload-cache`) |
+| dist+verify | ~2 s | assemble + `assets.json` + execution gate |
+| **total** | **~33 m 49 s** | well under the 60–90 m estimate (8-core, native, no Rosetta) |
+
+Benign non-fatal log noise (all shared with the native build, none aborting):
+freetype's `cp: cannot stat '…/docs/markdown'` (a refdoc dir absent from the
+tarball), the `-cp …/*.c` glob (leading `-` → make ignores), and the ICU-rule
+comment text ("cannot read font names") echoed by make. No `make *** Error`.
+
+### Gate outcomes (all against the container-built `dist/`)
+
+| gate | result |
+| --- | --- |
+| execution gate (in-container, `verify-engine.mjs`) | **PASS** — xetex `TeX Live 2026`, exit 0; env-imports 53 (ceiling 150); `assets.json` 7 entries |
+| execution gate (host rerun vs landed `dist/`) | **PASS** — dist/ landed intact across the bind mount |
+| `gen-assets` (assets.json inventory) | **green** — 7 entries, hashes cross-checked in-build |
+| runtime suite (`typecheck` + `vitest`) | **PASS** — typecheck clean; **186/186** (10 files), incl. **8 real-wasm** integration tests (xetex→xdvipdfmx, crossref reruns, bibtex8 e2e, public API, cancel+reinit, broken-doc diagnostics) |
+| conformance corpus | **4/4** — bib-cite (pdftex+bibtex8), hello-pdftex, hello-xetex (+xdvipdfmx), idx-makeindex (+makeindex); content-verified with negative controls |
+| demo smoke (Playwright / Chromium) | **4/4** — hello XeTeX, pdfTeX+neg-control, broken-doc diagnostics, cancel()+reinit (§5.2) — the **browser-worker** path, where the cache drop matters most |
+| license / provenance audit | **PASS** — all checks (engines headers, patches, copyleft tripwire, SPDX) |
+
+The runtime + demo greens are also the item-2 acceptance: the
+no-`--use-preload-cache` bundle loads and compiles under **both** the node loader
+(runtime real-wasm) and the browser worker (demo), storage-less — §5.2 restored.
+
+### Item 5 preview — container (arm64 Linux) vs native (arm64 macOS) hashes
+
+Both builds are post-item-2 (identical Makefile), same arch, differing only in
+**userland/toolchain platform**. Per-file (native → container):
+
+| file | native B | container B | Δ | sha256 |
+| --- | --- | --- | --- | --- |
+| `busytex.js` (glue) | 273,991 | 273,991 | 0 | **IDENTICAL** (`81aa161c…`) |
+| `busytex.wasm` | 27,508,145 | 27,501,925 | −6,220 | differ |
+| `formats/pdflatex.fmt` | 2,286,489 | 2,286,258 | −231 | differ |
+| `formats/xelatex.fmt` | 4,472,954 | 4,472,381 | −573 | differ |
+| `texlive-basic.data` | 52,775,230 | 52,660,712 | −114,518 | differ |
+| `texlive-basic.js` | 1,452,511 | 1,450,840 | −1,671 | differ |
+| `SHA256SUMS` / `assets.json` | — | — | — | differ (derived reflections of the above; the generator logic + `generated` field are identical) |
+
+**Findings (mechanisms, cheaply established — these are item-6 inputs, not
+failures; the plan already sanctions native-vs-container host-layer differences,
+with the container pair as the canonical comparison):**
+
+1. **Glue JS is bit-identical** — emscripten's MODULARIZE loader codegen is
+   platform-independent.
+2. **`busytex.wasm` is ~95% build-path leakage, not codegen.** Both wasm carry
+   **116** `__FILE__` strings (graphite2 `Segment.cpp`/`Pass.cpp`/… and xetexdir
+   `hz.cpp`/`XeTeXOTMath.cpp`) with an **identical source-relative file set** —
+   only the absolute prefix differs (`/Users/bofeizhu/.cache/wasmtex/build/native/busytex-2026`
+   = 56 ch vs `/work` = 5 ch, Δ51 B each → 116×51 = **5,916 B of the 6,220 B
+   delta**). Residual ~304 B. So the emsdk-clang wasm codegen is **effectively
+   userland-independent** (validating DESIGN §9's "wasm is host-arch-independent
+   by construction"). **Item-6 action:** normalise the build path
+   (`-ffile-prefix-map`/`-fmacro-prefix-map`, or build every lane at the same
+   canonical path) and re-diff — the wasm should collapse to near/bit-identical.
+3. **`.fmt` formats differ with ZERO path leakage** → the *native* engine
+   (host-compiled: Apple clang arm64 vs GNU gcc arm64) dumps host-compiler-
+   dependent formats. Diverge from char 10, cascading (~99.5% of bytes). This is
+   the "`.fmt` native-dump suspicion" the M3 plan flagged for item 6 — confirmed
+   real and **independent of paths**. It does not affect releases: shipped `.fmt`
+   come from the **container** engine (releases are container-only, DESIGN §9).
+4. **`texlive-basic.data` (−114,518 B)** embeds the differing `.fmt` (~800 B)
+   plus ~113 KB of further divergence — other host-dependent generated TDS
+   content and/or LZ4 ripple over the changed `.fmt`; `texlive-basic.js` tracks
+   `.data` (file_packager metadata). Full decomposition is item-6 depth.
+
+The canonical repro gates remain the **container pair**: item 5 (container
+build-twice, byte-identical) and item 6 (arm64 vs amd64 container). This
+native-vs-container preview says: expect the wasm to equalise under path
+normalisation; expect the native-dumped `.fmt`/bundle to carry a host-compiler
+signature that the container lane eliminates by construction.
+
+### Deviations
+
+None from DESIGN.md. The `--use-preload-cache` drop *removes* a deviation
+(restores §5.2's optional-adapter posture). The container flow's clean-per-build
+volume policy intentionally diverges from the native driver's incremental/
+resumable tree — required by the item-5/6 reproducibility contract, not a DESIGN
+change.

@@ -51,6 +51,19 @@
 #       U_INVALID_FORMAT_ERROR, breaking wasm XeTeX ("cannot read font names"); the
 #       offset-TOC restores the alias table. New var GENCCODE_native. See the ICU
 #       rule comment and docs/plans/M2-journal.md item 4b (full root cause + proof).
+#     - Dropped `--use-preload-cache` from the texlive-basic bundle's file_packager
+#       step (M3 item 4). Upstream busytex built the data bundle with that flag, so
+#       the generated texlive-basic.js UNCONDITIONALLY cached the ~50 MB .data into
+#       an `EM_PRELOAD_CACHE` IndexedDB store on every browser/worker load — an
+#       always-on persistence layer that violates DESIGN.md §5.2 ("the library never
+#       *requires* IndexedDB … persistence is an optional adapter, not always-on";
+#       the M1 posture deviation journaled in docs/plans/M1-item5-journal.md).
+#       Removing the flag makes file_packager emit a direct fetch/read of the .data
+#       with no IndexedDB machinery at all (verified: A/B of file_packager.py in the
+#       pinned image drops every openDatabase/preloadFallback/EM_PRELOAD_CACHE
+#       marker). Runtime/demo are unaffected — the browser worker already fetched
+#       the .data and only skipped the cache; the node loaders read via fs. Restores
+#       the §5.2 optional-adapter posture. Changes texlive-basic.js bytes.
 #   Kept (DESIGN.md §3 program set): xetex, pdftex, bibtex8, xdvipdfmx,
 #   makeindex, kpsewhich, and the texlive-basic bundle path.
 # Reference URLs from upstream, retained:
@@ -569,7 +582,7 @@ build/wasm/texlive-%.js: build/texlive-%/texmf-dist
 	mkdir -p $(dir $@)
 	echo > build/empty
 	echo 'web_user:x:0:0:emscripten:/home/web_user:/bin/false' > build/passwd
-	$(PYTHON) $(EMROOT)/tools/file_packager.py $(basename $@).data --js-output=$@ --export-name=BusytexPipeline --lz4 --use-preload-cache --preload build/passwd@/etc/passwd --preload build/empty@/bin/busytex --preload build/texlive-$*@/texlive 
+	$(PYTHON) $(EMROOT)/tools/file_packager.py $(basename $@).data --js-output=$@ --export-name=BusytexPipeline --lz4 --preload build/passwd@/etc/passwd --preload build/empty@/bin/busytex --preload build/texlive-$*@/texlive
 	grep -r -I -h 'ProvidesPackage{' build/texlive-$* | grep '^[^%]' | sed -e 's/^/\/\/ /' > $@.providespackage.txt
 	cat $@.providespackage.txt $@ > $@.tmp; mv $@.tmp $@
 

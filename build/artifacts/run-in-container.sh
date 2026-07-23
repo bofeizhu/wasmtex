@@ -1,97 +1,114 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # Provenance: original work authored in the WasmTeX repository (see LICENSE).
-#   Not derived from any third-party source. It drives a busytex-derived Makefile
-#   over a /machinery mount; the make targets and their order mirror the pinned
-#   upstream target graph.
+#   Not derived from any third-party source. It drives OUR maintained engine
+#   build config at build/engines/ (the Makefile forked from busytex at M2 item
+#   3, MIT, with per-file derived-work headers). It is the CONTAINER mirror of
+#   build/artifacts/build-native.sh: the same stage sequence, offline pre-staging
+#   and verify gate — but on the image's native arm64 Linux GNU userland.
 #
-# ============================================================================
-# !! PARKED (M3) — STALE PATH. This runs against a /machinery mount that
-#    build.sh populates from the M0 staging tree `build/upstream/busytex`, which
-#    was RETIRED at M2 item 3 (the config was forked into `build/engines/`). The
-#    MACHINERY_FILES list below (packfs.c/.py, cosmo_getpass.h,
-#    ubuntu_package_preload.py, the worker/pipeline glue) is likewise the M0 set,
-#    not the trimmed M2 set. It is intentionally left un-rewritten per the M2
-#    item-3 plan and is re-pinned + re-pointed at `build/engines/` on arm64 at
-#    M3 (DESIGN.md §9). Until then, use `build/artifacts/build-native.sh`.
-# ============================================================================
-#
-# WasmTeX M0 "faithful baseline" build — container side (M0 item 4).
+# WasmTeX CANONICAL artifact build — container side (M3 item 4).
 # =============================================================================
-# Runs INSIDE the pinned wasmtex-toolchain image. Reproduces what upstream
-# busytex builds, UNCHANGED, but fully OFFLINE: the upstream Makefile normally
-# curl/bsdtar-downloads its sources (URL_texlive/URL_expat/URL_fontconfig and
-# the TL 2023 ISO). We pre-stage those from a read-only cache mount into the
-# exact paths the Makefile's download rules produce (source/<id>/ + the
-# source/<id>.txt sentinel), so those rules are already satisfied and make
-# never reaches for the network. The container itself is run with
-# `--network none` (see build.sh), so any missed pre-stage fails loud, closed.
+# Runs INSIDE the pinned arm64 toolchain image. Builds our engine config,
+# UNCHANGED, but fully OFFLINE: the Makefile normally curl/bsdtar-downloads its
+# sources (URL_texlive/URL_expat/URL_fontconfig and the TL 2026 ISO). We
+# pre-stage those from a read-only cache mount into the exact paths the Makefile's
+# download rules produce (source/<id>/ + the source/<id>.txt sentinel), so those
+# rules are already satisfied and make never reaches for the network. The
+# container itself runs with `--network none` (see build.sh), so any missed
+# pre-stage fails loud, closed — this is the container's HARD offline enforcement,
+# which is why (unlike the native driver) we do NOT blank the URL_* variables.
 #
-# The Makefile and its helpers are NOT edited: we copy the vendored machinery
-# into the /work build tree and run make there, leaving build/upstream/ pristine.
+# NATIVE-vs-CONTAINER DELTA (what this driver passes vs build-native.sh's macOS
+# driver). The native driver injects `macos_overrides` on every `make`; NONE of
+# them apply here, because this is a Linux GNU userland, not macOS:
+#   * CMAKE_native / CMAKE_wasm  += -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+#       NATIVE-ONLY. Homebrew cmake is 4.x, which dropped the pre-3.5 policy the
+#       expat 2.5.0 build declares. The image's apt cmake is 3.22 (< 4), so the
+#       old `cmake_minimum_required` is honoured as-is. Omitted here.
+#   * LDFLAGS_TEXLIVE_native = -lm -pthread
+#       NATIVE-ONLY. Trims the Linux static/-ldl/-lpthread/--unresolved-symbols
+#       flags Apple ld rejects. Here the Makefile's DEFAULT (the full Linux
+#       LDFLAGS) is exactly right. Omitted here -> default applies.
+#   * OPTS_BUSYTEX_LINK_native = ... -framework CoreFoundation ... AppKit
+#       NATIVE-ONLY. XeTeX's macOS CoreText/AppKit font backend needs the Apple
+#       frameworks; XeTeX on Linux uses the fontconfig/freetype backend and links
+#       none. The Makefile's DEFAULT OPTS_BUSYTEX_LINK_native (Linux -ldl -lm
+#       -pthread ...) is right. Omitted here -> default applies.
+#   * URL_texlive / URL_expat / URL_fontconfig / URL_texlive_full_iso_cache = (blank)
+#       NATIVE-ONLY offline enforcement (no network namespace on the host, so a
+#       missed pre-stage must fail closed rather than curl an unpinned source).
+#       Here `--network none` is the enforcement; the URLs stay documentary.
+# NOT a delta (folded into build/engines/Makefile itself, host-agnostic):
+#   * OPTS_LIBS_wasm = AR=$(AR_wasm)  (emar for wasm archives). Fixes the
+#     hollow-wasm-archive defect on a BSD-ar host; on GNU ar it is a harmless
+#     no-op (GNU ar is format-agnostic). See the Makefile comment / M2 journal 3.
+# And the native driver's macOS SOURCE patches (build/patches/*/*.patch) are NOT
+# applied here: both current entries (zlib-macos-fdopen, libpng-macos-fp-h) are
+# RETIRED (header-only, no diff) and were macOS-scoped anyway (a TARGET_OS_MAC
+# false-positive that never fires on Linux). See build/patches/README.md.
 #
 # Mounts provided by build.sh:
-#   /cache      (ro)  ~/.cache/wasmtex/sources — verified pinned inputs
-#   /machinery  (ro)  build/upstream/busytex   — vendored busytex build machinery
-#   /glue       (ro)  build/artifacts          — these scripts
-#   /dist       (rw)  dist/                     — assembled artifacts land here
-#   /work       (vol) named docker volume       — the busytex build tree (fast)
+#   /cache     (ro)  ~/.cache/wasmtex/sources — verified pinned inputs
+#   /engines   (ro)  build/engines            — OUR engine build config
+#   /glue      (ro)  build/artifacts          — these scripts + verify-engine.mjs
+#   /manifest  (ro)  build/manifest           — gen-assets.mjs (asset inventory)
+#   /dist      (rw)  dist/                     — assembled artifacts land here
+#   /work      (vol) named docker volume       — the build tree (fast, VM-native)
 #
 # Usage:  run-in-container.sh <stage>
-#   stage ∈ { prep native basic wasm bundle dist all }
-#   `all` runs prep→native→basic→wasm→bundle→dist in order.
+#   stage ∈ { prep native basic wasm bundle dist verify all }
+#   `all` runs prep→native→basic→wasm→bundle→dist in order; `dist` ends with the
+#   execution gate (`verify`, also runnable standalone).
 # =============================================================================
 set -euo pipefail
 
-# --- Reproducibility hooks (item 5 does the double-build diff; do not bake in
-#     obvious nondeterminism here). SOURCE_DATE_EPOCH is the busytex pin commit
-#     date (f2bd7b11, 2026-06-16 16:06:37 +0200 == 1781618797); see
-#     docs/plans/M0-item4-journal.md for why this value. FORCE_SOURCE_DATE makes
-#     the TeX engines honour it when dumping .fmt files. LC_ALL is the C.UTF-8
-#     the image (and upstream's CI runner) already use — deterministic AND
-#     UTF-8-safe for install-tl/find over texmf trees (a documented micro-
-#     deviation from a literal LC_ALL=C; see the journal). --------------------
-export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1781618797}"
+# --- Reproducibility hooks (same derivation as the native driver) ------------
+# SOURCE_DATE_EPOCH is the TL 2026 freeze date, 2026-03-01T00:00:00Z = 1772323200
+# (passed in by build.sh; defaulted here for a standalone run). FORCE_SOURCE_DATE
+# makes the TeX engines honour it when dumping .fmt files. LC_ALL is the C.UTF-8
+# the image (and upstream's CI runner) already use — deterministic AND UTF-8-safe
+# for install-tl/find over texmf trees. The M3 double-build is the real gate.
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1772323200}"
 export FORCE_SOURCE_DATE="${FORCE_SOURCE_DATE:-1}"
 export TZ=UTC
 export LC_ALL="${LC_ALL:-C.UTF-8}"
 export LANG="${LANG:-C.UTF-8}"
 umask 022
 
-# Parallelism: GNU Make 4.3's anonymous-pipe jobserver is UNRELIABLE under this
-# host's Docker-Desktop/Rosetta x86_64 emulation. Multiple busytex sub-builds
-# (the expat CMake build; zziplib's `cd ../zlib && make rebuild`) abort with
-# "write jobserver: Bad file descriptor" under any -jN>1 — even though upstream's
-# native-x86_64 CI builds the same tree at -j2, and this tree's own
-# texlive.configured happens to survive -j4 (it is sub-make-dependent, not
-# blanket). At -j1 make creates NO jobserver, so every sub-make is safe. We
-# therefore default JOBS=1 on this host: correct, deterministic, no whack-a-mole.
-# WASMTEX_JOBS can raise it on a real x86_64 builder (CI), where -j2 is known
-# good. See docs/plans/M0-item4-journal.md "native attempt … jobserver".
-JOBS="${WASMTEX_JOBS:-1}"
+# --- Parallelism -------------------------------------------------------------
+# Native arm64 Linux GNU Make: the jobserver works (the -j1 constraint was
+# Rosetta-x86_64-only). Set via MAKEFLAGS (as the native driver does) so recursive
+# $(MAKE) sub-builds share one jobserver rather than each forcing its own -jN.
+JOBS="${WASMTEX_JOBS:-$(nproc)}"
 export MAKEFLAGS="-j${JOBS}"
 
 CACHE=/cache
-MACHINERY=/machinery
+ENGINES=/engines
+GLUE=/glue
+MANIFEST=/manifest
 DIST=/dist
-BUILD=/work/busytex
+BUILD=/work
 
-# Cached inputs (names match build/sources/pins.lock).
-TL_SRC="$CACHE/texlive-source-2023.0.tar.gz"
+# Cached inputs (names match build/sources/pins.lock, TL 2026 pins).
+TL_SRC="$CACHE/texlive-source-2026.0.tar.gz"
 EXPAT_SRC="$CACHE/expat-2.5.0.tar.gz"
 FONTCONFIG_SRC="$CACHE/fontconfig-2.13.96.tar.gz"
-ISO="$CACHE/texlive2023-20230313.iso"
+ISO="$CACHE/texlive2026-20260301.iso"
 
-# Vendored machinery files the Makefile references by path (PROVENANCE.md).
-MACHINERY_FILES=(
-  Makefile busytex.c packfs.c packfs.py emcc_wrapper.py cosmo_getpass.h
-  ubuntu_package_preload.py busytex_pipeline.js busytex_worker.js
+# OUR engine build-config files the Makefile references by path (build/engines/).
+machinery_files=(
+  Makefile busytex.c emcc_wrapper.py
 )
 
 banner() { printf '\n>> [%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
+# make in the build tree. NO macOS overrides (see the DELTA note in the header):
+# on the Linux GNU userland the Makefile's defaults are exactly right.
+run_make() { ( cd "$BUILD" && make "$@" ); }
+
 # Faithful offline replacement for the Makefile's
-#   `source/<id>.txt: ; mkdir -p source/<id>; curl -L $(URL_<id>) | tar -xzf - -C source/<id> --strip-components=1; find source/<id> > source/<id>.txt`
+#   source/<id>.txt: ; mkdir -p source/<id>; curl -L $(URL_<id>) | tar -xzf - -C source/<id> --strip-components=1; find source/<id> > source/<id>.txt
 # using the pinned cached tarball instead of curl. Guarded by the .txt sentinel
 # so it is idempotent and never re-extracts on a resumed build.
 stage_tarball() {
@@ -100,6 +117,7 @@ stage_tarball() {
     echo "   source/$id already staged; skipping"
     return
   fi
+  [ -f "$tarball" ] || { echo "!! missing pinned input: $tarball (run build/sources/fetch.sh)" >&2; exit 1; }
   echo "   staging source/$id from $(basename "$tarball")"
   mkdir -p "$BUILD/source/$id"
   tar -xzf "$tarball" -C "$BUILD/source/$id" --strip-components=1
@@ -107,31 +125,32 @@ stage_tarball() {
 }
 
 do_prep() {
-  banner "prep: stage machinery + sources (offline)"
+  banner "prep: stage config + sources (offline)"
   mkdir -p "$BUILD"
 
-  # Copy the vendored build machinery into the work tree (build/upstream/ stays
-  # pristine). Only on first prep, so we do not churn mtimes on resume.
-  if [ ! -f "$BUILD/Makefile" ]; then
-    echo "   copying vendored busytex machinery into $BUILD"
-    local f
-    for f in "${MACHINERY_FILES[@]}"; do
-      cp "$MACHINERY/$f" "$BUILD/$f"
-    done
-  else
-    echo "   machinery already present; skipping copy"
-  fi
+  # Sync OUR engine build-config (build/engines/) into the work tree (a build
+  # sandbox). Copy only files whose content DIFFERS, so unchanged files keep their
+  # mtime and make stays incremental on resume within one build. (On a fresh
+  # volume — the STAGE=all/prep default — every file copies.)
+  local f
+  for f in "${machinery_files[@]}"; do
+    if ! cmp -s "$ENGINES/$f" "$BUILD/$f" 2>/dev/null; then
+      echo "   syncing build config into work tree: $f"
+      cp "$ENGINES/$f" "$BUILD/$f"
+    fi
+  done
 
   # Pre-stage the three tarball sources the Makefile would curl.
   stage_tarball texlive    "$TL_SRC"
   stage_tarball expat      "$EXPAT_SRC"
   stage_tarball fontconfig "$FONTCONFIG_SRC"
 
-  # Pre-stage the TL 2023 texmf repository from the frozen ISO. Faithful to the
-  # Makefile's `source/texmfrepo.txt` rule (`... | bsdtar -x -C source/texmfrepo`),
-  # reading the local ISO instead of the split-release cache URL. bsdtar reads
-  # the ISO9660 image directly; the root carries install-tl + archive/ + tlpkg/.
+  # Pre-stage the TL 2026 texmf repository from the frozen ISO. Faithful to the
+  # Makefile's source/texmfrepo.txt rule (`... | bsdtar -x -C source/texmfrepo`),
+  # reading the local ISO instead of the split-release cache URL. bsdtar reads the
+  # ISO9660 image directly; the root carries install-tl + archive/ + tlpkg/.
   if [ ! -f "$BUILD/source/texmfrepo.txt" ]; then
+    [ -f "$ISO" ] || { echo "!! missing pinned ISO: $ISO (run build/sources/fetch.sh)" >&2; exit 1; }
     echo "   staging source/texmfrepo from $(basename "$ISO") (this takes a few minutes)"
     mkdir -p "$BUILD/source/texmfrepo"
     bsdtar -x -C "$BUILD/source/texmfrepo" -f "$ISO"
@@ -140,74 +159,103 @@ do_prep() {
     echo "   source/texmfrepo already staged; skipping"
   fi
 
+  # (No macOS source patches: build/patches/*/*.patch are macOS-scoped and
+  #  currently retired — see the header DELTA note.)
+
   # versions.txt (upstream build-wasm.yml step). Pure text, no network.
-  ( cd "$BUILD" && make build/versions.txt )
+  run_make build/versions.txt
   echo "   prep complete"
 }
 
 do_native() {
-  banner "native: build native multicall busytex from source (Rosetta — slow)"
-  # Upstream CI shortcuts this with prebuilt release binaries (download-native);
-  # per build/sources/README.md we build from source in the pinned container.
-  # `native` = texlive.configured -> texlivedependencies -> busytexapplets ->
+  banner "native: build native multicall busytex from source (arm64, real -j$JOBS)"
+  # native = texlive.configured -> texlivedependencies -> busytexapplets ->
   # build/native/busytex (the native multicall binary install-tl's custom-bin
-  # wrappers dispatch to).
-  ( cd "$BUILD" && make native )
-  echo "   native busytex: $(ls -la "$BUILD/build/native/busytex")"
+  # wrappers dispatch to, and whose helper tools the wasm pass reuses).
+  run_make native
+  echo "   native busytex: $(ls -la "$BUILD/build/native/busytex" 2>/dev/null || echo MISSING)"
 }
 
 do_basic() {
   banner "basic: install TL 'texlive-basic' via install-tl + dump .fmt formats"
-  # build/texlive-basic.txt runs the native busytex through install-tl against
-  # the offline repo, builds the texlive-basic TDS tree, dumps and prunes the
-  # engine .fmt files (retains pdflatex/xelatex/luahblatex).
-  ( cd "$BUILD" && make build/texlive-basic.txt )
-  echo "   formats:"; find "$BUILD/build/texlive-basic/texmf-dist/texmf-var/web2c" -name '*.fmt' -exec ls -la {} +
+  run_make build/texlive-basic.txt
+  echo "   formats:"; find "$BUILD/build/texlive-basic/texmf-dist/texmf-var/web2c" -name '*.fmt' -exec ls -la {} + 2>/dev/null || true
 }
 
 do_wasm() {
-  banner "wasm: build wasm multicall busytex.js/.wasm (Rosetta — slow)"
+  banner "wasm: build wasm multicall busytex.js/.wasm (real -j$JOBS)"
   # Reuses native-built helper tools (ctangle/otangle/web2c/icupkg/pkgdata/
   # apinames) via the CCSKIP_* wrappers — native must be complete first.
-  ( cd "$BUILD" && make wasm )
-  echo "   wasm engine:"; ls -la "$BUILD/build/wasm/busytex.js" "$BUILD/build/wasm/busytex.wasm"
+  run_make wasm
+  echo "   wasm engine:"; ls -la "$BUILD/build/wasm/busytex.js" "$BUILD/build/wasm/busytex.wasm" 2>/dev/null || echo MISSING
 }
 
 do_bundle() {
   banner "bundle: pack texlive-basic data bundle (file_packager: js + data)"
-  ( cd "$BUILD" && make build/wasm/texlive-basic.js )
-  echo "   bundle:"; ls -la "$BUILD/build/wasm/texlive-basic.js" "$BUILD/build/wasm/texlive-basic.data"
+  run_make build/wasm/texlive-basic.js
+  echo "   bundle:"; ls -la "$BUILD/build/wasm/texlive-basic.js" "$BUILD/build/wasm/texlive-basic.data" 2>/dev/null || echo MISSING
 }
 
 do_dist() {
-  banner "dist: assemble /dist (engine + glue + formats + bundle + checksums)"
-  # Our own assembly (equivalent to upstream `dist-wasm`, plus the worker/
-  # pipeline glue and the standalone .fmt formats the acceptance spec lists).
+  banner "dist: assemble /dist (engine + formats + bundle + checksums)"
+  # Our own assembly, byte-for-byte the same layout as build-native.sh do_dist:
+  # the engine wasm/js, the standalone .fmt formats, and the texlive-basic data
+  # bundle. The vendored busytex worker/pipeline glue is NOT shipped (M1 replaced
+  # its role; M2 item 3 decision) — dist/ carries only WasmTeX-consumed artifacts.
   local wasm="$BUILD/build/wasm" fmtdir="$BUILD/build/texlive-basic/texmf-dist/texmf-var/web2c"
 
   rm -rf "${DIST:?}"/*
   mkdir -p "$DIST/formats"
 
   # Engine wasm + js.
-  cp "$wasm/busytex.js"  "$DIST/busytex.js"
+  cp "$wasm/busytex.js"   "$DIST/busytex.js"
   cp "$wasm/busytex.wasm" "$DIST/busytex.wasm"
-  # Worker / pipeline glue the demo loads (vendored busytex, MIT).
-  cp "$MACHINERY/busytex_pipeline.js" "$DIST/busytex_pipeline.js"
-  cp "$MACHINERY/busytex_worker.js"   "$DIST/busytex_worker.js"
   # Data bundle (js + data pair).
   cp "$wasm/texlive-basic.js"   "$DIST/texlive-basic.js"
   cp "$wasm/texlive-basic.data" "$DIST/texlive-basic.data"
   # Standalone engine formats (also embedded in the bundle; surfaced per spec).
   find "$fmtdir" -name '*.fmt' -exec cp {} "$DIST/formats/" \;
 
-  # Deterministic integrity list (sorted, relative paths).
-  ( cd "$DIST" && find . -type f ! -name SHA256SUMS | LC_ALL=C sort | xargs sha256sum > SHA256SUMS )
+  # Deterministic integrity list (sorted, relative paths). Linux: sha256sum —
+  # byte-identical output format to the native driver's `shasum -a 256`, so the
+  # SHA256SUMS file is comparable across the native and container builds.
+  ( cd "$DIST" && find . -type f ! -name SHA256SUMS ! -name assets.json | LC_ALL=C sort | xargs sha256sum > SHA256SUMS )
+
+  # Data-driven asset inventory: dist/assets.json (M1 item 4). Emitted AFTER
+  # SHA256SUMS and BEFORE the verify gate — a mis-classified artifact or a hash
+  # mismatch must fail the BUILD, not a downstream consumer. generated= is pinned
+  # off SOURCE_DATE_EPOCH, so re-running this stage yields a byte-identical
+  # assets.json (and one matching the native build's).
+  banner "dist: generate assets.json (data-driven inventory)"
+  node "$MANIFEST/gen-assets.mjs" "$DIST"
 
   banner "dist inventory"
   ( cd "$DIST" && ls -la . formats && echo && cat SHA256SUMS )
+
+  # Execution gate: a structurally-valid-but-hollow wasm must never pass. Verify
+  # the assembled dist/ actually runs before declaring the stage done.
+  do_verify
+}
+
+# --- Execution gate ----------------------------------------------------------
+# Drive the just-built engine under node and assert it is a SOUND binary, not a
+# structurally-valid hollow one (env-import sanity + a real `xetex --version`
+# that must print the TeX Live 2026 banner). Shared harness with the native flow.
+do_verify() {
+  banner "verify: execution gate — run engine under node + env-import sanity"
+  # timeout: synchronous wasm can't be interrupted in-process; a spinning engine
+  # must not hang the gate at the end of a multi-hour build.
+  timeout 300 node "$GLUE/verify-engine.mjs" "$DIST"
 }
 
 stage="${1:-all}"
+banner "WasmTeX canonical artifacts build — container side"
+echo "   stage:     $stage"
+echo "   build:     $BUILD"
+echo "   jobs:      MAKEFLAGS=$MAKEFLAGS   SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
+echo "   emcc:      $(command -v emcc)   node: $(command -v node)"
+
+
 case "$stage" in
   prep)   do_prep ;;
   native) do_native ;;
@@ -215,8 +263,9 @@ case "$stage" in
   wasm)   do_wasm ;;
   bundle) do_bundle ;;
   dist)   do_dist ;;
+  verify) do_verify ;;
   all)    do_prep; do_native; do_basic; do_wasm; do_bundle; do_dist ;;
-  *) echo "unknown stage: $stage (want: prep native basic wasm bundle dist all)" >&2; exit 2 ;;
+  *) echo "unknown stage: $stage (want: prep native basic wasm bundle dist verify all)" >&2; exit 2 ;;
 esac
 
 banner "stage '$stage' done"

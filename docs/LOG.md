@@ -5,6 +5,53 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M4 item 3: multi-bundle build (core + academic)
+
+**Done, natively validated.** One combined install → two DISJOINT
+tlpdb-driven bundles: `build/bundles/gen-profile.mjs` (install profile =
+union of all tiers), `build/bundles/stage-tiers.mjs` (hardlink the pruned
+install into per-tier trees via item-2's fileToTier; academic-owned →
+academic, everything else → core), per-tier file_packager
+(`build/wasm/data/%.js`). Both drivers (native + container) build both
+tiers; `build.sh` mounts `build/bundles` ro; offline (--network none)
+and the ISO-staged install unchanged.
+
+**Real sizes** (native): **core.data 53.9 MB** (+1.2 MB vs old basic —
+fuller xelatex.fmt all-language hyphenation + full-tree ls-R), **academic
+.data 473.6 MiB** (on-demand tier; 681 MB tree → LZ4). Disjoint (0
+overlap). dist now ~621 MB. `texlive-basic.{js,data}` kept as a
+BYTE-IDENTICAL alias of core (zero consumer changes; drop at M5; caveat:
+don't preload both core and texlive-basic in one session).
+
+**Validation** (native, real runtime, both tiers preloaded): siunitx+
+mathtools → PDF; ctexart[fontset=fandol] Chinese → PDF; both exit 0,
+`bundlesLoaded=[core,academic]`, 0 diagnostics. Execution gate green.
+Coder judgment call (approved): an additive *.fmt sweep drops 8 JP pTeX
+formats + amstex (~14 MB) academic's collection-langcjk made fmtutil
+dump — unrunnable on our xetex+pdftex multicall — keeping core at 53.9
+(not 68) MB. DESIGN §6.3 note recorded (academic rename + fandol).
+
+**Review: approve, container build safe to trigger.** Container/native
+parity verified line-for-line; disjointness a proven function; fmt sweep
+scoped + safe. Fixes folded: `build/bundles/**` added to
+artifacts-build.yml's path filter (tier scripts determine artifact
+bytes); the engines Makefile derived-work header updated for the M4
+change.
+
+**Deferred (recorded, not M4-item-3 blockers):**
+- **Native-resume stale-tree hazard** (should-fix 3): `build/texlive-%`
+  install doesn't `rm -rf` the tree first, so a native rebuild after a
+  `tiers.mjs` edit can leave orphaned files that stage-tiers' catch-all
+  folds into core (silent bloat). **CI is unaffected (fresh volume).**
+  Fix before the next native rebuild that changes tiers.
+- **Item-2 carry-forwards** (should-fix 4): the real-tlpdb core-
+  containment test is now functionally covered (the conformance gate
+  runs the corpus against core via the byte-alias), formally re-deferred;
+  the `resolve.mjs` hardcoded `busytex-2026` default path (pins-derived)
+  stays deferred (env-overridable, annual-rebase-drift class).
+- Nits: parallel-make passwd/empty micro-race (same bytes), fmt-sweep
+  .log/empty-dir debris (KBs), a user-facing alias caveat doc.
+
 ## 2026-07-24 — M4 item 2: tlpdb parser + tier map (build/bundles/)
 
 **Done.** The bundle-tiering foundation: `build/bundles/tlpdb.mjs` (a

@@ -44,4 +44,4 @@ jobs:
         with:
           node-version: 24
       - name: build/bundles tooling unit tests (node --test)
-        run: node --test build/bundles/tlpdb.test.mjs build/bundles/resolve.test.mjs
+        run: node --test build/bundles/tlpdb.test.mjs build/bundles/resolve.test.mjs build/bundles/gen-profile.test.mjs build/bundles/stage-tiers.test.mjs

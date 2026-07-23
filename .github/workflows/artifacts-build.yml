@@ -75,6 +75,9 @@ on:
       # gen-assets.mjs is mounted into the container and emits dist/assets.json
       # (an integrity oracle in SHA256SUMS) — it determines artifact bytes.
       - build/manifest/**
+      # the tier scripts generate the install profile + the per-tier split, so
+      # they determine artifact bytes too (M4 item 3).
+      - build/bundles/**
       - build/sources/pins.lock
       - .github/workflows/artifacts-build.yml
 

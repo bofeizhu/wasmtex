@@ -24,9 +24,9 @@
 # babysitting/resume (make is incremental; stages share the work tree):
 #   make artifacts STAGE=prep      # stage machinery + sources (offline)
 #   make artifacts STAGE=native    # native multicall busytex
-#   make artifacts STAGE=basic     # install-tl texlive-basic + dump .fmt
+#   make artifacts STAGE=basic     # install-tl combined tiers tree + dump .fmt
 #   make artifacts STAGE=wasm      # wasm multicall busytex.js/.wasm
-#   make artifacts STAGE=bundle    # pack texlive-basic.js/.data
+#   make artifacts STAGE=bundle    # stage disjoint tiers + pack core/academic.js/.data
 #   make artifacts STAGE=dist      # assemble dist/ + SHA256SUMS (+ verify gate)
 #   make artifacts STAGE=verify    # execution gate alone (env imports + engine run)
 # STAGE defaults to `all`.

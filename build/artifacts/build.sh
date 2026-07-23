@@ -65,6 +65,7 @@ source_date_epoch="${SOURCE_DATE_EPOCH:-1772323200}"
 
 engines="$repo/build/engines"
 manifest="$repo/build/manifest"
+bundles="$repo/build/bundles"   # OUR tier scripts (gen-profile / stage-tiers / resolver); M4 item 3
 dist="$repo/dist"
 
 # --- Preflight: pinned inputs + config + image identity ----------------------
@@ -154,6 +155,7 @@ echo "   image:       $image_tag ($local_id)"
 echo "   container:   $container_name  (kept on exit for post-mortem)"
 echo "   cache:       $cache_dir  (mounted ro, --network none)"
 echo "   config:      $engines  (build/engines, mounted ro)"
+echo "   bundles:     $bundles  (build/bundles tier scripts, mounted ro)"
 echo "   work volume: $volume  ($([ "$stage" = all ] || [ "$stage" = prep ] && echo 'fresh (clean per build)' || echo 'reused (resume)'))"
 echo "   dist:        $dist"
 echo "   jobs:        MAKEFLAGS=-j${jobs:-<nproc>}   SOURCE_DATE_EPOCH=$source_date_epoch"
@@ -175,6 +177,7 @@ docker run \
   -v "$engines":/engines:ro \
   -v "$here":/glue:ro \
   -v "$manifest":/manifest:ro \
+  -v "$bundles":/bundles:ro \
   -v "$dist":/dist \
   -v "$volume":/work \
   "$image_tag" \

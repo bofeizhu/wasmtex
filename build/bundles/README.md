@@ -44,6 +44,25 @@ consulted.
   and a disjointness result. `formatSummary` renders the human report; `toJson`
   serializes the full resolution deterministically.
 
+- **`gen-profile.mjs`** (M4 item 3) — emits the `install-tl` profile
+  COLLECTION-selection lines (`<collection>  1`) for the DISTINCT union of every
+  tier's collections. The multi-bundle build does ONE combined install
+  (scheme-basic + these), so `tiers.mjs` is the single source of truth for the
+  install too; the Makefile's `build/texlive-tiers.profile` rule appends this
+  output. Collections only — a tier's `extraPackages` (e.g. `fandol`) come in via a
+  collection's `depend` graph, since install-tl profiles can't select bare packages.
+
+- **`stage-tiers.mjs`** (M4 item 3) — splits the ONE pruned combined install into
+  **disjoint per-tier trees** by HARDLINK, driven by `resolveTiers`' `fileToTier`:
+  a file the resolver assigns to a later tier goes to that tier's tree; EVERYTHING
+  else (core package files + every install-generated / non-tlpdb file — the
+  full-tree `ls-R`, `texmf.cnf`, the retained `.fmt`s and font maps, `fonts.conf`,
+  the root `tex/` inis) falls to the base tier `core`. Each tree is then
+  file_packager'd into `core.{js,data}` / `academic.{js,data}`, mounting at the
+  same `/texlive` root (disjoint ⇒ no collisions). Writes `<out>/tiers.txt` (the
+  packaged-tier list the drivers read). `core`'s ls-R over-lists academic paths on
+  purpose — the DESIGN §5.4(b) missing-file retry trigger items 5/7 consume.
+
 ## CLI
 
 ```sh
@@ -70,7 +89,8 @@ measures the real packed sizes.
 ## Tests
 
 ```sh
-node --test build/bundles/tlpdb.test.mjs build/bundles/resolve.test.mjs
+node --test build/bundles/tlpdb.test.mjs build/bundles/resolve.test.mjs \
+             build/bundles/gen-profile.test.mjs build/bundles/stage-tiers.test.mjs
 ```
 
 `tlpdb.test.mjs` checks the parser on crafted stanza fixtures (every field form).
@@ -79,4 +99,8 @@ real pinned tlpdb — disjointness, `core ⊇` LaTeX base, `academic` markers
 (`siunitx`/`tikz`/`xeCJK`/`ctex`/`fandol`), and **stable counts** as a drift
 baseline. The real-tlpdb group skips cleanly when the ISO-staged tlpdb is absent
 (e.g. CI without the native build), like the runtime's `assets.test` and the
-conformance runner.
+conformance runner. `gen-profile.test.mjs` checks the collection union (dedup +
+sort, no `collection-luatex`, `extraPackages` excluded). `stage-tiers.test.mjs`
+checks the disjoint split on a tmpdir fixture — academic-owned files diverted,
+everything else to `core`, hardlinked (same inode), symlinks skipped. All four
+suites run in `build.yml` CI (synthetic groups; real-tlpdb group skips green).

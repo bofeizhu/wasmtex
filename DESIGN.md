@@ -263,6 +263,34 @@ inputs (`files`) and reference them by path (`\setCJKmainfont` with a
 project-relative file name). The conformance corpus includes a CJK document
 using a small open font checked into `conformance/fixtures`.
 
+> **Amended 2026-07-24 (M4 item 3 — tier rename + one bundled CJK font).**
+> Two recorded refinements, decided in docs/plans/M4.md and realized by the
+> multi-bundle build:
+> 1. **`extended` → `academic`.** The second tier (called `extended` in §3
+>    and §5.1 above) is renamed **`academic`** and scoped to the
+>    scientific-journal + CJK working set (`collection-latexrecommended`,
+>    `-mathscience`, `-latexextra`, `-pictures`, `-fontsrecommended`,
+>    `-langchinese`, `-langcjk`). The `full` tier is deferred (not shipped
+>    for v1); the tier machinery stays N-tier-general so `full` is later
+>    config, not rework. `ctex`/`xeCJK` therefore live in **`academic`**, not
+>    `extended`. The build produces two disjoint bundles, `core` + `academic`.
+> 2. **`fandol` is bundled — a deliberate, narrow exception to "fonts are not
+>    bundled" above.** `fandol` (~10 MB) is `ctex`'s default free Chinese font;
+>    without a default font a `ctex` document errors until the host wires
+>    `\setCJKmainfont`. Bundling this ONE font in `academic` lets a Chinese
+>    document **compile out of the box**. The rule is otherwise unchanged:
+>    heavier production CJK fonts (Noto CJK, Source Han) stay host-supplied as
+>    project `files`. So "fonts are host-supplied" holds, with `fandol` as the
+>    single sanctioned default so the CJK path is not dead on arrival.
+>
+> One further build-time property worth recording (its runtime consumer is M4
+> items 5/7, not item 3): `core` carries the `ls-R` built over the FULL
+> combined install, so it **over-lists `academic` paths**. With only `core`
+> mounted, an academic file's kpathsea lookup finds the path in `ls-R` but the
+> file is absent in MEMFS → a "file not found" — which is exactly the §5.4(b)
+> missing-file retry trigger. Item 3 only builds the disjoint bundles; the
+> on-demand mount + retry that exploit this are items 5 and 7.
+
 ## 7. Licensing
 
 - `LICENSE` — MIT, covering all code authored in this repository.

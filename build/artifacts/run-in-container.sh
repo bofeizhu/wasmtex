@@ -87,6 +87,7 @@ CACHE=/cache
 ENGINES=/engines
 GLUE=/glue
 MANIFEST=/manifest
+BUNDLES=/bundles   # OUR tier scripts (build/bundles/: gen-profile / stage-tiers / resolver); mounted ro by build.sh
 DIST=/dist
 BUILD=/work
 
@@ -132,11 +133,25 @@ do_prep() {
   # sandbox). Copy only files whose content DIFFERS, so unchanged files keep their
   # mtime and make stays incremental on resume within one build. (On a fresh
   # volume — the STAGE=all/prep default — every file copies.)
-  local f
+  local f b
   for f in "${machinery_files[@]}"; do
     if ! cmp -s "$ENGINES/$f" "$BUILD/$f" 2>/dev/null; then
       echo "   syncing build config into work tree: $f"
       cp "$ENGINES/$f" "$BUILD/$f"
+    fi
+  done
+
+  # Sync OUR tier bundle scripts (build/bundles/*.mjs, minus *.test.mjs) into the
+  # work tree so the Makefile's profile/staging rules resolve them and their
+  # relative imports (./tlpdb.mjs, ./tiers.mjs, ./resolve.mjs) work in-tree.
+  # mtime-preserving (cmp -s) so make stays incremental on resume. M4 item 3.
+  mkdir -p "$BUILD/bundles"
+  for f in "$BUNDLES"/*.mjs; do
+    b="$(basename "$f")"
+    case "$b" in *.test.mjs) continue ;; esac
+    if ! cmp -s "$f" "$BUILD/bundles/$b" 2>/dev/null; then
+      echo "   syncing tier bundle script: bundles/$b"
+      cp "$f" "$BUILD/bundles/$b"
     fi
   done
 
@@ -177,9 +192,12 @@ do_native() {
 }
 
 do_basic() {
-  banner "basic: install TL 'texlive-basic' via install-tl + dump .fmt formats"
-  run_make build/texlive-basic.txt
-  echo "   formats:"; find "$BUILD/build/texlive-basic/texmf-dist/texmf-var/web2c" -name '*.fmt' -exec ls -la {} + 2>/dev/null || true
+  banner "basic: install TL combined tiers tree (scheme-basic + core+academic collections) via install-tl + dump .fmt formats"
+  # ONE install-tl run installs every shipped tier's collections into
+  # build/texlive-tiers (profile generated from build/bundles/tiers.mjs); the
+  # bundle stage then splits it into disjoint per-tier bundles.
+  run_make build/texlive-tiers.txt
+  echo "   formats:"; find "$BUILD/build/texlive-tiers/texmf-dist/texmf-var/web2c" -name '*.fmt' -exec ls -la {} + 2>/dev/null || true
 }
 
 do_wasm() {
@@ -191,9 +209,19 @@ do_wasm() {
 }
 
 do_bundle() {
-  banner "bundle: pack texlive-basic data bundle (file_packager: js + data)"
-  run_make build/wasm/texlive-basic.js
-  echo "   bundle:"; ls -la "$BUILD/build/wasm/texlive-basic.js" "$BUILD/build/wasm/texlive-basic.data" 2>/dev/null || echo MISSING
+  banner "bundle: stage disjoint tiers + file_packager each (core + academic: js + data)"
+  # Split the pruned combined install into disjoint per-tier trees (build/stage/
+  # <tier>/) via the tlpdb tier map, then file_packager each. build/stage/tiers.txt
+  # lists the tiers that received files — the exact set to package (N-tier-general).
+  run_make build/stage.stamp
+  local tiers=() t targets=()
+  while IFS= read -r t; do [ -n "$t" ] && tiers+=("$t"); done < "$BUILD/build/stage/tiers.txt"
+  echo "   tiers: ${tiers[*]}"
+  for t in "${tiers[@]}"; do targets+=("build/wasm/data/$t.js"); done
+  run_make "${targets[@]}"
+  for t in "${tiers[@]}"; do
+    echo "   bundle[$t]:"; ls -la "$BUILD/build/wasm/data/$t.js" "$BUILD/build/wasm/data/$t.data" 2>/dev/null || echo MISSING
+  done
 }
 
 do_dist() {
@@ -202,7 +230,7 @@ do_dist() {
   # the engine wasm/js, the standalone .fmt formats, and the texlive-basic data
   # bundle. The vendored busytex worker/pipeline glue is NOT shipped (M1 replaced
   # its role; M2 item 3 decision) — dist/ carries only WasmTeX-consumed artifacts.
-  local wasm="$BUILD/build/wasm" fmtdir="$BUILD/build/texlive-basic/texmf-dist/texmf-var/web2c"
+  local wasm="$BUILD/build/wasm" fmtdir="$BUILD/build/texlive-tiers/texmf-dist/texmf-var/web2c"
 
   rm -rf "${DIST:?}"/*
   mkdir -p "$DIST/formats"
@@ -210,10 +238,22 @@ do_dist() {
   # Engine wasm + js.
   cp "$wasm/busytex.js"   "$DIST/busytex.js"
   cp "$wasm/busytex.wasm" "$DIST/busytex.wasm"
-  # Data bundle (js + data pair).
-  cp "$wasm/texlive-basic.js"   "$DIST/texlive-basic.js"
-  cp "$wasm/texlive-basic.data" "$DIST/texlive-basic.data"
-  # Standalone engine formats (also embedded in the bundle; surfaced per spec).
+  # Per-tier data bundles (js + data pair each), disjoint, driven by the tier map
+  # (build/stage/tiers.txt). N-tier-general: whatever tiers were staged/packed.
+  local t
+  while IFS= read -r t; do
+    [ -n "$t" ] || continue
+    cp "$wasm/data/$t.js"   "$DIST/$t.js"
+    cp "$wasm/data/$t.data" "$DIST/$t.data"
+  done < "$BUILD/build/stage/tiers.txt"
+  # Back-compat ALIAS (M4 item 3; dropped at M5). texlive-basic.{js,data} are byte
+  # copies of core.{js,data} so the demo + published 0.0.1 consumers that still
+  # name the `texlive-basic` bundle keep working unchanged. texlive-basic.js loads
+  # core.data internally (baked file_packager reference), so do NOT preload BOTH
+  # `texlive-basic` and `core` in one session. See docs/plans/M4.md + DESIGN §6.3 note.
+  cp "$wasm/data/core.js"   "$DIST/texlive-basic.js"
+  cp "$wasm/data/core.data" "$DIST/texlive-basic.data"
+  # Standalone engine formats (also embedded in core; surfaced per spec).
   find "$fmtdir" -name '*.fmt' -exec cp {} "$DIST/formats/" \;
 
   # Deterministic integrity list (sorted, relative paths). Linux: sha256sum —

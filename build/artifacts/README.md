@@ -83,10 +83,14 @@ make clean-artifacts                   # remove dist/ and the work volume
 
 ## Output (`dist/`)
 
-`busytex.js`, `busytex.wasm` (engine), `texlive-basic.js` +
-`texlive-basic.data` (data bundle), `formats/*.fmt` (the `xelatex` + `pdflatex`
-format dumps — the non-lua retained set), `assets.json` (data-driven inventory),
-and `SHA256SUMS`.
+`busytex.js`, `busytex.wasm` (engine); the **tier data bundles**
+`core.{js,data}` + `academic.{js,data}` (M4 item 3 — disjoint per-tier bundles,
+split from one combined install by the tlpdb tier map, both mounting at
+`/texlive`); `texlive-basic.{js,data}` (a back-compat **byte alias of `core`**,
+kept one release for the demo + published 0.0.1 consumers, dropped at M5);
+`formats/*.fmt` (the `xelatex` + `pdflatex` format dumps — the non-lua retained
+set, carried in `core`); `assets.json` (data-driven inventory — its structural
+`bundle-js`/`bundle-data` roles classify every tier for free); and `SHA256SUMS`.
 
 Reproducibility (`SOURCE_DATE_EPOCH`, stable ordering) is wired here; the
 byte-for-byte double-build gate is M3 item 5 (`build/repro-check.sh`), and the

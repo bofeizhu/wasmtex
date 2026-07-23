@@ -24,8 +24,15 @@
 #     - Dropped Cosmopolitan accommodations: the cosmo_getpass.h copy+inject in
 #       source/texlive.patched (cosmo_getpass.h is no longer forked; the header
 #       was #ifdef __COSMOPOLITAN__ — a no-op on our native/wasm targets).
-#     - Dropped the example/ asset target and the texlive-extra/-full install
-#       profiles (only the texlive-basic bundle path is kept).
+#     - Dropped the example/ asset target and busytex's per-scheme install
+#       profiles. M4 item 3 (2026-07-24) replaced the single texlive-basic
+#       profile with a tlpdb-driven COMBINED-tiers install profile
+#       (build/bundles/gen-profile.mjs) + a disjoint per-tier stage+pack
+#       (build/bundles/stage-tiers.mjs → build/wasm/data/%.js): one install,
+#       two bundles (core + academic). Also dropped the ProvidesPackage JS-
+#       comment dump (superseded by the tlpdb provides index) and added a
+#       robust *.fmt sweep to the retained set (academic's collection-langcjk
+#       makes fmtutil dump JP pTeX/amstex formats the multicall can't run).
 #     - Adjusted the format dump/prune set to the non-lua retained set
 #       (xelatex + pdflatex — what the runtime FORMAT_* constants and the
 #       conformance corpus use); dropped the lua wrappers/rename/prune.
@@ -74,7 +81,8 @@
 #       kpathsea reads ls-R order-independently, so it is behavior-preserving.
 #       New helper normalize-lsr.py (synced by both drivers' machinery_files).
 #   Kept (DESIGN.md §3 program set): xetex, pdftex, bibtex8, xdvipdfmx,
-#   makeindex, kpsewhich, and the texlive-basic bundle path.
+#   makeindex, kpsewhich, and the data-bundle path — now the M4 core+academic
+#   tiered path (was texlive-basic through M3).
 # Reference URLs from upstream, retained:
 # good https://github.com/busytex/busytex/blob/e95e9cce4b5be1f932a06cb078ada701687d1c69/Makefile
 # http://www.linuxfromscratch.org/blfs/view/svn/pst/texlive.html
@@ -134,6 +142,11 @@ BINARCH_native =bin/_custom
 
 PYTHON        = python3
 PERL          = perl
+# node drives OUR tier scripts (build/bundles/, synced into the work tree by the
+# drivers): gen-profile.mjs (install profile collections) + stage-tiers.mjs (the
+# disjoint per-tier split). Present on both build hosts (the drivers already run
+# node for gen-assets.mjs / the verify gate). M4 item 3.
+NODE          = node
 MAKE_wasm     = emmake $(MAKE)
 CMAKE_wasm    = emcmake cmake
 CONFIGURE_wasm= $(EMROOT)/emconfigure
@@ -543,21 +556,31 @@ build/%/texlive/texk/web2c/busytex_libpdftex.a: build/%/texlive.configured
 
 ################################################################################################################
 
-build/texlive-basic.profile:
-	mkdir -p $(dir $@) # https://tex.stackexchange.com/questions/500339/what-makes-up-each-tex-live-install-tl-scheme https://tug.org/svn/texlive/trunk/Master/tlpkg/tlpsrc/collection-basic.tlpsrc?view=markup
+# The single COMBINED install profile (M4 item 3; docs/plans/M4.md item 3).
+# ONE install-tl run installs scheme-basic + EVERY shipped tier's collections
+# (core + academic); build/stage.stamp (below) then splits the pruned tree into
+# disjoint per-tier bundles. The collection list is emitted FROM the tier
+# definition (build/bundles/tiers.mjs) by gen-profile.mjs — the tier definition is
+# the single source of truth, so adding a tier or a collection is a tiers.mjs
+# edit, not a Makefile edit (docs/plans/M4.md "config, not rework"). Depending on
+# the two tier scripts makes a changed tier definition regenerate the profile ->
+# reinstall through make's normal prerequisite tracking.
+# https://tex.stackexchange.com/questions/500339/what-makes-up-each-tex-live-install-tl-scheme
+build/texlive-tiers.profile: bundles/tiers.mjs bundles/gen-profile.mjs
+	mkdir -p $(dir $@)
 	echo selected_scheme scheme-basic                                   > $@
-	echo TEXDIR $(ROOT)/$(basename $@)                                 >> $@ 
+	echo TEXDIR $(ROOT)/$(basename $@)                                 >> $@
 	echo TEXMFLOCAL $(ROOT)/$(basename $@)/texmf-dist/texmf-local      >> $@
-	echo TEXMFSYSVAR $(ROOT)/$(basename $@)/texmf-dist/texmf-var       >> $@ 
+	echo TEXMFSYSVAR $(ROOT)/$(basename $@)/texmf-dist/texmf-var       >> $@
 	echo TEXMFSYSCONFIG $(ROOT)/$(basename $@)/texmf-dist/texmf-config >> $@
-	echo "collection-xetex  1"                                         >> $@
-	echo "collection-latex  1"                                         >> $@
-	# collection-luatex dropped with LuaTeX (DESIGN.md §9). NOTE: this does NOT
-	# stop lua formats being built — scheme-basic -> collection-basic carries
-	# `depend luahbtex`/`depend luatex`, so their fmtutil.cnf entries install
-	# anyway and fmtutil builds them with whatever host TeX is on PATH (a
-	# non-hermetic leak; see docs/plans/M2-journal.md item 3). The LOAD-BEARING
-	# excision is the luahbtex/ luatex/ whole-dir prune in the recipe below.
+	# Collections for ALL shipped tiers (core + academic), from tiers.mjs.
+	# collection-luatex is deliberately NOT among them (LuaTeX dropped, DESIGN.md
+	# §9). NOTE: this does NOT stop lua formats being built — scheme-basic ->
+	# collection-basic carries `depend luahbtex`/`depend luatex`, so their
+	# fmtutil.cnf entries install anyway and fmtutil builds them with whatever host
+	# TeX is on PATH (a non-hermetic leak; see docs/plans/M2-journal.md item 3).
+	# The LOAD-BEARING excision is the luahbtex/ luatex/ whole-dir prune below.
+	$(NODE) bundles/gen-profile.mjs                                    >> $@
 
 build/texlive-%.txt: build/texlive-%.profile source/texmfrepo.txt
 	$(BUSYTEX_native)
@@ -581,6 +604,17 @@ build/texlive-%.txt: build/texlive-%.profile source/texmfrepo.txt
 	# lua fmtutil entries (built by the HOST TeX — non-hermetic, never shippable),
 	# and this prune is the load-bearing removal. Do not delete them as dead code.
 	rm -rf $(addprefix $(basename $@)/texmf-dist/texmf-var/web2c/, pdftex/latex.fmt pdftex/etex.fmt pdftex/pdfetex.fmt pdftex/pdftex.fmt pdftex/mptopdf.fmt pdftex/latex-dev.fmt pdftex/pdflatex-dev.fmt xetex/xetex.fmt xetex/xelatex-dev.fmt tex/ luahbtex/ luatex/) $(addprefix $(basename $@)/, bin/ tlpkg/ texmf-dist/doc/ texmf-dist/scripts/ texmf-dist/source/ install-tl install-tl.log)
+	# M4 item 3 (multi-tier install): the academic collections — notably
+	# collection-langcjk — make fmtutil ALSO dump Japanese pTeX-family formats
+	# (ptex/uptex/eptex/euptex/platex/uplatex + amstex, under new web2c/ subdirs) that
+	# this multicall engine CANNOT run — it carries only xetex + pdftex (DESIGN §3).
+	# The specific-name prune above predates those collections and does not enumerate
+	# them, so they would bloat `core` (~16 MB of dead .fmt, since generated files go
+	# to the base tier) and clutter dist/formats/. This SWEEP enforces the same
+	# RETAINED set the prune above intends, robustly: keep ONLY the two formats the
+	# runtime FORMAT_* constants load (xetex/xelatex.fmt + pdftex/pdflatex.fmt) and
+	# delete every OTHER dumped format, whatever future collection produced it.
+	find $(basename $@)/texmf-dist/texmf-var/web2c -name '*.fmt' ! -path '*/xetex/xelatex.fmt' ! -path '*/pdftex/pdflatex.fmt' -delete
 	# Reproducibility (M3 item 5, DESIGN.md §6.1): mktexlsr writes each ls-R in
 	# filesystem READDIR order, which differs across fresh ext4 work volumes and
 	# made texlive-basic.data/.js diverge between two clean container builds.
@@ -593,13 +627,43 @@ build/texlive-%.txt: build/texlive-%.profile source/texmfrepo.txt
 
 ################################################################################################################
 
-build/wasm/texlive-%.js: build/texlive-%/texmf-dist 
+# MULTI-BUNDLE STAGING + PACKAGING (M4 item 3; docs/plans/M4.md item 3).
+# The combined install (build/texlive-tiers) is split into DISJOINT per-tier
+# trees by build/bundles/stage-tiers.mjs (driven by the tlpdb-derived fileToTier
+# map), and each tier tree is file_packager'd into its own LZ4 bundle. Every
+# bundle mounts at the SAME /texlive root; the trees are disjoint, so several
+# mount together (preload, or M4 item 5's on-demand) without file collisions.
+# `core` is the always-preloaded BASE tier: stage-tiers.mjs routes every
+# install-generated / non-tlpdb file to it (the FULL-tree ls-R, texmf.cnf, the
+# retained .fmt formats + font maps under texmf-var, fonts.conf, the root tex/
+# ini files) so it stays self-sufficient for basic docs. Later tiers carry only
+# their own package files.
+
+# Stage the pruned combined install into build/stage/<tier>/ (+ build/stage/
+# tiers.txt, the packaged-tier list the drivers read). Reruns if the install, the
+# resolver or the tier definition changes. --tlpdb is the ISO-staged pinned db in
+# the work tree; rm -rf keeps the split clean across reruns.
+build/stage.stamp: build/texlive-tiers.txt bundles/stage-tiers.mjs bundles/resolve.mjs bundles/tiers.mjs bundles/tlpdb.mjs
+	rm -rf build/stage
+	$(NODE) bundles/stage-tiers.mjs --install build/texlive-tiers --tlpdb source/texmfrepo/tlpkg/texlive.tlpdb --out build/stage
+	touch $@
+
+# Only the BASE tier (core) carries the shared /etc/passwd + /bin/busytex; adding
+# them to a later tier would duplicate those paths and break bundle disjointness.
+EXTRA_PRELOAD_core = --preload build/passwd@/etc/passwd --preload build/empty@/bin/busytex
+
+# file_packager one staged tier -> build/wasm/data/<tier>.{js,data}. The output
+# .data basename (core.data / academic.data / …) is what the .js loads via
+# Module.locateFile at runtime, so it is ALSO the dist basename the driver copies
+# to. Same LZ4 + export-name (BusytexPipeline) convention as the former single
+# texlive-basic bundle; the ProvidesPackage-comment dump is dropped (M4 item 4's
+# manifest `provides` index supersedes that crude precursor). The build/wasm/data/
+# subdir keeps this pattern from also matching build/wasm/busytex.js.
+build/wasm/data/%.js: build/stage.stamp
 	mkdir -p $(dir $@)
 	echo > build/empty
 	echo 'web_user:x:0:0:emscripten:/home/web_user:/bin/false' > build/passwd
-	$(PYTHON) $(EMROOT)/tools/file_packager.py $(basename $@).data --js-output=$@ --export-name=BusytexPipeline --lz4 --preload build/passwd@/etc/passwd --preload build/empty@/bin/busytex --preload build/texlive-$*@/texlive
-	grep -r -I -h 'ProvidesPackage{' build/texlive-$* | grep '^[^%]' | sed -e 's/^/\/\/ /' > $@.providespackage.txt
-	cat $@.providespackage.txt $@ > $@.tmp; mv $@.tmp $@
+	$(PYTHON) $(EMROOT)/tools/file_packager.py $(basename $@).data --js-output=$@ --export-name=BusytexPipeline --lz4 $(EXTRA_PRELOAD_$*) --preload build/stage/$*@/texlive
 
 # (build/wasm/ubuntu/%.js dropped: the rolling-Ubuntu-.deb bundle path is out of
 #  scope; ubuntu_package_preload.py / TEXMFFULL / URL_ubuntu_* removed.)

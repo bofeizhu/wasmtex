@@ -77,6 +77,7 @@ cache_dir="${WASMTEX_CACHE_DIR:-$HOME/.cache/wasmtex/sources}"
 work="${WASMTEX_WORK_DIR:-$HOME/.cache/wasmtex/build/native/busytex-2026}"
 dist="$repo/dist"
 machinery="$repo/build/engines"
+bundles="$repo/build/bundles"   # OUR tier scripts (gen-profile / stage-tiers / resolver)
 
 # --- Reproducibility hooks (same derivation as the container flow) -----------
 # SOURCE_DATE_EPOCH is the TL 2026 freeze date, 2026-03-01T00:00:00Z = 1772323200
@@ -199,11 +200,27 @@ do_prep() {
   # build sandbox. Copy only files whose content DIFFERS, so unchanged files keep
   # their mtime and make stays incremental on resume — while an edited config
   # (the M2 fork, or a future rebase) always re-syncs into the tree.
-  local f
+  local f b
   for f in "${machinery_files[@]}"; do
     if ! cmp -s "$machinery/$f" "$work/$f" 2>/dev/null; then
       echo "   syncing build config into work tree: $f"
       cp "$machinery/$f" "$work/$f"
+    fi
+  done
+
+  # Sync OUR tier bundle scripts (build/bundles/*.mjs, minus *.test.mjs) into the
+  # work tree so the Makefile's profile/staging rules resolve them and their
+  # relative imports (./tlpdb.mjs, ./tiers.mjs, ./resolve.mjs) work in-tree.
+  # mtime-preserving (cmp -s): an unchanged tier definition keeps make incremental
+  # on resume; an edited tiers.mjs re-syncs and reinstalls/re-stages through the
+  # Makefile prerequisites. M4 item 3.
+  mkdir -p "$work/bundles"
+  for f in "$bundles"/*.mjs; do
+    b="$(basename "$f")"
+    case "$b" in *.test.mjs) continue ;; esac
+    if ! cmp -s "$f" "$work/bundles/$b" 2>/dev/null; then
+      echo "   syncing tier bundle script: bundles/$b"
+      cp "$f" "$work/bundles/$b"
     fi
   done
 
@@ -244,9 +261,13 @@ do_native() {
 }
 
 do_basic() {
-  banner "basic: install TL 'texlive-basic' via install-tl + dump .fmt formats"
-  run_make build/texlive-basic.txt
-  echo "   formats:"; find "$work/build/texlive-basic/texmf-dist/texmf-var/web2c" -name '*.fmt' -exec ls -la {} + 2>/dev/null || true
+  banner "basic: install TL combined tiers tree (scheme-basic + core+academic collections) via install-tl + dump .fmt formats"
+  # ONE install-tl run installs every shipped tier's collections into
+  # build/texlive-tiers (profile generated from build/bundles/tiers.mjs); the
+  # bundle stage then splits it into disjoint per-tier bundles. Longer than the
+  # former basic-only install (academic's ~2400-package closure).
+  run_make build/texlive-tiers.txt
+  echo "   formats:"; find "$work/build/texlive-tiers/texmf-dist/texmf-var/web2c" -name '*.fmt' -exec ls -la {} + 2>/dev/null || true
 }
 
 do_wasm() {
@@ -258,9 +279,19 @@ do_wasm() {
 }
 
 do_bundle() {
-  banner "bundle: pack texlive-basic data bundle (file_packager: js + data)"
-  run_make build/wasm/texlive-basic.js
-  echo "   bundle:"; ls -la "$work/build/wasm/texlive-basic.js" "$work/build/wasm/texlive-basic.data" 2>/dev/null || echo MISSING
+  banner "bundle: stage disjoint tiers + file_packager each (core + academic: js + data)"
+  # Split the pruned combined install into disjoint per-tier trees (build/stage/
+  # <tier>/) via the tlpdb tier map, then file_packager each. build/stage/tiers.txt
+  # lists the tiers that received files — the exact set to package (N-tier-general).
+  run_make build/stage.stamp
+  local tiers=() t targets=()
+  while IFS= read -r t; do [ -n "$t" ] && tiers+=("$t"); done < "$work/build/stage/tiers.txt"
+  echo "   tiers: ${tiers[*]}"
+  for t in "${tiers[@]}"; do targets+=("build/wasm/data/$t.js"); done
+  run_make "${targets[@]}"
+  for t in "${tiers[@]}"; do
+    echo "   bundle[$t]:"; ls -la "$work/build/wasm/data/$t.js" "$work/build/wasm/data/$t.data" 2>/dev/null || echo MISSING
+  done
 }
 
 do_dist() {
@@ -269,7 +300,7 @@ do_dist() {
   # texlive-basic data bundle. The vendored busytex worker/pipeline glue is NO
   # LONGER shipped — the M1 runtime replaced its role and M2 makes the config
   # ours, so dist/ carries only WasmTeX-consumed artifacts (M2 item 3 decision).
-  local wasm="$work/build/wasm" fmtdir="$work/build/texlive-basic/texmf-dist/texmf-var/web2c"
+  local wasm="$work/build/wasm" fmtdir="$work/build/texlive-tiers/texmf-dist/texmf-var/web2c"
 
   rm -rf "${dist:?}"/*
   mkdir -p "$dist/formats"
@@ -277,10 +308,23 @@ do_dist() {
   # Engine wasm + js.
   cp "$wasm/busytex.js"   "$dist/busytex.js"
   cp "$wasm/busytex.wasm" "$dist/busytex.wasm"
-  # Data bundle (js + data pair).
-  cp "$wasm/texlive-basic.js"   "$dist/texlive-basic.js"
-  cp "$wasm/texlive-basic.data" "$dist/texlive-basic.data"
-  # Standalone engine formats (also embedded in the bundle; surfaced per spec).
+  # Per-tier data bundles (js + data pair each), disjoint, driven by the tier map
+  # (build/stage/tiers.txt). N-tier-general: whatever tiers were staged/packed.
+  local t
+  while IFS= read -r t; do
+    [ -n "$t" ] || continue
+    cp "$wasm/data/$t.js"   "$dist/$t.js"
+    cp "$wasm/data/$t.data" "$dist/$t.data"
+  done < "$work/build/stage/tiers.txt"
+  # Back-compat ALIAS (M4 item 3; dropped at M5). texlive-basic.{js,data} are byte
+  # copies of core.{js,data} so the demo + published 0.0.1 consumers that still
+  # name the `texlive-basic` bundle keep working unchanged. Consequence:
+  # texlive-basic.js loads core.data internally (its baked file_packager
+  # reference), so do NOT preload BOTH `texlive-basic` and `core` in one session
+  # (that would mount core.data twice). See docs/plans/M4.md risks + DESIGN §6.3 note.
+  cp "$wasm/data/core.js"   "$dist/texlive-basic.js"
+  cp "$wasm/data/core.data" "$dist/texlive-basic.data"
+  # Standalone engine formats (also embedded in core; surfaced per spec).
   find "$fmtdir" -name '*.fmt' -exec cp {} "$dist/formats/" \;
 
   # Deterministic integrity list (sorted, relative paths). macOS: shasum -a 256.

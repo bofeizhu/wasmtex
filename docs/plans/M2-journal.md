@@ -17,6 +17,13 @@ trail shows avoidance.
 
 ---
 
+> **Item 4b retirement condition (for the next ICU rebaser).** Retire the
+> genccode offset-TOC repackaging transform if a future ICU pkgdata grows a
+> no-assembly offset-TOC static mode (watch `pkg_createWithoutAssemblyCode`
+> in tools/pkgdata) or drops the `initAliasData` length gate
+> (common/ucnv_io.cpp). Retest with the `ucnv_countAvailable()` probe:
+> expect ~232, not 0. Full mechanism in the Item 4b section below.
+
 ## Item 2 — TL 2026 pin research + pins.lock update
 
 Dated 2026-07-23. Goal: resolve the TL 2026 snapshot artifacts (texlive-source
@@ -901,7 +908,210 @@ zlib 1.3.2). SOURCE_DATE_EPOCH cut to the TL 2026 freeze (1772323200). Fresh
 typeset — ICU 78 converter-alias-table load regression (root cause fully characterized
 above). pdfTeX is fully functional. This must be fixed before M2's corpus/acceptance
 (items 5-9) can pass for XeTeX. Flagged as the #1 follow-up.
+**[RESOLVED in item 4b below — pointer-TOC vs offset-TOC data packaging; ucnv
+countAvailable 0 -> 232, runtime 179/186 -> 186/186, demo 1/4 -> 4/4.]**
 
 Deviations from DESIGN.md: none (native-first dev build per §9; only container-built
 artifacts release; the banner + epoch are sanctioned build-side pins). No DESIGN.md
 edits needed.
+
+---
+
+## Item 4b — Fix the ICU 78 converter-alias blocker (pre-item-5 unit)
+
+Dated 2026-07-23. Goal: fix the #1 blocker item 4 characterized — wasm XeTeX aborts
+at `XeTeXFontMgr_FC.cpp:326` "internal error; cannot read font names" because ICU 78's
+`ucnv_open("macintosh")` returns `U_FILE_ACCESS_ERROR` and `ucnv_countAvailable()=0`.
+Provenance: only ICU 78.2 sources (the pinned TL 2026 vendored ICU) and ICU's own
+tools were read; no GPL/AGPL WASM-TeX wrapper source was opened. Written as the work
+ran. Per the fix-direction head start (item 4), iterated on NATIVE ICU first (seconds,
+no wasm rebuild) and confirmed the mechanism before touching wasm.
+
+### Root cause (exact mechanism — pinned to two ICU source lines)
+
+Built a native probe (`ucnv_countAvailable`, `ucnv_open` by alias vs canonical, plus
+a direct `udata_openChoice(NULL,"icu","cnvalias",...)` and a UDataInfo header dump)
+linking the built `libicuuc.a` + `libicudata.a`. It reproduced the item-4 symptom
+exactly AND localized it:
+
+- `u_init()` returns **`U_INVALID_FORMAT_ERROR`**; `ucnv_countAvailable()=0`; every
+  alias (`macintosh`, `ibm-942`, `Shift_JIS`, `windows-1252`) fails
+  `U_FILE_ACCESS_ERROR`; every canonical converter (`macos-0_2-10.2`, `ISO-8859-1`,
+  `US-ASCII`, `UTF-8/16BE`, `ibm-943_P15A-2003`) opens fine.
+- A DIRECT `udata_openChoice(NULL,"icu","cnvalias", accept_all, ...)` **succeeds**
+  (data present + loadable), and the runtime cnvalias `UDataInfo` passes EVERY field of
+  the strict `ucnv_io.cpp:isAcceptable` (size=20, LE, ASCII family, `dataFormat=CvAl`,
+  `formatVersion[0]=3`). So the data is NOT missing and NOT format-rejected — the item-4
+  "alias table not loaded" framing is correct but the reason is one layer deeper.
+
+The defect is in `common/ucnv_io.cpp initAliasData()` (ICU 78), lines 250-255:
+
+    int32_t dataLength = udata_getLength(data); // length minus the UDataInfo size
+    if (dataLength <= int32_t(sizeof(sectionSizes[0]))) {   // <= 4
+        goto invalidFormat;                                 // "We don't even have a TOC!"
+    }
+
+`udata_getLength()` returns **-1** for our data, so `-1 <= 4` -> `goto invalidFormat`
+-> `U_INVALID_FORMAT_ERROR` -> `gAliasData` stays null -> countAvailable 0 -> aliases
+unresolvable -> XeTeX exit 3. WHY -1: our ICU data is packaged as a **pointer-TOC**
+(`common/ucmndata.cpp pointerTOCLookupFn`, line 298 hard-codes `*pLength=-1` for every
+item — pointer-TOC items are separately-linked symbols, so item lengths are not
+derivable), whereas an **offset-TOC** (`offsetTOCLookupFn`, line 251) computes a real
+`*pLength = entry[1].dataOffset - entry->dataOffset`. Canonical `.cnv` converters don't
+consult the length (they parse their own headers), so ONLY the alias-table load — the
+one code path that length-validates its TOC — breaks. **This length gate is new since
+ICU 70** (TL 2023): ICU 70's `initAliasData` did not reject pointer-TOC data on length,
+so the identical busytex packaging gave `countAvailable=232` there. Not an item-4 edit
+(CXXSTD/redefines don't touch ICU data); a genuine ICU 70->78 behavior change meeting
+busytex's long-standing pointer-TOC packaging.
+
+WHY we ship a pointer-TOC: the busytex ICU build passes `pkgdata --without-assembly`
+(the Makefile's `PKGDATAFLAGS_ICU_*` — wasm/Cosmopolitan can't assemble arch `.s`),
+and `PKGDATA_MODE` defaults to `static`. pkgdata's no-assembly static path
+(`pkgdata.cpp pkg_createWithoutAssemblyCode`) hard-calls `createCommonDataFile(...,
+sourceTOC=true, ...)` (pkgdata.cpp:1626) which makes `gencmn` emit a `{name, &symbol}`
+**pointer-TOC** source plus one `genccode` object per data item (verified: our
+`libicudata.a` = `icudt78l_dat.o` TOC + 4089 individual `*_res/_cnv/_brk/_dict.o`,
+TOC entry `{ "icudt78l/cnvalias.icu", icudt78l_cnvalias_icu }`). pkgdata has no flag to
+emit an offset-TOC without assembly — the assembly path (`pkg_createWithAssemblyCode`,
+`genccode -a`) is the only in-tree offset-TOC producer, and assembly is exactly what
+wasm can't use.
+
+### Fix (layer: our Makefile) — repackage libicudata.a as a single-blob offset-TOC
+
+pkgdata still builds the complete `icudt78l.dat` (21.9 MB, internal offset-TOC) as its
+intermediate. The fix regenerates `libicudata.a` from THAT: `genccode` (no `-a`) turns
+the whole `.dat` into ONE `const uint8_t icudt78_dat[]` C blob; compiling + archiving it
+yields a single-object `libicudata.a` whose runtime TOC is an **offset-TOC**, so
+`udata_getLength()` returns real lengths and the alias load passes. `genccode` output is
+portable C (a byte array + the `icudt78_dat` entry point), so the SAME transform serves
+native (cc) and wasm (emcc) — no assembly, satisfying the original `--without-assembly`
+constraint. This lands in OUR Makefile (build/engines/, the ICU build rule), not a
+patch: it is a packaging/linker-layer choice, and the ICU sources are untouched.
+
+Minimality/robustness: XeTeX's `_FC` font manager needs the converter alias table to
+resolve TrueType `name`-table encodings — `macintosh` (Mac Roman), plus `UTF16BE`/`UTF8`
+(algorithmic, already fine). The single-blob offset-TOC restores the FULL alias table
+(`countAvailable` 0 -> 232, matching ICU 70), so it is not a narrow per-converter hack;
+it fixes the packaging so ICU's own data loads as ICU expects. The `.dat` is unchanged
+data — only its container object changes (pointer-TOC split -> single offset-TOC blob).
+
+### Native proof (before any wasm rebuild)
+
+Reused the built `icudt78l.dat`: `genccode -e icudt78 icudt78l.dat` ->
+`icudt78l_dat.c` (66 MB, symbol `icudt78_dat`) -> `cc -O2 -std=c11 -fno-common -c` ->
+one 21.9 MB object -> `ar -crs libicudata_single.a`. Relinked the probe against
+`libicuuc.a` + this single-object archive:
+
+    BEFORE (pointer-TOC):  u_init=U_INVALID_FORMAT_ERROR  countAvailable=0
+                           ucnv_open("macintosh")=U_FILE_ACCESS_ERROR
+    AFTER  (offset-TOC):   u_init=U_ZERO_ERROR            countAvailable=232
+                           ucnv_open("macintosh")=U_ZERO_ERROR  (converter opens)
+
+`countAvailable=232` is byte-for-byte the TL 2023 ICU 70 value from item 4's differential
+probe — the alias table is now fully live. (`Shift_JIS`/`windows-1252` report
+`U_AMBIGUOUS_ALIAS_WARNING`, ICU's normal "this alias maps to >1 converter" signal, not
+an error; the converter still opens.) Mechanism confirmed; proceeding to the Makefile
+integration + wasm rebuild.
+
+### Makefile integration (build/engines/Makefile — the ICU build rule)
+
+Added to the `build/%/.../libicuuc.a .../libicudata.a` rule, after the ICU make: a
+target-agnostic repackaging that globs pkgdata's `icudt*l.dat`, `genccode -e <ep>`s it
+to a single-blob C, compiles with `$(CC_$*)` (`cc`/`emcc`), and `rm`+`$(AR_$*) -crs`
+replaces `libicudata.a` with that one object. Derives all names from the `.dat`
+basename (`datbase=icudt78l`, `ep=icudt78` via `basename l.dat`) so no ICU major
+version is hard-coded (annual-rebase-robust). New var `GENCCODE_native` points at the
+native genccode (a native tool emitting portable C — the same binary serves both
+targets, exactly like the CCSKIP native icupkg/pkgdata reuse). Applied to native AND
+wasm to keep the two ICU builds coherent (and for M3's uniform container build). The
+Makefile DERIVED-WORK header mod-list gained an item-4b bullet.
+
+Make-expansion validated by `make -B -n` on both targets: the wasm branch expands to
+`<native genccode> -e "$ep" ... && emcc -Oz -I.../build/wasm/.../icu/include -c
+...${datbase}_dat.c -o ...${datbase}_dat.o && emar -crs build/wasm/.../libicudata.a
+...` — correct toolchain substitution (`emcc`/`emar`/`-Oz`/wasm include). One forcing
+subtlety learned: removing only `libicudata.a` in an INCREMENTAL tree makes the ICU
+subtree's `icubuild` step fail at its own `test -r libicudata.a` (the data build is
+timestamp-satisfied and won't regenerate it); removing the `data/packagedata` timestamp
+too lets pkgdata rebuild its pointer-TOC first, after which our step overwrites it. In a
+CLEAN build (M3 container) the data step always produces the `.a` first, so the recipe
+is a clean no-forcing pass. The wasm ICU rule also needs the emsdk on PATH (`emconfigure`
+lives in `$(EMROOT)`) — run via the driver, which sources `build/toolchain/native-env.sh`.
+
+### Build (real make recipe, not the hand-run) + timings
+
+- **native ICU rebuild** via make (full rule: reconfigure + incremental ICU make +
+  pkgdata pointer-TOC regen + our genccode/cc/ar repackaging): **107.9 s**. Result:
+  `libicudata.a` = ONE object `icudt78l_dat.o`, 21,953,944 B (was 23,365,784 B
+  pointer-TOC, 4090 objects). Probe against the make-produced archive: `u_init`
+  U_ZERO_ERROR, `countAvailable=232`, `macintosh` opens. (This is the real Makefile
+  path — the earlier native proof was the identical commands by hand.)
+- **wasm ICU rebuild** via make (same rule, `$*`=wasm; the emcc 66 MB single-blob
+  compile is the long pole): **341.3 s** (~5.7 min). Result: `libicudata.a` = ONE
+  object `icudt78l_dat.o`, 21,953,726 B (was 22,988,052 B pointer-TOC, 2047 objects).
+- **wasm relink** (`busytex.js`/`.wasm`, forced by removing the outputs): **4.7 s**.
+  `busytex.wasm` 27,524,414 -> **27,508,145 B** (-16,269 B — the single offset-TOC blob
+  is marginally smaller than the pointer-TOC's 2044-entry TOC + per-object overhead).
+  The link resolved `icudt78_dat` with no undefined-symbol error (only the pre-existing
+  benign `getpass` warning), confirming the entry point is correct on wasm. `busytex.js`
+  byte-identical (273,991 — templated loader, unaffected).
+- **native relink** (coherence; native XeTeX uses CoreText `_Mac`, not `_FC`, so it
+  never hit the bug — relinked so the on-disk binary matches the config): **3.7 s**.
+  `busytex` 31,639,496 -> 31,484,952 B. Confirms the incremental design: with a fresh
+  `libicudata.a` present, `make native` SKIPPED the ICU rule (no genccode re-run) and
+  only relinked — so a from-source M3 build and this dev resume converge.
+- **dist reassembly + execution gate**: 1.1 s. Only `busytex.wasm` changed; the bundle
+  (`texlive-basic.data/.js`) and the `.fmt` formats are untouched by the ICU data fix.
+
+### Acceptance (the real gates)
+
+- **Execution gate** (`verify-engine.mjs`): **PASSED**. `assets.json` 7 entries; wasm
+  imports 60 total / 53 from `env` (sound, not the hollow 363); `xetex --version` exit 0,
+  banner **"TeX Live 2026_busytexwasm"**.
+- **Runtime suite** (`runtime/`): `typecheck` clean; `vitest` **186/186** (10/10 files),
+  up from item 4's **179/186**. All 7 previously-failing `typeset-integration.test.ts`
+  XeTeX tests flipped GREEN (hello-world xetex->xdvipdfmx PDF; failing-compile TeX error;
+  \label/\ref rerun; bibtex8 end-to-end; public-API PDF; cancel+fresh-instance; broken-doc
+  diagnostics). **Zero remaining failures**, so NO item-6 fixture churn surfaced in the
+  runtime suite — the ICU fix restored XeTeX without perturbing the golden fixtures (the
+  suite matches the TL 2023 baseline count).
+- **Demo smoke** (Playwright, `demo/`): **4/4**, up from item 4's **1/4**. All three
+  XeTeX-path failures recovered (XeTeX text-bearing PDF + clean diagnostics; broken-doc
+  file+line diagnostics; cancel()+fresh-worker XeTeX follow-up); the pdfTeX test still
+  passes. No demo/runtime CODE change was needed — the failures were 100% the engine ICU
+  defect, as item 4 predicted.
+- **License audit**: green (a/b 4 build/engines files all SPDX MIT incl. the edited
+  Makefile; c/d/e unchanged).
+
+### Failure classification (per the acceptance ask)
+
+Every failure item 4 attributed to the ICU blocker (7 runtime + 3 demo) is now GREEN.
+Nothing remains in the "ICU-caused" bucket. The item-6 fixture-churn bucket is EMPTY for
+these suites: had the ICU fix altered PDF bytes/log cosmetics, the golden-fixture asserts
+would still diff — they do not. (Item 6's fixture-regen scope stands on its own for any
+NON-ICU TL-2026 drift the corpus surfaces later; this unit introduced none.)
+
+### Reproducibility / provenance notes
+
+- The transform is deterministic: same `.dat` -> same `genccode` C -> same object, under
+  the pinned `SOURCE_DATE_EPOCH`; no new inputs, so the M3 bit-for-bit gate is unaffected.
+  Only the CONTAINER of ICU's data changes (pointer-TOC split -> one offset-TOC blob); the
+  `.dat` bytes are identical.
+- Provenance: only ICU 78.2 sources (pinned TL 2026 vendored ICU) and ICU's own tools
+  (genccode/pkgdata) were read to characterize + fix this. No GPL/AGPL WASM-TeX wrapper
+  source was opened. The fix is original work in OUR Makefile; ICU sources are untouched
+  (no `build/patches/` entry).
+
+### Deviations from DESIGN.md
+
+None. Native-first dev build per §9; only container-built artifacts release; the fix is a
+build-config (Makefile) change in the sanctioned layer. No DESIGN.md edit needed. dist/ is
+git-ignored (dev artifact); nothing hand-built is committed.
+
+### Status
+
+**ICU 78 converter-alias blocker: RESOLVED.** wasm XeTeX typesets end to end (gate +
+186/186 runtime + 4/4 demo). M2 items 5-9 (formats/dist re-verify, fixture regen, corpus,
+CJK, wrap-up) are unblocked for XeTeX. The M2 item-4 "outcome summary" blocker note (the
+preceding section) is superseded by this one.

@@ -44,6 +44,13 @@
 #       failed under Apple clang 21's gnu++14 default. See the CXXSTD comment and
 #       the item-4 journal (icu 70->78 in the drift table). Both retired TL 2023
 #       macOS source patches (libpng/zlib TARGET_OS_MAC) were fixed upstream.
+#     - ICU 78 converter-alias fix (M2 item 4b): the ICU build rule now repackages
+#       libicudata.a as a single-blob OFFSET-TOC object (genccode on pkgdata's own
+#       icudt*l.dat) instead of pkgdata's --without-assembly POINTER-TOC. ICU 78
+#       rejects a pointer-TOC alias table (udata_getLength()=-1) with
+#       U_INVALID_FORMAT_ERROR, breaking wasm XeTeX ("cannot read font names"); the
+#       offset-TOC restores the alias table. New var GENCCODE_native. See the ICU
+#       rule comment and docs/plans/M2-journal.md item 4b (full root cause + proof).
 #   Kept (DESIGN.md §3 program set): xetex, pdftex, bibtex8, xdvipdfmx,
 #   makeindex, kpsewhich, and the texlive-basic bundle path.
 # Reference URLs from upstream, retained:
@@ -58,6 +65,13 @@
 # OFFLINE by the driver (build/artifacts/build-native.sh do_prep), which bypasses
 # the source/texmfrepo.txt curl rule entirely — so this variable is retired (empty).
 URL_texlive_full_iso_cache =
+
+# Fail-loud hygiene: a recipe that dies mid-way must not leave a half-made
+# target that a re-run silently accepts. Concretely: the ICU repackage rule
+# (item 4b) regenerates the pointer-TOC libicudata.a BEFORE replacing it —
+# without this, an interrupted repackage resurrects the exact ICU 78
+# alias-table defect on the next incremental make, past the execution gate.
+.DELETE_ON_ERROR:
 URL_texlive_full_iso = https://ftp.tu-chemnitz.de/pub/tex/systems/texlive/Images/texlive2026-20260301.iso
 URL_texlive          = https://github.com/TeX-Live/texlive-source/archive/refs/heads/tags/texlive-2026.0.tar.gz
 URL_expat            = https://github.com/libexpat/libexpat/releases/download/R_2_5_0/expat-2.5.0.tar.gz
@@ -223,6 +237,12 @@ PKGDATAFLAGS_ICU_native = --without-assembly -O $(ROOT)/build/native/texlive/lib
 CCSKIP_ICU_wasm          = $(PYTHON) $(abspath emcc_wrapper.py) $(addprefix $(ROOT)/build/native/texlive/libs/icu/icu-build/bin/, icupkg pkgdata) --
 CCSKIP_FREETYPE_wasm     = $(PYTHON) $(abspath emcc_wrapper.py) $(ROOT)/build/native/texlive/libs/freetype2/ft-build/apinames --
 CCSKIP_TEX_wasm          = $(PYTHON) $(abspath emcc_wrapper.py) $(addprefix $(ROOT)/build/native/texlive/texk/web2c/, $(BUSYTEX_TEXBIN)) $(addprefix $(ROOT)/build/native/texlive/texk/web2c/web2c/, $(BUSYTEX_WEB2CBIN)) --
+# ICU 78 converter-alias fix (M2 item 4b): the NATIVE genccode used to repackage
+# libicudata.a as a single-blob offset-TOC (see the ICU build rule below and
+# docs/plans/M2-journal.md item 4b). genccode is a native tool emitting portable C,
+# so the same binary serves both the native and the wasm ICU-data repackaging (built
+# during the native pass, which always precedes wasm — as the CCSKIP tools require).
+GENCCODE_native          = $(ROOT)/build/native/texlive/libs/icu/icu-build/bin/genccode
 OPTS_ICU_configure_wasm  = CC="$(CCSKIP_ICU_wasm) emcc $(CFLAGS_ICU_wasm)" CXX="$(CCSKIP_ICU_wasm) em++ $(CFLAGS_ICU_wasm)"
 OPTS_ICU_make_wasm       = -e PKGDATA_OPTS="$(PKGDATAFLAGS_ICU_wasm)"   -e CC="$(CCSKIP_ICU_wasm) emcc $(CFLAGS_ICU_wasm)" -e CXX="$(CCSKIP_ICU_wasm) em++ $(CFLAGS_ICU_wasm)"
 OPTS_ICU_make_native     = -e PKGDATA_OPTS="$(PKGDATAFLAGS_ICU_native)" -e CC="$(CC_native) $(CFLAGS_OPT_native)"          -e CXX="$(CXX_native) $(CFLAGS_OPT_native) $(CXXFLAGS_native)"
@@ -448,8 +468,32 @@ build/%/texlive/libs/icu/icu-build/lib/libicuuc.a build/%/texlive/libs/icu/icu-b
 	cd                    build/$*/texlive/libs/icu && $(CONFIGURE_$*) $(abspath source/texlive/libs/icu/configure) $(OPTS_ICU_configure_$*)
 	$(MAKE_$*)         -C build/$*/texlive/libs/icu $(OPTS_ICU_configure_make_$*)
 	echo "all install:" > build/$*/texlive/libs/icu/icu-build/test/Makefile
-	$(MAKE_$*)         -C build/$*/texlive/libs/icu/icu-build $(OPTS_ICU_make_$*) 
+	$(MAKE_$*)         -C build/$*/texlive/libs/icu/icu-build $(OPTS_ICU_make_$*)
 	$(MAKE_$*)         -C build/$*/texlive/libs/icu/include/unicode
+	# --- ICU 78 converter-alias fix (M2 item 4b) ------------------------------
+	# Repackage libicudata.a as a single-blob OFFSET-TOC object. pkgdata
+	# --without-assembly (required: wasm/Cosmopolitan cannot assemble arch .s) emits
+	# a POINTER-TOC static lib (one object per data item), for which ICU's
+	# udata_getLength() is always -1 (ucmndata.cpp pointerTOCLookupFn). ICU 78's
+	# ucnv_io.cpp initAliasData() length-validates the alias table (dataLength<=4 ->
+	# invalidFormat), so with -1 it fails U_INVALID_FORMAT_ERROR: ucnv_countAvailable()
+	# becomes 0 and ucnv_open("macintosh") returns U_FILE_ACCESS_ERROR, aborting XeTeX
+	# with "cannot read font names" (exit 3). ICU 70 (TL 2023) had no length gate, so
+	# the identical packaging worked — a genuine ICU 70->78 change, not an item-4 edit.
+	# pkgdata still writes the complete icudt*l.dat (internal OFFSET-TOC); genccode
+	# turns the whole .dat into ONE portable-C byte array (entry point icudt*_dat),
+	# whose runtime TOC is an offset-TOC -> real lengths -> the alias table loads
+	# (ucnv_countAvailable 0 -> 232, matching ICU 70). genccode output is portable C,
+	# so cc (native) and emcc (wasm) both consume it with no assembly. Applied to both
+	# targets to keep native/wasm ICU coherent (and for the M3 uniform container build).
+	# Root cause + native before/after proof: docs/plans/M2-journal.md item 4b.
+	dat=$$(ls build/$*/texlive/libs/icu/icu-build/data/out/tmp/icudt*l.dat) && \
+	datbase=$$(basename "$$dat" .dat) && ep=$$(basename "$$dat" l.dat) && \
+	gendir=$$(dirname "$$dat") && \
+	$(GENCCODE_native) -e "$$ep" -d "$$gendir" "$$dat" && \
+	$(CC_$*) $(CFLAGS_OPT_$*) -I$(abspath build/$*/texlive/libs/icu/include) -c "$$gendir/$${datbase}_dat.c" -o "$$gendir/$${datbase}_dat.o" && \
+	rm -f build/$*/texlive/libs/icu/icu-build/lib/libicudata.a && \
+	$(AR_$*) -crs build/$*/texlive/libs/icu/icu-build/lib/libicudata.a "$$gendir/$${datbase}_dat.o"
 
 build/%/texlive/texk/web2c/busytex_libxetex.a: build/%/texlive.configured
 	# copying generated C files from native version, since string offsets are off

@@ -505,6 +505,37 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-24 — M2 item 4b: ICU 78 alias blocker FIXED; XeTeX restored
+
+**Root cause (precise).** ICU 78's `initAliasData` gained a length
+gate (`dataLength <= 4 → invalidFormat`); the busytex-era
+`pkgdata --without-assembly` static packaging emits a POINTER-TOC
+archive whose lookup hard-codes `*pLength = -1` — so the alias table
+that loaded fine under ICU 70 now fails `U_INVALID_FORMAT_ERROR`,
+`ucnv_countAvailable()=0`, and XeTeX's fontconfig manager dies at
+"cannot read font names". A genuine ICU 70→78 runtime change; the
+data itself was present and valid all along.
+
+**Fix (our Makefile, no source patches).** pkgdata's intermediate
+`icudt*l.dat` — which carries a proper OFFSET-TOC — is genccode'd
+into one portable C byte-array object that replaces the pointer-TOC
+archive, for native and wasm alike (no assembly, entry point derived
+from the .dat basename, no version literals; deterministic output —
+M3's double-build gate unaffected). Native probe: countAvailable
+0→232, `macintosh` opens (byte-identical to the TL 2023 baseline).
+All 10 blocked tests flipped: runtime 186/186, demo smoke 4/4,
+execution gate green, audit green — independently re-run. wasm
+shrank 16 KB.
+
+**Review.** Approve after one should-fix: `.DELETE_ON_ERROR:` added —
+an interrupted repackage would otherwise leave the regenerated
+pointer-TOC archive for the next incremental make to silently accept,
+resurrecting the exact defect past the execution gate. Retirement
+condition for the transform recorded at the journal top (watch
+pkgdata for a no-assembly offset-TOC mode; retest via
+countAvailable). The item-6 fixture-churn bucket is EMPTY — the ICU
+fix restored XeTeX without perturbing any golden assertion.
+
 ## 2026-07-24 — M2 item 4: TL 2026 build lands; ICU 78 blocker isolated
 
 **Done.** `coder` agent cut the build over to the TL 2026 pins: full

@@ -903,3 +903,104 @@ build transcript uploads too.
 drivers; the §5 runtime contracts and §6 reproducibility anchor are untouched
 (the identity gate enforces the §6 image-bytes pin at pull time, and the build
 delegates to the unchanged pin-verified driver).
+
+### Slice B2 — functional gates consume the CI artifact (2026-07-23)
+
+The M3 functional-acceptance-in-CI piece, post-repro-descope. DESIGN.md §6.1/§9
+(amended 2026-07-23) drop byte-repro as the release requirement and make the
+**functional gates the release bar**; slice B1 built + uploaded `dist/` in CI;
+this slice wires the gates to actually run against that artifact — closing the
+M1/M2 carry-forward "CI runs the wasm path".
+
+**Design — gates live where the artifact is built.** The `demo-smoke` and
+`conformance` jobs now live in `artifacts-build.yml` as two `needs: artifacts-build`
+jobs, not in `build.yml`. Keeping them in the build workflow means they fire on
+the same triggers as the build (push to the artifact-byte input paths + dispatch)
+and consume the very `dist/` that run just produced — no cross-workflow
+`workflow_run` plumbing, no artifact staleness window. Each job:
+`actions/download-artifact@v5` with `name: wasmtex-dist-${{ needs.artifacts-build.outputs.pins_short }}`
+and `path: dist`, then builds the runtime (`npm ci` + `npm run build` in
+`runtime/`) and drives the PUBLIC `wasmtex` API against the downloaded engine —
+`node conformance/run.mjs` for the §8 corpus, the demo Playwright smoke
+(`npx playwright install --with-deps chromium` + `npm test` in `demo/`) for the
+`->PDF` path.
+
+**amd64 runner = free cross-arch functional proof.** Both gate jobs run on
+`ubuntu-latest` (**amd64**), while `artifacts-build` builds on `ubuntu-24.04-arm`
+(**arm64**). So running the arm64-built wasm here ALSO functionally proves it
+executes on amd64 — a second data point complementing the macOS-arm64 run already
+recorded (item 6). This is exactly the DESIGN.md §9 posture: platform independence
+settled FUNCTIONALLY (the same wasm passes the corpus on another arch), NOT by a
+byte-hash equivalence lane — which was dropped with the repro gate. Noted in a
+comment in the workflow so the choice of `ubuntu-latest` reads as deliberate, not
+incidental.
+
+**How dist/ reaches each consumer (the wiring detail).** `upload-artifact` with
+`path: dist/` stores the artifact with `dist/` stripped (single-directory input →
+files at the artifact root: `busytex.wasm`, `assets.json`, …). `download-artifact`
+with `path: dist` extracts them back into repo-root `dist/`. That reconstructed
+repo-root `dist/` is exactly what BOTH consumers default to, with zero path munging
+or env override:
+- `conformance/run.mjs` defaults `DIST` to `join(REPO, 'dist')` (its `WASMTEX_DIST`
+  override is left unused).
+- `demo/serve.mjs` serves the **repo root** as the web origin, and `demo/index.html`
+  hardcodes the engine base `'/dist/'` and the runtime `'/runtime/dist/'`; the
+  download lands the engine precisely where the demo server maps `/dist/`, and the
+  explicit runtime build populates `/runtime/dist/`.
+
+**The gate must be REAL — safety assert, not green-skip.** Both consumers are
+deliberately soft when the engine artifacts are absent (`run.mjs` green-skips with
+exit 0; the demo would just serve a page that cannot compile), a property that
+kept the retired `build.yml` stubs green on a stock checkout. That softness is a
+hazard once a gate is supposed to MEAN something: a broken/empty download would
+masquerade as a pass. So each job hard-fails first if `dist/busytex.wasm` is missing
+after download. No *green-skip* guard is otherwise needed (the retired stubs' whole
+mechanism) — `needs: artifacts-build` guarantees the artifact exists whenever these
+run; only the anti-silent-pass assert remains.
+
+**Job-output wiring.** `artifacts-build` gained a job-level
+`outputs.pins_short: ${{ steps.pins.outputs.pins_short }}` so the two downstream
+jobs name the download to match the upload — one `sha256(pins.lock)[:12]`, one
+source of truth across upload and both downloads.
+
+**Same-run download needs no extra permission.** The workflow's least-privilege
+`permissions: contents: read + packages: read` is untouched. `download-artifact@v5`
+for a SAME-RUN artifact authenticates with the runner's `ACTIONS_RUNTIME_TOKEN`
+(the same token `upload-artifact` used), not the `GITHUB_TOKEN` — `actions: read`
+is only required for CROSS-run/repo downloads. So no permission was added; `checkout`
+is covered by `contents: read` and the unused `packages: read` is harmless.
+
+**What moved out of `build.yml`.** The two guarded green-skipping stubs
+(`demo-smoke` + `conformance`) were REMOVED — their real, active home is
+`artifacts-build.yml`. `build.yml` keeps only the `build` placeholder check; its
+top-of-file and job comments now point to `artifacts-build.yml` as the
+functional-gate home and record that the stubs were retired at M3 item 7b2. Gate
+logic is NOT duplicated across the two files.
+
+**Version hygiene.** `artifacts-build.yml` was the one workflow commit 8038300
+deliberately skipped; this slice bumps its `actions/checkout@v4 → @v5` and
+`actions/upload-artifact@v4 → @v5` (clearing the Node 20 deprecation warnings,
+matching the other four workflows). The four `actions/cache/{restore,save}@v4`
+steps stay at v4 on purpose — v4 is that action's current major.
+
+**Accepted follow-up (NOT implemented — recorded).** Per-PR integration coverage:
+`build.yml` gates that DOWNLOAD the *latest* `artifacts-build` artifact (cross-run,
+which WOULD need `actions: read` + a `github-token`/`run-id`) so runtime/demo/
+conformance PRs that don't touch the build-input paths still get an integration
+run. Today those gates fire only when a build runs (build-input push + dispatch);
+runtime unit tests (`runtime-tests.yml`) cover the untouched-input PRs in the
+meantime. Deferred deliberately — this slice's scope is wiring the gates to the
+build artifact, not per-PR staleness handling.
+
+**Validation.** Authoring + static checks only (no `act`/docker/builds, per the
+standing no-local-container-builds directive): PyYAML `safe_load` both edited
+workflows (parse clean; jobs resolve to `artifacts-build` + `conformance` +
+`demo-smoke` in the build file, `build` alone in `build.yml`) and `bash -n` on
+every `run:` block (all pass). The download-path reconstruction and the same-run
+`ACTIONS_RUNTIME_TOKEN` behavior are the two properties static checks can't fully
+confirm — the self-fired first run (this file is a build-input path, so the landing
+commit triggers `artifacts-build` and thus both gates) is their live verification.
+
+**Deviations.** None from DESIGN.md. The §5 runtime contracts and §6 image-bytes
+pin are untouched; this is the §6.1/§9-amended functional-gate release bar wired
+into CI.

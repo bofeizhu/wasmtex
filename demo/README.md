@@ -39,9 +39,11 @@ which assumes `runtime/node_modules` already exists — install it once with
 `npm --prefix ../runtime ci`. To rebuild the runtime by hand: `npm run
 build:runtime`.
 
-CI's guarded `demo-smoke` job (`.github/workflows/build.yml`) does the same
-explicitly (`npm ci` + `npm run build` in `runtime/`) before the smoke, and only
-when the `dist/` engine artifacts are present; it skips cleanly otherwise.
+CI's `demo-smoke` job (`.github/workflows/artifacts-build.yml`, M3 item 7 slice
+B2) does the same explicitly (`npm ci` + `npm run build` in `runtime/`) before the
+smoke. It runs `needs: artifacts-build`, downloading the `dist/` engine artifacts
+that workflow built and asserting they landed before driving the smoke — the
+functional release gate, not the earlier green-skip stub.
 
 ## Commands
 

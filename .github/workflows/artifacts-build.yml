@@ -22,11 +22,12 @@
 # TWO MODES — the `repro` workflow_dispatch input:
 #   * repro=false (default; every qualifying push): ONE canonical build. dist/ is
 #     uploaded as the run's artifact (the release candidate for that commit).
-#   * repro=true: build/repro-check.sh in its FULL two-build mode — two clean,
-#     independent container builds whose dist/ must be byte-identical (DESIGN.md
-#     §6.1). This is M3 item 5's EMPIRICAL green: the local build-twice run is
-#     prohibited by the standing directive, so CI is where the byte-identical
-#     SHA256SUMS proof is actually demonstrated. Costs ~2x the single-build wall.
+#   * repro=true: OPTIONAL byte-repro tooling — build/repro-check.sh runs two
+#     clean container builds and diffs them. NOT a v1 gate: byte-for-byte
+#     reproducibility was DROPPED from v1 (DESIGN.md §6.1, amended 2026-07-23);
+#     the normalizer + gate stay in-tree only for a possible post-1.0 revival.
+#     Expect DIVERGED today on the known, deliberately-unfixed install-tl
+#     wall-clock-timestamp gap. Dispatch-only; never runs on push. ~2x the wall.
 #
 # SOURCE CACHE STRATEGY (the 10 GB actions/cache repo quota is the constraint):
 #   build/sources/fetch.sh lays every pinned input flat in ~/.cache/wasmtex/sources.
@@ -55,9 +56,9 @@ on:
     inputs:
       repro:
         description: >-
-          Reproducibility double-build: run build/repro-check.sh (two clean
-          container builds; byte-identical dist/ required, DESIGN.md 6.1) instead
-          of a single build. This is M3 item 5's empirical green. ~2x the wall time.
+          OPTIONAL byte-repro tooling (build/repro-check.sh, two clean builds
+          diffed). NOT a v1 gate — byte-repro was dropped (DESIGN.md 6.1, amended
+          2026-07-23); expect DIVERGED on the known timestamp gap. ~2x the wall time.
         type: boolean
         default: false
   # Filtered to the inputs that determine the artifact BYTES: OUR engine config,
@@ -96,6 +97,11 @@ jobs:
     # 300 leaves margin under the 360-min hard cap while still failing a wedged
     # build well short of it.
     timeout-minutes: 300
+    # Expose the short pins.lock hash to the downstream functional-gate jobs
+    # (conformance + demo-smoke below) so each names the artifact DOWNLOAD to match
+    # this job's UPLOAD (wasmtex-dist-<pins_short>) — one hash, one source of truth.
+    outputs:
+      pins_short: ${{ steps.pins.outputs.pins_short }}
     env:
       # The local tag build/artifacts/build.sh expects (its WASMTEX_TOOLCHAIN_TAG
       # default). We pull the image by digest, then `docker tag` it to this so the
@@ -112,7 +118,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # --- Pinned coordinates (slice A's section-scoped awk-block pattern) ------
       # build/artifacts/build.sh's `pinned_id` awk, generalized to take the section
@@ -291,7 +297,7 @@ jobs:
           # mask a failed/DIVERGED build as rc=0.
           set +e
           if [ "$REPRO_MODE" = "true" ]; then
-            echo ">> repro mode: build/repro-check.sh (two clean builds; byte-identical dist/ required)"
+            echo ">> repro mode (OPTIONAL tooling, not a v1 gate): build/repro-check.sh — two clean builds diffed"
             build/repro-check.sh 2>&1 | tee "$RUNNER_TEMP/build.log"
             rc="${PIPESTATUS[0]}"
           else
@@ -366,7 +372,7 @@ jobs:
       # artifact is traceable to the exact pin set it was built from.
       - name: Upload dist/ artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: wasmtex-dist-${{ steps.pins.outputs.pins_short }}
           path: dist/
@@ -374,11 +380,12 @@ jobs:
           retention-days: 30
 
       # Repro mode only: the byte-diff report + one-line VERDICT (REPRODUCIBLE |
-      # DIVERGED | INCOMPLETE) — the evidence that closes M3 item 5. always() so a
-      # DIVERGED run (which fails the build step) still surfaces its report.
+      # DIVERGED | INCOMPLETE) from the OPTIONAL byte-repro tooling (not a v1 gate;
+      # §6.1 amended). always() so a DIVERGED run (which fails the build step —
+      # expected today on the known timestamp gap) still surfaces its report.
       - name: Upload reproducibility report (repro mode)
         if: ${{ always() && github.event.inputs.repro == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: wasmtex-repro-${{ steps.pins.outputs.pins_short }}
           path: |
@@ -388,8 +395,155 @@ jobs:
 
       - name: Upload build transcript
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: wasmtex-buildlog-${{ steps.pins.outputs.pins_short }}
           path: ${{ runner.temp }}/build.log
           if-no-files-found: warn
+
+  # ===========================================================================
+  # FUNCTIONAL GATES against the CI-built dist/ (M3 item 7, slice B2).
+  # ===========================================================================
+  # These two jobs are the functional-acceptance-in-CI piece post-repro-descope
+  # (DESIGN.md §6.1/§9, amended 2026-07-23: byte-repro DROPPED, functional gates
+  # are the release bar). They `needs: artifacts-build`, download the dist/ it
+  # just built, and drive the PUBLIC wasmtex runtime against it — the conformance
+  # seed corpus (§8) and the demo->PDF Playwright smoke. They previously lived in
+  # build.yml as green-skipping stubs guarding on a local dist/ that a stock
+  # checkout never has; that stub pair was retired here (build.yml no longer
+  # duplicates this logic).
+  #
+  # Both run on ubuntu-latest = AMD64. That is deliberate: the artifact is built on
+  # arm64 (ubuntu-24.04-arm), so running it here ALSO functionally proves the
+  # arm64-built wasm executes on amd64 — a free cross-arch proof that complements
+  # the macOS-arm64 run already recorded (DESIGN.md §9: platform independence is
+  # settled FUNCTIONALLY, no byte-hash equivalence lane).
+  #
+  # No green-skip guard is needed (unlike the retired stubs): needs:artifacts-build
+  # guarantees the artifact exists whenever these run. The one guard kept is a
+  # safety ASSERT — the corpus runner and demo both green-skip / no-op when the
+  # engine artifacts are absent, so each job hard-fails first if the download did
+  # not land dist/busytex.wasm, guaranteeing the gate is REAL and never a silent pass.
+
+  conformance:
+    needs: artifacts-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      # Downloading the artifact by NAME extracts its contents straight into dist/
+      # (path: dist), reconstructing the repo-root dist/ that conformance/run.mjs
+      # reads by default (its WASMTEX_DIST override is unused here).
+      - name: Download the CI-built dist/ artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: wasmtex-dist-${{ needs.artifacts-build.outputs.pins_short }}
+          path: dist
+
+      # Safety assert: run.mjs GREEN-SKIPS (exit 0) when ANY required engine
+      # artifact is absent, so a broken/partial download would masquerade as a
+      # passing gate. Assert the SAME five files run.mjs requires (not just the
+      # wasm) — a partial dist that dropped e.g. assets.json must fail loud here.
+      - name: Assert the engine artifact is real (no silent green-skip)
+        run: |
+          missing=0
+          for f in busytex.wasm busytex.js texlive-basic.js texlive-basic.data assets.json; do
+            [ -f "dist/$f" ] || { echo "!! dist/$f missing after download" >&2; missing=1; }
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "!! partial/empty dist — the conformance corpus would green-skip;" >&2
+            echo "   failing the gate instead of passing silently." >&2
+            ls -la dist dist/formats 2>/dev/null || true
+            exit 1
+          fi
+          echo "all five required engine artifacts present -> conformance runs the real corpus."
+
+      - uses: actions/setup-node@v5
+        with:
+          # Node 24: satisfies runtime/package.json `engines` (>=18) and matches
+          # runtime-tests.yml / the other jobs so CI runs one Node major throughout.
+          node-version: 24
+
+      # run.mjs imports runtime/dist/node-harness.mjs (a git-ignored build product),
+      # so build the runtime first. conformance/ has no external deps (no npm ci there).
+      - name: Install runtime dependencies (clean, from committed lockfile)
+        working-directory: runtime
+        run: npm ci
+
+      - name: Build the runtime (ESM client + worker + node harness)
+        working-directory: runtime
+        run: npm run build
+
+      - name: Run the conformance seed corpus
+        run: node conformance/run.mjs
+
+  demo-smoke:
+    needs: artifacts-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      # Same download: path: dist reconstructs repo-root dist/. demo/serve.mjs serves
+      # the repo root, and demo/index.html loads the engine from '/dist/' and the
+      # runtime from '/runtime/dist/' — so the download lands exactly where the demo
+      # server expects it, no path munging or env var required.
+      - name: Download the CI-built dist/ artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: wasmtex-dist-${{ needs.artifacts-build.outputs.pins_short }}
+          path: dist
+
+      - name: Assert the engine artifact is real (no silent no-op)
+        run: |
+          if [ ! -f dist/busytex.wasm ]; then
+            echo "!! dist/busytex.wasm missing after download — failing the demo gate" >&2
+            echo "   instead of serving a page that cannot compile." >&2
+            ls -la dist || true
+            exit 1
+          fi
+          echo "dist/busytex.wasm present -> demo smoke will drive the real engine."
+
+      - uses: actions/setup-node@v5
+        with:
+          # Node 24: satisfies runtime/package.json `engines` (>=18) and matches
+          # runtime-tests.yml / the other jobs so CI runs one Node major throughout.
+          node-version: 24
+
+      # The demo loads runtime/dist/{src,worker.js} (git-ignored build products).
+      # Build the runtime here as an explicit, independently-reported CI step (the
+      # demo's own `pretest` also builds it, so a manual `npm test` works locally).
+      - name: Install runtime dependencies (clean, from committed lockfile)
+        working-directory: runtime
+        run: npm ci
+
+      - name: Build the runtime (ESM client + worker bundle)
+        working-directory: runtime
+        run: npm run build
+
+      - name: Install demo dependencies
+        working-directory: demo
+        run: npm ci
+
+      - name: Install Chromium (with OS deps)
+        working-directory: demo
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright hello-world PDF smoke
+        working-directory: demo
+        run: npm test
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report
+          path: demo/playwright-report
+          if-no-files-found: ignore

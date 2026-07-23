@@ -5,6 +5,41 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-23 — M3 item 7b2: functional gates run against the CI artifact
+
+**Done.** The two functional gates — the §8 conformance corpus and the
+Playwright demo→PDF smoke — now run against the CI-built artifact, which
+is the release bar after the byte-repro descope. Both moved out of
+build.yml (where they green-skipped on an absent local dist/) into
+artifacts-build.yml as `needs: artifacts-build` jobs that download the
+same-run `wasmtex-dist-<pins_short>` artifact and run on `ubuntu-latest`
+(amd64) — so they also functionally prove the arm64-built wasm executes
+on amd64, complementing the macOS-arm64 run (the item-6 cross-platform
+question, now settled on two foreign platforms). build.yml keeps only
+its placeholder `build` job; no gate logic is duplicated. artifacts-
+build.yml's checkout/upload/download/setup-node bumped v4→v5 (clears the
+Node 20 warnings, the deferred bump). The now-descoped repro-mode docs
+were reframed (optional tooling, not a v1 §6.1 gate).
+
+**Review (approve + should-fix folded).** The anti-green-skip assert
+checked only busytex.wasm, but run.mjs green-skips if ANY of five
+required files is absent — a partial dist could have passed silently.
+Fixed: the assert now checks all five. Nits folded: Node-version comment
+corrected (`engines` is >=18, not a 24 pin); two stale repro comments
+softened.
+
+**Artifact round-trip (load-bearing).** `upload-artifact path: dist/`
+roots files at the artifact root; `download-artifact path: dist`
+restores them to repo-root dist/ — exactly where run.mjs (`DIST=join(
+REPO,'dist')`) and demo/serve.mjs (`/dist/`) read. Same-run download
+needs no `actions: read` (uses ACTIONS_RUNTIME_TOKEN). Verified by
+review against the consumer code.
+
+**Deferred (accepted):** per-PR cross-run integration coverage —
+build.yml gates that download the LATEST artifact so runtime/demo/
+conformance PRs not touching build inputs still get an integration run
+(needs `actions: read`). runtime-tests.yml unit tests cover them now.
+
 ## 2026-07-23 — Scope: byte-for-byte reproducibility DROPPED from v1
 
 **User decision.** Byte-identical builds are no longer a v1 requirement.

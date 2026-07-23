@@ -23,7 +23,12 @@ Context may have been compacted; trust only the repo:
 - Plan and integrate here; delegate: `coder` implements, `tester` writes/runs tests, `code-reviewer` reviews every substantive diff before commit.
 - Provenance is constitutional: derive only from busytex/busytex (MIT) and this repo; never open GPL/AGPL sources, including other WASM TeX wrappers. Keep THIRD_PARTY_NOTICES.md and provenance headers current as files land.
 - Reproducibility: everything fetched gets pinned + hashed in `build/sources/pins.lock`; no "latest" anywhere.
-- Kick long container/TeX builds off in the background and yield; don't sit polling.
+- Kick long native/TeX builds off in the background and yield; don't sit polling.
+- **No container builds on this machine** (standing user directive 2026-07-23):
+  never run the arm64 Linux or amd64 toolchain container locally — neither
+  directly nor via `make artifacts-container` / `repro-check`. Container builds
+  happen on CI runners only; local container evidence through M3 item 5's
+  build #2 stands as-is.
 
 ## Close out the iteration
 

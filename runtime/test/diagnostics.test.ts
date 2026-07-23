@@ -17,7 +17,13 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { MAX_DIAGNOSTICS, MAX_MESSAGE_LENGTH, parseDiagnostics } from '../src/diagnostics';
+import {
+  MAX_DIAGNOSTICS,
+  MAX_MESSAGE_LENGTH,
+  MAX_MISSING_FILES,
+  extractMissingFiles,
+  parseDiagnostics,
+} from '../src/diagnostics';
 import type { Diagnostic } from '../src/protocol';
 
 const fixturesDir = fileURLToPath(new URL('./fixtures/diagnostics/', import.meta.url));
@@ -383,5 +389,62 @@ describe('parseDiagnostics — hostile inputs (never throws, bounded output)', (
     // All identical → dedup to one.
     expect(out).toHaveLength(1);
     expect(Date.now() - started).toBeLessThan(5_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractMissingFiles — the §5.4(b) retry input (M4 item 7)
+// ---------------------------------------------------------------------------
+
+describe('extractMissingFiles', () => {
+  it('extracts a missing .sty from a real "File `x\' not found" transcript', () => {
+    // The dominant form, captured verbatim from the pinned engine (xetex + pdftex).
+    expect(extractMissingFiles(readFixture('missing-package.txt'))).toEqual(['nosuchpackagexyz.sty']);
+    expect(extractMissingFiles(readFixture('missing-package.pdftex.txt'))).toEqual(['nosuchpackagexyz.sty']);
+  });
+
+  it('extracts a missing .tex from a real missing-\\input transcript', () => {
+    expect(extractMissingFiles(readFixture('missing-input-file.txt'))).toEqual(['nosuchinputfile.tex']);
+  });
+
+  it('returns [] for a clean transcript (no spurious retry trigger)', () => {
+    expect(extractMissingFiles(readFixture('clean.txt'))).toEqual([]);
+  });
+
+  it('returns [] for a genuine error that is NOT a missing file (undefined control sequence)', () => {
+    // Critical: an ordinary TeX error must not trigger an on-demand tier download.
+    expect(extractMissingFiles(readFixture('undefined-control-sequence.xetex.txt'))).toEqual([]);
+    expect(extractMissingFiles(readFixture('undefined-control-sequence.pdftex.txt'))).toEqual([]);
+  });
+
+  it('extracts a class file (the CJK \\documentclass{ctexart} path)', () => {
+    expect(extractMissingFiles("! LaTeX Error: File `ctexart.cls' not found.")).toEqual(['ctexart.cls']);
+  });
+
+  it('recognises the plain-TeX / kpathsea "I can\'t find file" form', () => {
+    expect(extractMissingFiles("! I can't find file `foo.tex'.")).toEqual(['foo.tex']);
+  });
+
+  it('extracts several distinct files in transcript order, deduplicated', () => {
+    const log = [
+      "! LaTeX Error: File `siunitx.sty' not found.",
+      "! LaTeX Error: File `tikz.sty' not found.",
+      "! LaTeX Error: File `siunitx.sty' not found.", // repeat across a later pass
+    ].join('\n');
+    expect(extractMissingFiles(log)).toEqual(['siunitx.sty', 'tikz.sty']);
+  });
+
+  it('is total on empty / non-string input', () => {
+    expect(extractMissingFiles('')).toEqual([]);
+    expect(extractMissingFiles(undefined as unknown as string)).toEqual([]);
+    expect(extractMissingFiles(null as unknown as string)).toEqual([]);
+  });
+
+  it('is bounded by MAX_MISSING_FILES on a hostile transcript', () => {
+    const parts: string[] = [];
+    for (let i = 0; i < 500; i += 1) parts.push(`! LaTeX Error: File \`pkg${i}.sty' not found.`);
+    const out = extractMissingFiles(parts.join('\n'));
+    expect(out).toHaveLength(MAX_MISSING_FILES);
+    expect(MAX_MISSING_FILES).toBe(64);
   });
 });

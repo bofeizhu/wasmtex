@@ -79,6 +79,13 @@
 // (deduplicated, capped at {@link MAX_DIAGNOSTICS}), so a pathological or
 // hostile transcript (a 10 MB single line, deeply nested or unbalanced parens,
 // CRLF endings) degrades attribution but cannot crash a host or exhaust memory.
+//
+// This module ALSO exports {@link extractMissingFiles} — a structured extractor
+// for the filenames a compile reported as MISSING (the "File `x' not found" /
+// "I can't find file `x'" forms). It drives the §5.4(b) on-demand missing-file
+// retry (worker/core.ts), so the "which files did kpathsea fail to find" rule
+// lives HERE with the rest of the transcript-wording knowledge rather than being
+// re-derived in the worker — a rebase that reworded it touches only this file.
 // ---------------------------------------------------------------------------
 
 import type { Diagnostic } from './protocol';
@@ -382,5 +389,56 @@ export function parseDiagnostics(log: string): Diagnostic[] {
     return out;
   }
 
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Missing-file extraction (DESIGN.md §5.4(b))
+// ---------------------------------------------------------------------------
+
+/**
+ * Cap on distinct missing filenames {@link extractMissingFiles} returns. A hostile
+ * transcript full of fabricated "File `x' not found" lines cannot make the output
+ * unbounded; a real compile misses a handful of files at most.
+ */
+export const MAX_MISSING_FILES = 64;
+
+// A missing input the engine named: the LaTeX kernel's `File `X' not found` (the
+// `! LaTeX Error: File `…' not found.` line — a missing \usepackage / \input /
+// \documentclass, the dominant form; fixtures missing-package{,.pdftex} and
+// missing-input-file capture the .sty and .tex variants), OR plain-TeX/kpathsea's
+// `I can't find file `X'`. In both, the name sits between a backtick and a
+// straight quote. Matched in ONE pass so results stay in transcript order.
+const MISSING_FILE = /File `([^'\n]+)' not found|I can't find file `([^'\n]+)'/g;
+
+/**
+ * Extract the filenames a compile reported as MISSING from a raw engine
+ * transcript — the structured input to the §5.4(b) missing-file retry. Pure and
+ * total: never throws; returns a deduplicated, transcript-order,
+ * {@link MAX_MISSING_FILES}-capped list (each name WITH its extension, e.g.
+ * `siunitx.sty`, `ctexart.cls`, `nosuchinputfile.tex`).
+ *
+ * The worker (worker/core.ts) feeds this a FAILED pass's transcript to decide
+ * whether an unloaded on-demand tier might supply the file; the client could
+ * equally call it on `result.log`. Because it drives an OPTIMISTIC retry (mount
+ * the tier, recompile once — worker-local, no network), the list only needs to be
+ * a SOUND signal that files are missing plus the names for a future filename→bundle
+ * index; it need not be exhaustive. A genuine TeX error that is NOT a missing file
+ * (an undefined control sequence, a syntax error) yields `[]`, so it never
+ * triggers a spurious tier download (verified against the diagnostics fixtures).
+ */
+export function extractMissingFiles(log: string): string[] {
+  const out: string[] = [];
+  if (typeof log !== 'string' || log.length === 0) return out;
+  const seen = new Set<string>();
+  MISSING_FILE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = MISSING_FILE.exec(log)) !== null) {
+    const name = (match[1] ?? match[2] ?? '').trim();
+    if (name.length === 0 || seen.has(name)) continue;
+    if (out.length >= MAX_MISSING_FILES) break;
+    seen.add(name);
+    out.push(name);
+  }
   return out;
 }

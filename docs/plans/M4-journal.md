@@ -340,3 +340,167 @@ both preload and `loadBundle`). `bundlesLoaded` now reflects on-demand tiers.
   §5.4 static `\usepackage` scan and the missing-file retry, both calling the same
   `host.loadBundle` seam; `initLoadedAssets`'s on-demand inclusion and the `onAssetProgress`
   bracket move to the lazy-load point then.
+
+---
+
+## Items 6 + 7 — §5.4 automatic bundle resolution (both halves)
+
+Dated 2026-07-24. Goal: replace item 5's eager-at-init stand-in with the real §5.4
+LAZY resolution — (a) a static `\usepackage`/`\RequirePackage` scan that PRESELECTS a
+matching on-demand tier before the first pass, and (b) a missing-file retry that mounts
+an un-loaded tier and re-runs a pass that failed naming a not-found file. Both drive the
+same `host.loadBundle` seam item 5 built. Implemented together because they are two
+halves of ONE mechanism (the scan is an optimisation; the retry is the correctness net).
+Runtime-only; validated against the on-disk native tiered `dist/` (core + academic +
+`manifest.json`); no container build.
+
+Provenance: original work. The `\usepackage` grammar is public LaTeX syntax; the
+"File `x' not found" wording is our own transcript-capture (fixtures). No GPL/AGPL or
+other-wrapper source opened.
+
+### Where the code lives (and why)
+
+- **`worker/bundle-resolution.ts` (NEW)** — the pure §5.4 helpers: `scanRequiredPackages`
+  (source scan), `selectBundlesForPackages` (item 6 name→tier resolve + the unknown-name
+  policy), `selectBundlesForMissingFiles` (item 7 filename→tier chooser). No engine/FS/DOM;
+  reads only TYPES + `bundleProvidingPackage`. 27 unit tests.
+- **`src/diagnostics.ts`** — ADDED `extractMissingFiles(log)` (+ `MAX_MISSING_FILES`). The
+  "File `x' not found" / "I can't find file `x'" wording lives with the rest of the
+  transcript-parsing knowledge (rebase-proofing rule 2), so a rebase that reworded it
+  touches ONE file. The worker imports just this function; esbuild TREE-SHAKES `parseDiagnostics`
+  out of `dist/worker.js` (verified: 0 refs), so the client-only parser never bloats the bundle.
+- **`worker/core.ts`** — the orchestration: `onCompile` is now `async`; before the sequence
+  it runs the scan + preselect; inside the loop it runs the retry. New session state:
+  `assetsConfig` (stash for the scan's `provides` lookup), `handledBundles` (the scan skip-set
+  AND the retry bound), `bundlesLoaded` (now a mutable, deduped, in-load-order array), and an
+  `ensureBundle(name, onLine)` lazy seam. `onInit` no longer eagerly mounts on-demand tiers.
+- **`src/client.ts`** — `initLoadedAssets` now brackets engine + PRELOAD only (on-demand tiers
+  load lazily at compile time, so reporting them at init would lie).
+
+### Decision 1 — the LOAD-BEARING unknown-name policy, enforced structurally
+
+The manifest `provides` is a package-NAME index, not a filename index. `selectBundlesForPackages`
+resolves a scanned name via `bundleProvidingPackage`; an UNMATCHED name (returns `undefined`)
+is skipped — "unknown → do nothing" — NOT mapped to a default tier. This is enforced by the
+data accessor's semantics, not a special case. Verified against the real `dist/manifest.json`:
+`longtable`/`graphicx`/`amssymb` are in NO tier's `provides` (they ship in core, but their
+`.sty` NAMES are not provided-package names — they come from `tools`/`graphics`/`amsfonts`),
+yet their `.sty` files ARE in `core.js`. So a `\usepackage{longtable}` doc: the scan does
+nothing → core serves `longtable.sty` → the first pass succeeds → NO retry → academic (496 MB)
+NEVER downloaded. A "load academic on any unmatched name" rule would have downloaded it. The
+real-wasm test proves this in 2.3 s (no academic mount) with `bundlesLoaded=['core']`.
+`selectBundlesForPackages` additionally restricts to bundles named in `onDemand` (a
+preload-provided name like `natbib`→`core` is skipped) and honours the DESIGN §5.4(1) rule to
+skip a package the host supplied as a project-local `.sty`/`.cls` (guards a local file
+SHADOWING a tier package — otherwise `\usepackage{siunitx}` with a host `siunitx.sty` would
+needlessly pull academic).
+
+### Decision 2 — the retry over-approximates soundly (no filename index yet)
+
+With ONE on-demand tier the item-7 mapping is trivial: any genuine miss COULD be in academic,
+so `selectBundlesForMissingFiles` loads every un-handled on-demand tier and retries once. This
+is a SOUND over-approximation — a missing file whose basename ≠ its package name (a `.fd`,
+`.tfm`, a `-abbreviations.cfg`) still resolves after the tier mounts, which a package-NAME
+shortcut on the missing filename would get WRONG (it would refuse to load and fail a resolvable
+doc). Consequence, accepted per the plan: a genuinely-missing package (in NO tier) DOES download
+academic once, then fails cleanly with the real diagnostic — bounded, no loop. The chooser
+already takes `missingFiles`; a future `full` (≥2 on-demand tiers) swaps the blanket load for a
+filename→bundle index (resolve.mjs's package→`.sty` map, carried into the manifest) — additive,
+not a rewrite.
+
+### Decision 3 — the retry is BOUNDED by a `handledBundles` set, not a flag
+
+`ensureBundle` adds a tier to `handledBundles` BEFORE awaiting `host.loadBundle`, so a tier is
+attempted at most once per session (a mount that throws is never re-attempted — otherwise a
+persistently-failing mount would loop). The scan and the retry share this set, so the retry
+never re-tries a tier the scan already tried. Once every on-demand tier is handled, the retry
+condition (`selectBundlesForMissingFiles` returns `[]`) is false — the natural bound. A lazy
+mount FAILURE is best-effort: `ensureBundle` streams an advisory and the compile proceeds (the
+pass then surfaces the real missing-file diagnostic); it does NOT fail the compile — only a
+PRELOAD tier failing fails init now (`onInit` no longer mounts on-demand tiers, so init cannot
+fail on an on-demand tier).
+
+### Decision 4 — the probe pass is SPLICED from the final log (live stream stays honest)
+
+When a pass fails "not found" and the retry runs, the failed probe's transcript lines were
+already STREAMED live (real-time truth — the probe genuinely happened), but they are a lazy-load
+DISCOVERY, not a document error. So `onCompile` splices them out of the FINAL consolidated
+`transcript` (a `transcript.splice(logMark, probeLines)` after the retry), leaving `result.log`
++ the client's diagnostics to reflect the AUTHORITATIVE retry: a resolved miss shows no spurious
+"File not found" on a successful compile; a still-missing file shows the retry's single error.
+The sequencing machine already sees only the retry's per-run observation (the probe's `result`
+is reassigned before the observation is built), so the splice is purely the final-log fix. The
+retry re-runs the IDENTICAL runStep — so a failed FIRST pass re-stages a pristine job FS, and the
+just-mounted tier (which lives in `/texlive`, orthogonal to the job dir) is available. The retry
+does not re-post a progress phase (it is the same logical §5.3 step).
+
+### Scan grammar (best-effort, an optimisation)
+
+Single-line regex `\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}` over the
+entry + every TeX-source file (`.tex/.ltx/.sty/.cls/.def/.clo`; `Uint8Array` content decoded),
+comma-lists split, comments stripped (`%`, honouring `\%`). Deliberately PARTIAL — a name hidden
+behind a macro, a multi-line optional arg, or an `\input` of a NON-source file (e.g. a `.cfg`)
+falls through to the item-7 retry. That partiality is what lets path (b) be tested INDEPENDENTLY:
+a `\documentclass{ctexart}` doc is invisible to the scan (it reads `\usepackage`/`\RequirePackage`,
+not `\documentclass`), so the CJK path drives the retry, not the scan — a real, natural scan-off case.
+
+### Tests + verification (all green)
+
+- `typecheck` clean; full runtime suite **266 pass** (251 non-integration + 15 real-wasm):
+  - `bundle-resolution.test.ts` (NEW, 27): the scan grammar (comma lists, optional args,
+    `\RequirePackage`, comment stripping incl. `\%`, source-extension gating, `Uint8Array`,
+    dedup/order); `selectBundlesForPackages` (matched→tier, case-insensitive, UNKNOWN→[],
+    preload-provided→[], local-`.sty`/`.cls` shadow skip, handled skip, dedup, no-bundles
+    fallback); `selectBundlesForMissingFiles` (un-handled tiers, empty→[], all-handled→[] bound,
+    basename≠package soundness, dedup).
+  - `diagnostics.test.ts` (+10): `extractMissingFiles` against the REAL `missing-*` fixtures
+    (both engines), no false positive on clean / undefined-control-sequence (an ordinary error
+    must not trigger a download), the plain-TeX form, class files, multi-file order+dedup,
+    totality, `MAX_MISSING_FILES` bound.
+  - `worker-core.test.ts` (rewrote the item-5 eager block → item 6/7, +): scan preselects
+    BEFORE the first pass (ordered `events` log proves it); UNMATCHED name → no download (policy);
+    preload-provided name → no re-load; local-`.sty` shadow skip; `.cls` `\RequirePackage` scanned;
+    commented-out line ignored; retry mounts + retries once AFTER a failed pass with the probe
+    SPLICED from the final log (present in the LIVE stream); no retry on a non-missing-file error;
+    genuinely-missing → bounded (one mount) + not re-attempted next job; best-effort mount failure;
+    onDemand=[] → no retry; lazy-not-at-init; preload dedupe (no `['core','core']`).
+  - `engine-host.test.ts` (+3): concurrent in-flight idempotency (3 concurrent mounts → 1 LZ4
+    load); alias canonicalisation (`texlive-basic`→`core` no-ops against preloaded core; mounting
+    an alias mounts the CANONICAL `core.js`).
+  - `typeset-integration.test.ts` (real wasm, core + academic): BOTH §5.4 paths INDEPENDENTLY —
+    (a) scan-preselect siunitx (first-try, no probe pass; live log has no "not found"), (b) retry
+    ctexart (scan-invisible class; the probe's "ctexart.cls not found" streamed LIVE but SPLICED
+    from `result.log`); core-only `longtable` compiles with `bundlesLoaded=['core']` and NO academic
+    mount (2.3 s — the policy proof); genuinely-missing → academic mounted once, still fails cleanly.
+    Updated `tieredAssets` to read `manifest.json` (the v1 `assets.json` alias lacks the `provides`
+    index the scan needs) and the public-API on-demand test for lazy loading (academic no longer in
+    the init `onAssetProgress` bracket).
+- **loadBundle hardening (item-5 review nits)**: (1) in-flight idempotency — a `Map<canonical,
+  Promise>` so concurrent `loadBundle` share one mount (no double `LZ4.loadPackage` → EEXIST),
+  cleared on settle, a failed mount NOT cached; (2) alias canonicalisation — `canonicalBundleName`
+  reads the manifest `aliasOf` so `texlive-basic` mounts/no-ops against `core`, and `load()` seeds
+  `loadedBundles` with canonical names; (3) preload/onDemand dedupe — the core seeds `bundlesLoaded`
+  through a membership guard.
+- Worker IIFE rebuilt: **no `node:` leakage** (0), no `require(` (0), `parseDiagnostics`
+  tree-shaken out (0), `extractMissingFiles` + the scan present. `license-audit.sh` all checks
+  pass (new `bundle-resolution.ts` carries SPDX MIT + provenance; no GPL/AGPL).
+- Real numbers (native dist, node): core-only longtable 2.3 s (no academic mount); scan-preselect
+  siunitx 12.2 s (incl. academic mount); retry ctexart 12.2 s; genuinely-missing 12.6 s;
+  siunitx PDF 7313 B, CJK (ctex+fandol) PDF 4336 B.
+
+### Standing notes / deferred
+
+- **Lazy-load `onAssetProgress` is deferred.** On-demand tiers now mount at COMPILE time, so
+  they are out of the init progress bracket (`initLoadedAssets` = engine + preload). Per-tier
+  progress for a lazy load would need a compile-time asset-progress signal from the worker (a
+  new wire message — none in M4); `stats.bundlesLoaded` still reflects what mounted. Noted.
+- **The filename→bundle index is deferred to ≥2 on-demand tiers.** With one tier the retry's
+  blanket "load every un-handled on-demand tier" is exact; a future `full` adds the index
+  (resolve.mjs's package→`.sty` map into the manifest) additively — the chooser already takes
+  `missingFiles`.
+- **Browser-worker lazy path validated STRUCTURALLY** (same as item 5): the scan/retry drive the
+  identical `host.loadBundle`→`mountDataPackage`→`mountViaRunDependencies` path node exercises;
+  a real-browser on-demand mount belongs to the demo/Playwright smoke.
+- **The item-6/7 corpus entries (M4 item 8)** — a scientific paper (siunitx+mathtools+tikz +
+  natbib/bibtex8) and a CJK doc as CONFORMANCE entries — remain item 8's scope; items 6–7 land
+  the mechanism + its unit/integration coverage.

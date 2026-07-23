@@ -63,6 +63,16 @@ const core = createWorkerCore({
   post,
 });
 
+// SERIALISE handling. `core.handle` is async (a `compile` may await an
+// on-demand bundle mount, §5.4). Without a queue, a second `compile` arriving
+// mid-job would interleave: job B's `openJob()` re-stages PROJECT_DIR while job
+// A is mid-flight, and A's retry pass would run against B's files — wrong output
+// posted under A's jobId, which jobId gating cannot catch. The shipped client
+// already sends FIFO and one-at-a-time; this makes the worker robust to an
+// out-of-contract same-realm sender too (the defense entry.ts posture assumes).
+// Cancellation is a client-side `worker.terminate()`, so it is NOT queued here.
+let chain: Promise<void> = Promise.resolve();
+
 scope.onmessage = (event: { data: unknown }): void => {
   const message = parseClientMessage(event.data);
   if (message === null) {
@@ -72,8 +82,8 @@ scope.onmessage = (event: { data: unknown }): void => {
     }
     return;
   }
-  // Fire-and-forget: the core streams its own responses; a rejected promise here
-  // would have no correlation target, so failures are surfaced as `fatal`
-  // messages inside the core instead of thrown across this boundary.
-  void core.handle(message);
+  // The core streams its own correlated responses and surfaces failures as
+  // `fatal` messages internally, so a rejection here has no correlation target —
+  // isolate it (`.catch`) so one job's failure cannot poison the queue.
+  chain = chain.then(() => core.handle(message)).catch(() => {});
 };

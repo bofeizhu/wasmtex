@@ -514,7 +514,7 @@ describe('public API over real wasm (createTypesetter, in-process adapter, node)
 // ---------------------------------------------------------------------------
 
 const ON_DEMAND_DEPS = [
-  'assets.json',
+  'manifest.json', // the schemaVersion-2 manifest carries the `provides` index the §5.4(a) scan needs
   'busytex.js',
   'busytex.wasm',
   'core.js',
@@ -531,9 +531,15 @@ if (!onDemandPresent) {
   );
 }
 
-/** Init AssetsConfig from the real inventory with an explicit tier selection. */
+/**
+ * Init AssetsConfig from the real MANIFEST with an explicit tier selection. Reads
+ * `manifest.json` (schemaVersion 2), NOT `assets.json` — the §5.4(a) static scan
+ * resolves a \usepackage name against the manifest's per-bundle `provides` index,
+ * which the v1 `assets.json` alias does not carry. This mirrors what a real host
+ * loads (the client prefers manifest.json).
+ */
 function tieredAssets(preload: string[], onDemand: string[]): AssetsConfig {
-  const inventory = JSON.parse(readFileSync(distDir + 'assets.json', 'utf8')) as AssetsInventory;
+  const inventory = JSON.parse(readFileSync(distDir + 'manifest.json', 'utf8')) as AssetsInventory;
   return { baseUrl: distDir, inventory, bundles: { preload, onDemand } };
 }
 
@@ -659,7 +665,7 @@ describe('on-demand tier mounting (real wasm, core + academic)', () => {
   );
 
   it.runIf(onDemandPresent)(
-    'public API: preload core + onDemand academic — siunitx AND a CJK doc compile across jobs; bundlesLoaded reflects both; onAssetProgress reports the on-demand tier',
+    'public API: preload core + onDemand academic — siunitx (scan) AND a CJK doc (retry) compile across jobs; academic loads LAZILY, not at init',
     async () => {
       const config = tieredAssets(['core'], ['academic']);
       const progress: AssetProgress[] = [];
@@ -671,33 +677,150 @@ describe('on-demand tier mounting (real wasm, core + academic)', () => {
         workerFactory: inProcessFactory(),
       });
 
-      // Job A: siunitx (academic-only) — resolves because academic mounted at init.
+      // Job A: siunitx (academic-only) — the §5.4(a) scan preselects + mounts
+      // academic during THIS compile (not at init).
       const a = await tex.typeset({ engine: 'xetex', entry: 'main.tex', files: { 'main.tex': SIUNITX_DOC } }).done;
       expect(a.ok).toBe(true);
-      expect(a.stats.bundlesLoaded).toEqual(['core', 'academic']); // preload then on-demand
+      expect(a.stats.bundlesLoaded).toEqual(['core', 'academic']); // preload then lazily-loaded on-demand
       expect(a.pdf!.length).toBeGreaterThan(1000);
       expect(Array.from(a.pdf!.slice(0, 5))).toEqual([0x25, 0x50, 0x44, 0x46, 0x2d]);
 
-      // Job B on the SAME typesetter (survives the per-job memory reset): CJK.
+      // Job B on the SAME typesetter (academic already mounted, survives the
+      // per-job memory reset): CJK ctexart + bundled fandol.
       const b = await tex.typeset({ engine: 'xetex', entry: 'cjk.tex', files: { 'cjk.tex': CJK_DOC } }).done;
       expect(b.ok).toBe(true);
       expect(b.stats.bundlesLoaded).toEqual(['core', 'academic']);
       expect(b.pdf!.length).toBeGreaterThan(1000);
 
-      // onAssetProgress reported the on-demand tier's blobs — start (0) and done
-      // (=== totalBytes, the manifest's real size) — via the init bracket (item 5
-      // loads on-demand tiers during init; see client.ts initLoadedAssets note).
-      const academicData = progress.filter((p) => p.assetId === 'academic.data');
-      expect(academicData.some((p) => p.loadedBytes === 0)).toBe(true);
-      expect(academicData.some((p) => p.totalBytes > 0 && p.loadedBytes === p.totalBytes)).toBe(true);
-      const academicJs = progress.filter((p) => p.assetId === 'academic.js');
-      expect(academicJs.length).toBeGreaterThan(0);
+      // Under lazy §5.4 loading the on-demand academic tier mounts during JOB A's
+      // scan, NOT at init — so it is absent from the init progress bracket
+      // (client.ts initLoadedAssets reports engine + PRELOAD only; lazy-load
+      // progress is a deferred follow-up). The PRELOAD core tier IS reported;
+      // bundlesLoaded above already proves academic came in.
+      expect(progress.some((p) => p.assetId === 'core.data')).toBe(true);
+      expect(progress.some((p) => p.assetId === 'academic.data')).toBe(false);
+      expect(progress.some((p) => p.assetId === 'academic.js')).toBe(false);
 
       await tex.dispose();
       console.log(
-        `[typeset-integration] public-API on-demand: siunitx ${a.pdf!.length} B, CJK ${b.pdf!.length} B, ` +
+        `[typeset-integration] public-API on-demand (lazy): siunitx ${a.pdf!.length} B, CJK ${b.pdf!.length} B, ` +
           `bundlesLoaded=${JSON.stringify(a.stats.bundlesLoaded)}`,
       );
+    },
+    180_000,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// §5.4 automatic bundle resolution end to end (M4 items 6–7). Both halves of the
+// mechanism proven INDEPENDENTLY against the real tiered dist: (a) the static
+// \usepackage scan preselects academic first-try (no probe pass); (b) the
+// missing-file retry recovers a scan-INVISIBLE \documentclass{ctexart} (the scan
+// reads \usepackage/\RequirePackage, not \documentclass). Plus the two policy
+// proofs: a core-served \usepackage{longtable} downloads NO academic, and a
+// genuinely-missing package fails cleanly after one bounded retry. Driven through
+// the core with the real host so the LIVE log stream (vs the spliced final log)
+// distinguishes the scan path from the retry path. Skips without both tiers.
+// ---------------------------------------------------------------------------
+
+const LONGTABLE_DOC =
+  '\\documentclass{article}\n\\usepackage{longtable}\n\\begin{document}\n' +
+  '\\begin{longtable}{ll}a & b \\\\\\end{longtable}\n\\end{document}\n';
+const MISSING_PKG_DOC =
+  '\\documentclass{article}\n\\usepackage{nosuchpackagexyz}\n\\begin{document}x\\end{document}\n';
+
+describe('§5.4 automatic bundle resolution (real wasm, both paths independently)', () => {
+  /** Compile one doc through the core with the real host; return the result + the LIVE log stream. */
+  async function compileWithTiers(
+    onDemand: string[],
+    entry: string,
+    body: string,
+  ): Promise<{ result: Extract<WorkerMessage, { type: 'result' }>; liveLog: string }> {
+    const messages: WorkerMessage[] = [];
+    const host = new EmscriptenEngineHost(createNodeModuleLoader());
+    const core = createWorkerCore({ host, post: (m) => messages.push(m) });
+    await core.handle({ type: 'init', v: 1, jobId: newJobId(), assets: tieredAssets(['core'], onDemand) });
+    const jobId = newJobId();
+    await core.handle({
+      type: 'compile',
+      v: 1,
+      jobId,
+      files: { [entry]: body },
+      entry,
+      engine: 'xetex',
+      passes: 'auto',
+      bibliography: 'off',
+      index: 'off',
+      synctex: false,
+    });
+    const forJob = messages.filter((m) => m.jobId === jobId);
+    const result = forJob.at(-1);
+    if (result?.type !== 'result') throw new Error('no result message');
+    const liveLog = forJob
+      .filter((m) => m.type === 'log')
+      .map((m) => (m.type === 'log' ? m.line : ''))
+      .join('\n');
+    return { result, liveLog };
+  }
+
+  it.runIf(onDemandPresent)(
+    'path (a): the static scan preselects academic for \\usepackage{siunitx} — first-try, NO probe pass',
+    async () => {
+      const { result, liveLog } = await compileWithTiers(['academic'], 'main.tex', SIUNITX_DOC);
+      expect(result.ok).toBe(true);
+      expect(result.stats.bundlesLoaded).toEqual(['core', 'academic']);
+      // The scan mounted academic BEFORE pass 1, so siunitx resolved first try —
+      // "not found" NEVER streamed (no failed probe pass). Distinguishes (a) from (b).
+      expect(liveLog).not.toMatch(/not found/i);
+      expect(result.pdf!.length).toBeGreaterThan(1000);
+      console.log('[typeset-integration] §5.4(a) scan-preselect siunitx: first-try, no probe, bundlesLoaded=[core,academic]');
+    },
+    180_000,
+  );
+
+  it.runIf(onDemandPresent)(
+    'path (b): the missing-file retry recovers a scan-INVISIBLE \\documentclass{ctexart} (probe streamed live, spliced from final log)',
+    async () => {
+      // The scan reads \usepackage/\RequirePackage, NOT \documentclass — so
+      // ctexart is invisible to it. This drives §5.4(b) INDEPENDENTLY of the scan.
+      const { result, liveLog } = await compileWithTiers(['academic'], 'cjk.tex', CJK_DOC);
+      expect(result.ok).toBe(true);
+      expect(result.stats.bundlesLoaded).toEqual(['core', 'academic']);
+      // The probe pass FAILED against core alone and streamed the miss LIVE...
+      expect(liveLog).toMatch(/ctexart\.cls['`]? not found/i);
+      // ...but the retry is authoritative: the final log has the probe spliced out.
+      expect(result.log).not.toMatch(/not found/i);
+      expect(result.pdf!.length).toBeGreaterThan(1000);
+      console.log('[typeset-integration] §5.4(b) retry ctexart (scan off): probe streamed then spliced, bundlesLoaded=[core,academic]');
+    },
+    180_000,
+  );
+
+  it.runIf(onDemandPresent)(
+    'core-only \\usepackage{longtable} compiles WITHOUT downloading academic (unknown-name policy)',
+    async () => {
+      const { result } = await compileWithTiers(['academic'], 'main.tex', LONGTABLE_DOC);
+      expect(result.ok).toBe(true);
+      // longtable ∉ any provides → the scan does nothing; core ships longtable.sty
+      // → no failed pass → academic NEVER downloaded. THE unknown-name policy proof.
+      expect(result.stats.bundlesLoaded).toEqual(['core']);
+      expect(result.pdf!.length).toBeGreaterThan(1000);
+      console.log('[typeset-integration] core-only longtable: bundlesLoaded=[core], academic NOT downloaded');
+    },
+    120_000,
+  );
+
+  it.runIf(onDemandPresent)(
+    'a genuinely-missing package retries once then fails cleanly — bounded, no download loop',
+    async () => {
+      const { result } = await compileWithTiers(['academic'], 'main.tex', MISSING_PKG_DOC);
+      // The retry loaded academic ONCE (bounded); it still lacks the package → a
+      // clean failure surfacing the real diagnostic. No loop.
+      expect(result.ok).toBe(false);
+      expect(result.pdf).toBeUndefined();
+      expect(result.stats.bundlesLoaded).toEqual(['core', 'academic']);
+      expect(result.log).toMatch(/nosuchpackagexyz\.sty['`]? not found/i);
+      console.log('[typeset-integration] genuinely-missing: retried once, academic loaded, still failed cleanly (bounded)');
     },
     180_000,
   );

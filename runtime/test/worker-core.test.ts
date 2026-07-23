@@ -16,6 +16,7 @@ import {
   newJobId,
   parseWorkerMessage,
   type AssetsConfig,
+  type AssetsInventory,
   type CompileMessage,
   type EngineName,
   type InitMessage,
@@ -49,6 +50,8 @@ class FakeHost implements EngineHost {
   readonly loadCalls: AssetsConfig[] = [];
   readonly runCalls: EngineRunStep[] = [];
   readonly loadBundleCalls: string[] = [];
+  /** Ordered call log (`load` / `loadBundle:<name>` / `run:<applet>`) — proves the §5.4 scan mounts BEFORE the first pass and the retry mounts AFTER a failed one. */
+  readonly events: string[] = [];
   /** When set, `loadBundle` throws it (simulates an on-demand tier that fails to mount). */
   loadBundleError: unknown = null;
   scripts: FakeRunScript[] = [];
@@ -56,16 +59,19 @@ class FakeHost implements EngineHost {
 
   async load(assets: AssetsConfig): Promise<void> {
     this.loadCalls.push(assets);
+    this.events.push('load');
     if (this.loadError !== null) throw this.loadError;
   }
 
   async loadBundle(name: string): Promise<void> {
     this.loadBundleCalls.push(name);
+    this.events.push(`loadBundle:${name}`);
     if (this.loadBundleError !== null) throw this.loadBundleError;
   }
 
   run(step: EngineRunStep, onLine: EngineLogSink): EngineRunResult {
     this.runCalls.push(step);
+    this.events.push(`run:${step.applet}`);
     const script = this.scripts[this.next++] ?? {};
     if (script.throw !== undefined) throw script.throw;
     for (const line of script.stdout ?? []) onLine('stdout', line);
@@ -201,7 +207,11 @@ describe('core — init', () => {
 });
 
 // ---------------------------------------------------------------------------
-// init — on-demand tier mounting (M4 item 5)
+// §5.4 automatic bundle resolution (M4 items 6–7): on-demand tiers mount LAZILY.
+// (a) the static \usepackage scan preselects a tier BEFORE the first pass;
+// (b) the missing-file retry mounts one AFTER a pass fails naming a not-found
+// file. The fake host's ordered `events` log proves WHEN each mount happens, and
+// scripted failing-then-succeeding runs drive the retry independently of the scan.
 // ---------------------------------------------------------------------------
 
 /** An init message whose bundle selection overrides the default ASSETS. */
@@ -220,44 +230,291 @@ function happyCompileScripts(): FakeRunScript[] {
   ];
 }
 
-describe('core — on-demand tier mounting (item 5 eager trigger)', () => {
-  it('mounts each configured on-demand tier post-init and reflects them in bundlesLoaded (preload then on-demand)', async () => {
+// A manifest-style inventory carrying a per-bundle provided-package index, so the
+// §5.4(a) scan can resolve a \usepackage name to an on-demand tier. `siunitx`
+// etc. live in academic; `longtable` is DELIBERATELY absent from every `provides`
+// (it ships in core but its NAME is not a provided-package name) — the
+// unknown-name policy fixture. `texlive-basic` is an alias of core.
+const TIERED_INVENTORY: AssetsInventory = {
+  schemaVersion: 2,
+  assets: [
+    { path: 'busytex.js', role: 'engine-js' },
+    { path: 'busytex.wasm', role: 'engine-wasm' },
+    { path: 'core.js', role: 'bundle-js' },
+    { path: 'core.data', role: 'bundle-data' },
+    { path: 'academic.js', role: 'bundle-js' },
+    { path: 'academic.data', role: 'bundle-data' },
+  ],
+  bundles: [
+    { name: 'core', files: ['core.js', 'core.data'], provides: ['latex', 'amsmath', 'geometry', 'natbib'] },
+    { name: 'academic', files: ['academic.js', 'academic.data'], provides: ['siunitx', 'ctex', 'xecjk', 'mathtools'] },
+    { name: 'texlive-basic', aliasOf: 'core' },
+  ],
+};
+
+/** Init with the tiered inventory: preload core, on-demand academic (overridable). */
+function initTiered(jobId: JobId, onDemand: string[] = ['academic']): InitMessage {
+  return {
+    type: 'init',
+    v: 1,
+    jobId,
+    assets: { baseUrl: '/dist', inventory: TIERED_INVENTORY, bundles: { preload: ['core'], onDemand } },
+  };
+}
+
+/** A minimal document with a single \usepackage of `pkg` (entry stays hello.tex). */
+function docUsing(pkg: string): ProjectFiles {
+  return { 'hello.tex': `\\documentclass{article}\n\\usepackage{${pkg}}\n\\begin{document}x\\end{document}\n` };
+}
+/** A document that loads NO package the scan can resolve (drives the retry, not the scan). */
+const PLAIN_DOC: ProjectFiles = { 'hello.tex': '\\documentclass{article}\n\\begin{document}x\\end{document}\n' };
+/** The LaTeX "file not found" line for a missing `.sty` (the §5.4(b) retry trigger). */
+const notFound = (sty: string): string => `! LaTeX Error: File \`${sty}' not found.`;
+
+describe('core — §5.4(a) static \\usepackage scan (item 6)', () => {
+  it('preselects the on-demand tier a \\usepackage names, BEFORE the first pass (no probe pass)', async () => {
     const host = new FakeHost();
     host.scripts = happyCompileScripts();
     const { messages, post } = recorder();
     const core = createWorkerCore({ host, post, now: fakeClock() });
-
-    await core.handle(initMessageWithBundles(newJobId(), { preload: ['core'], onDemand: ['academic'] }));
-    expect(host.loadCalls).toHaveLength(1);
-    expect(host.loadBundleCalls).toEqual(['academic']); // the on-demand tier was mounted at init
+    await core.handle(initTiered(newJobId()));
+    expect(host.loadBundleCalls).toEqual([]); // nothing mounted at init (lazy)
 
     const jobId = newJobId();
-    await core.handle(compileMessage(jobId, 'xetex'));
+    await core.handle(compileMessage(jobId, 'xetex', docUsing('siunitx')));
+
+    // academic mounted BEFORE the first engine run (scan), so the pass never fails.
+    expect(host.events).toEqual(['load', 'loadBundle:academic', 'run:xelatex', 'run:xdvipdfmx']);
+    expect(host.runCalls).toHaveLength(2); // NO failed probe pass
     const result = messages.filter((m) => m.jobId === jobId).at(-1);
     expect(result?.type).toBe('result');
     if (result?.type === 'result') {
-      // preload FIRST, then on-demand — the actually-mounted tiers, in order.
+      expect(result.ok).toBe(true);
       expect(result.stats.bundlesLoaded).toEqual(['core', 'academic']);
     }
   });
 
-  it('mounts multiple on-demand tiers in configured order', async () => {
+  it('an UNMATCHED name loads NO on-demand tier (unknown → do nothing; core serves it)', async () => {
     const host = new FakeHost();
     host.scripts = happyCompileScripts();
     const { messages, post } = recorder();
     const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initTiered(newJobId()));
 
-    await core.handle(
-      initMessageWithBundles(newJobId(), { preload: ['core'], onDemand: ['academic', 'extra'] }),
-    );
-    expect(host.loadBundleCalls).toEqual(['academic', 'extra']);
-
+    // longtable is in NO tier's `provides` → the scan does nothing; core (the
+    // fake host succeeds) serves it. This is the load-bearing item-4 policy: a
+    // "load academic on any unmatched name" rule would download the 496 MB tier.
     const jobId = newJobId();
-    await core.handle(compileMessage(jobId, 'xetex'));
+    await core.handle(compileMessage(jobId, 'xetex', docUsing('longtable')));
+
+    expect(host.loadBundleCalls).toEqual([]); // NO academic download
     const result = messages.filter((m) => m.jobId === jobId).at(-1);
     if (result?.type === 'result') {
-      expect(result.stats.bundlesLoaded).toEqual(['core', 'academic', 'extra']);
+      expect(result.ok).toBe(true);
+      expect(result.stats.bundlesLoaded).toEqual(['core']);
     }
+  });
+
+  it('a name a PRELOAD tier provides is not re-loaded (natbib → core, already mounted)', async () => {
+    const host = new FakeHost();
+    host.scripts = happyCompileScripts();
+    const { post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initTiered(newJobId()));
+    await core.handle(compileMessage(newJobId(), 'xetex', docUsing('natbib')));
+    expect(host.loadBundleCalls).toEqual([]); // natbib is provided by core (preloaded)
+  });
+
+  it('skips a scanned name the host supplied as a project-local .sty (local shadow of a tier package)', async () => {
+    const host = new FakeHost();
+    host.scripts = happyCompileScripts();
+    const { post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initTiered(newJobId()));
+    // \usepackage{siunitx} would normally preselect academic, but the host
+    // supplied its own siunitx.sty — it resolves locally, so no tier is pulled.
+    await core.handle(
+      compileMessage(newJobId(), 'xetex', {
+        'hello.tex': '\\documentclass{article}\n\\usepackage{siunitx}\n\\begin{document}x\\end{document}\n',
+        'siunitx.sty': '% a local override of siunitx',
+      }),
+    );
+    expect(host.loadBundleCalls).toEqual([]);
+  });
+
+  it('scans \\RequirePackage inside a project-local .cls too (a class that pulls an on-demand package)', async () => {
+    const host = new FakeHost();
+    host.scripts = happyCompileScripts();
+    const { post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initTiered(newJobId()));
+    // The class file itself \RequirePackages an academic package — the scan reads
+    // project-local .cls content, so it preselects academic. (`myclass` is local,
+    // so it is not itself looked up as a tier package.)
+    await core.handle(
+      compileMessage(newJobId(), 'xetex', {
+        'hello.tex': '\\documentclass{myclass}\n\\begin{document}x\\end{document}\n',
+        'myclass.cls': '\\RequirePackage{mathtools}\n',
+      }),
+    );
+    expect(host.loadBundleCalls).toEqual(['academic']); // mathtools → academic
+  });
+
+  it('ignores a commented-out \\usepackage line', async () => {
+    const host = new FakeHost();
+    host.scripts = happyCompileScripts();
+    const { post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initTiered(newJobId()));
+    await core.handle(
+      compileMessage(newJobId(), 'xetex', {
+        'hello.tex': '\\documentclass{article}\n% \\usepackage{siunitx}\n\\begin{document}x\\end{document}\n',
+      }),
+    );
+    expect(host.loadBundleCalls).toEqual([]); // the commented line is not scanned
+  });
+});
+
+describe('core — §5.4(b) missing-file retry (item 7)', () => {
+  it('mounts academic and retries ONCE when a pass fails "File not found" (scan off), splicing the probe from the final log', async () => {
+    const host = new FakeHost();
+    host.scripts = [
+      { exitCode: 1, stderr: [notFound('siunitx.sty')] }, // probe fails
+      { exitCode: 0, stdout: ['This is XeTeX (retry)'] }, // retry succeeds
+      { exitCode: 0, outputs: { 'hello.pdf': PDF_BYTES } }, // xdvipdfmx
+    ];
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initTiered(newJobId()));
+
+    // PLAIN_DOC names no package the scan can resolve → the scan preselects
+    // nothing; the RETRY must carry it (proves §5.4(b) independent of the scan).
+    const jobId = newJobId();
+    await core.handle(compileMessage(jobId, 'xetex', PLAIN_DOC));
+
+    // Mount happened AFTER the failed first pass (retry), unlike the scan.
+    expect(host.events).toEqual(['load', 'run:xelatex', 'loadBundle:academic', 'run:xelatex', 'run:xdvipdfmx']);
+    expect(host.runCalls).toHaveLength(3); // probe + retry + xdvipdfmx
+
+    const forJob = messages.filter((m) => m.jobId === jobId);
+    const result = forJob.at(-1);
+    expect(result?.type).toBe('result');
+    if (result?.type === 'result') {
+      expect(result.ok).toBe(true);
+      expect(result.stats.bundlesLoaded).toEqual(['core', 'academic']);
+      // The probe's error is DROPPED from the final consolidated log (the retry is
+      // authoritative) — a successful compile shows no spurious "not found".
+      expect(result.log).not.toContain('not found');
+      expect(result.log).toContain('This is XeTeX (retry)');
+    }
+    // ...but the probe DID stream live (honest real-time event log).
+    expect(forJob.some((m) => m.type === 'log' && m.line.includes("File `siunitx.sty' not found"))).toBe(true);
+  });
+
+  it('does NOT retry on a non-missing-file error (undefined control sequence): no tier download', async () => {
+    const host = new FakeHost();
+    host.scripts = [{ exitCode: 1, stderr: ['! Undefined control sequence.', 'l.3 \\foo'] }];
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initTiered(newJobId()));
+    const jobId = newJobId();
+    await core.handle(compileMessage(jobId, 'xetex', PLAIN_DOC));
+
+    expect(host.loadBundleCalls).toEqual([]); // no "not found" ⇒ no retry ⇒ no download
+    expect(host.runCalls).toHaveLength(1);
+    const result = messages.filter((m) => m.jobId === jobId).at(-1);
+    if (result?.type === 'result') {
+      expect(result.ok).toBe(false);
+      expect(result.stats.bundlesLoaded).toEqual(['core']);
+    }
+  });
+
+  it('a genuinely-missing package retries once then fails cleanly — bounded, no loop, not re-attempted next job', async () => {
+    const host = new FakeHost();
+    host.scripts = [
+      { exitCode: 1, stderr: [notFound('nosuchpkgxyz.sty')] }, // job1 probe
+      { exitCode: 1, stderr: [notFound('nosuchpkgxyz.sty')] }, // job1 retry — STILL missing
+      { exitCode: 1, stderr: [notFound('anothermissing.sty')] }, // job2 pass — academic already handled
+    ];
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initTiered(newJobId()));
+
+    const jobId = newJobId();
+    await core.handle(compileMessage(jobId, 'xetex', docUsing('nosuchpkgxyz')));
+    // Scan: nosuchpkgxyz ∉ provides → no preselect. Probe fails → retry mounts
+    // academic ONCE → still fails → abort. loadBundle called exactly once.
+    expect(host.loadBundleCalls).toEqual(['academic']);
+    expect(host.runCalls).toHaveLength(2); // probe + retry, no third attempt
+    const result = messages.filter((m) => m.jobId === jobId).at(-1);
+    if (result?.type === 'result') {
+      expect(result.ok).toBe(false);
+      expect(result.stats.bundlesLoaded).toEqual(['core', 'academic']); // downloaded once (bounded)
+      expect(result.log).toContain('not found'); // the real diagnostic surfaces
+    }
+
+    // Session bound: a SECOND missing-package job does NOT re-attempt academic.
+    const job2 = newJobId();
+    await core.handle(compileMessage(job2, 'xetex', docUsing('anothermissing')));
+    expect(host.loadBundleCalls).toEqual(['academic']); // still exactly one mount
+    const r2 = messages.filter((m) => m.jobId === job2).at(-1);
+    if (r2?.type === 'result') expect(r2.ok).toBe(false);
+  });
+
+  it('a lazy on-demand mount FAILURE is best-effort: init unaffected, the compile fails with the real diagnostic', async () => {
+    const host = new FakeHost();
+    host.loadBundleError = new Error('academic.data 404');
+    host.scripts = [{ exitCode: 1, stderr: [notFound('siunitx.sty')] }]; // probe; no retry run (mount failed)
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+
+    await core.handle(initTiered(newJobId()));
+    expect(messages.map((m) => m.type)).toEqual(['initialized']); // init OK — on-demand NOT mounted at init
+
+    const jobId = newJobId();
+    await core.handle(compileMessage(jobId, 'xetex', PLAIN_DOC));
+    // The retry attempted the mount once; it failed, so no retry run happened.
+    expect(host.loadBundleCalls).toEqual(['academic']);
+    expect(host.runCalls).toHaveLength(1);
+    const forJob = messages.filter((m) => m.jobId === jobId);
+    const result = forJob.at(-1);
+    if (result?.type === 'result') {
+      expect(result.ok).toBe(false);
+      expect(result.stats.bundlesLoaded).toEqual(['core']); // academic NOT loaded (mount failed)
+    }
+    // A best-effort advisory names the tier that could not be loaded.
+    expect(
+      forJob.some((m) => m.type === 'log' && m.line.includes("on-demand bundle 'academic' could not be loaded")),
+    ).toBe(true);
+  });
+
+  it('with no on-demand tiers configured, a missing-file failure does not retry', async () => {
+    const host = new FakeHost();
+    host.scripts = [{ exitCode: 1, stderr: [notFound('siunitx.sty')] }];
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initTiered(newJobId(), [])); // onDemand: []
+    const jobId = newJobId();
+    await core.handle(compileMessage(jobId, 'xetex', docUsing('siunitx')));
+    expect(host.loadBundleCalls).toEqual([]);
+    const result = messages.filter((m) => m.jobId === jobId).at(-1);
+    if (result?.type === 'result') {
+      expect(result.ok).toBe(false);
+      expect(result.stats.bundlesLoaded).toEqual(['core']);
+    }
+  });
+});
+
+describe('core — on-demand tiers load lazily, not at init', () => {
+  it('does NOT mount on-demand tiers at init; init succeeds with only the preload tier', async () => {
+    const host = new FakeHost();
+    host.scripts = happyCompileScripts();
+    const { messages, post } = recorder();
+    const core = createWorkerCore({ host, post, now: fakeClock() });
+    await core.handle(initTiered(newJobId(), ['academic']));
+    expect(host.loadCalls).toHaveLength(1);
+    expect(host.loadBundleCalls).toEqual([]); // NOTHING mounted at init
+    expect(messages.map((m) => m.type)).toEqual(['initialized']);
   });
 
   it('with no on-demand tiers, mounts nothing and bundlesLoaded is just the preload set', async () => {
@@ -277,31 +534,16 @@ describe('core — on-demand tier mounting (item 5 eager trigger)', () => {
     }
   });
 
-  it('an on-demand tier that fails to mount fails init with a correlated `fatal` init-failed', async () => {
+  it('deduplicates a preload tier repeated in the config (never reports [core, core])', async () => {
     const host = new FakeHost();
-    host.loadBundleError = new Error('academic.data 404');
+    host.scripts = happyCompileScripts();
     const { messages, post } = recorder();
     const core = createWorkerCore({ host, post, now: fakeClock() });
-
+    await core.handle(initMessageWithBundles(newJobId(), { preload: ['core', 'core'], onDemand: [] }));
     const jobId = newJobId();
-    await core.handle(initMessageWithBundles(jobId, { preload: ['core'], onDemand: ['academic'] }));
-
-    expect(host.loadCalls).toHaveLength(1); // the engine + preload DID load
-    expect(host.loadBundleCalls).toEqual(['academic']); // the on-demand mount was attempted
-    expect(messages).toHaveLength(1);
-    const fatal = messages[0];
-    expect(fatal?.type).toBe('fatal');
-    if (fatal?.type === 'fatal') {
-      expect(fatal.code).toBe('init-failed');
-      expect(fatal.message).toContain('academic.data 404');
-    }
-    expectAllCorrelated(messages, jobId);
-
-    // init did not complete: a subsequent compile is rejected as not-initialised.
-    const compileId = newJobId();
-    await core.handle(compileMessage(compileId, 'xetex'));
-    const after = messages.filter((m) => m.jobId === compileId).at(-1);
-    expect(after?.type).toBe('fatal');
+    await core.handle(compileMessage(jobId, 'xetex'));
+    const result = messages.filter((m) => m.jobId === jobId).at(-1);
+    if (result?.type === 'result') expect(result.stats.bundlesLoaded).toEqual(['core']);
   });
 });
 

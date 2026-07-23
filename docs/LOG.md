@@ -5,6 +5,49 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M4 items 6+7: §5.4 automatic bundle resolution
+
+**Done, reviewer-approved (after 2 should-fixes).** Both halves of §5.4,
+on item 5's `loadBundle` seam, replacing the eager-at-init stand-in with
+lazy triggering. **Item 6 (static scan):** `worker/bundle-resolution.ts`
+scans the project's `\usepackage`/`\RequirePackage` (comma-lists,
+optional-arg + comment aware incl. `\%`), resolves each via the manifest
+`provides` (`bundleProvidingPackage`), and preselects a matching on-demand
+tier before pass 1. **Item 7 (missing-file retry):** `extractMissingFiles`
+(diagnostics) + on a pass failing with kpathsea "not found", mount the
+un-handled tier and re-run the step ONCE, bounded by a `handledBundles`
+set. **loadBundle hardened** (item-5 nits): in-flight promise memoization,
+alias canonicalization, dedupe.
+
+**Both policies proven on real data:** (1) the unknown-name policy is
+structural — `bundleProvidingPackage`→undefined→skip, so `\usepackage{
+longtable}` (core, not a provided-package name) compiles in ~2.3 s with
+`bundlesLoaded=['core']`, academic NEVER downloaded; (2) both §5.4 paths
+work INDEPENDENTLY — siunitx via the scan (first try), and (scan blind to
+`\documentclass{ctexart}`) a CJK doc via the retry (probe fails
+"ctexart.cls not found" → academic mounts → retry compiles). A genuinely-
+missing package → one bounded mount → clean failure, no loop.
+
+**Log honesty (the load-bearing subtlety, verified):** the failed probe
+pass streams LIVE via onLog, then is index-spliced out of `result.log`
+(only that step's probe lines; document content that repeats the text
+can't mis-splice); `stats.passes`/diagnostics reflect the authoritative
+retry; a failed retry keeps its real error. 266 runtime tests.
+
+**Review: request-changes → both fixed.** (1) **ReDoS** — the scan regex
+`\s*(?:[…])?\s*` backtracks quadratically on a `\usepackage`+long-
+whitespace hostile file (host-supplied, reaches the scan before pass 1);
+measured 41 s at 160 KB. Fixed to the linear `(?:[…]\s*)?` form (grammar-
+identical; ~ms at 1 MB) + a ReDoS regression test. (2) **Serialization**
+— `onCompile` is now async (awaits the mount), so an out-of-contract
+same-realm sender could interleave a 2nd compile mid-job and run job A's
+retry against job B's re-staged files — wrong output under A's jobId.
+Fixed: `worker/entry.ts` chains handler calls into a FIFO queue (cancel is
+a client-side worker.terminate(), unaffected); stale "serial by
+construction" comment corrected. Nits deferred: alias double-count in core
+bookkeeping (pathological config), a pass-2-retry test, multi-level alias
+chains.
+
 ## 2026-07-24 — M4 item 5: on-demand bundle mount (the crux capability)
 
 **Done, reviewer-approved. The M4 technical unknown resolved positively.**

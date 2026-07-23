@@ -272,6 +272,25 @@ function resolveBundleJsLocation(base: string, inventory: AssetsInventory, name:
   return resolveAssetLocation(base, match);
 }
 
+/**
+ * Canonicalize a bundle NAME through the manifest's `aliasOf` (DESIGN.md §7): a
+ * back-compat alias tier (e.g. `texlive-basic`, `aliasOf: core`) resolves to its
+ * REAL tier, so mounting the alias no-ops against — or mounts — the canonical tier
+ * rather than a byte-identical third copy. A name with no alias entry (or an
+ * inventory carrying no `bundles`) is returned unchanged. Pure; exact-name match
+ * (bundle names are precise identifiers).
+ */
+function canonicalBundleName(inventory: AssetsInventory, name: string): string {
+  const bundles = inventory.bundles;
+  if (bundles === undefined) return name;
+  for (const b of bundles) {
+    if (b.name === name) {
+      return typeof b.aliasOf === 'string' && b.aliasOf.length > 0 ? b.aliasOf : name;
+    }
+  }
+  return name;
+}
+
 /** Resolve each preload bundle NAME to its `bundle-js` load location (honors entry.url). */
 function preloadBundleLocations(base: string, assets: AssetsConfig): string[] {
   return assets.bundles.preload.map((name) => resolveBundleJsLocation(base, assets.inventory, name));
@@ -314,8 +333,10 @@ export class EmscriptenEngineHost implements EngineHost {
   private memHeader: Uint8Array | null = null;
   /** Retained from {@link load} so {@link loadBundle} can resolve an on-demand tier NAME to its bundle-js location. */
   private assets: AssetsConfig | null = null;
-  /** Bundle names already mounted (preload tiers seeded at load; on-demand tiers added by {@link loadBundle}) — makes loadBundle idempotent. */
+  /** CANONICAL bundle names already mounted (preload tiers seeded at load; on-demand tiers added by {@link loadBundle}) — makes loadBundle idempotent. */
   private readonly loadedBundles = new Set<string>();
+  /** In-flight mounts, keyed by CANONICAL name, so concurrent {@link loadBundle} calls share one mount (no double LZ4.loadPackage → EEXIST). Cleared on settle. */
+  private readonly inflightBundles = new Map<string, Promise<void>>();
 
   // Per-run transcript wiring. `print`/`printErr` are installed once on the
   // Module and route here; `sink`/`capture` are swapped in around each callMain
@@ -397,7 +418,12 @@ export class EmscriptenEngineHost implements EngineHost {
     // eager loadBundle() no-op and bundlesLoaded silently lie.
     this.assets = assets;
     this.loadedBundles.clear();
-    for (const name of assets.bundles.preload) this.loadedBundles.add(name);
+    this.inflightBundles.clear();
+    // Seed with CANONICAL names (honor `aliasOf`), so a later loadBundle of an
+    // alias OR its real tier both no-op against the already-mounted preload.
+    for (const name of assets.bundles.preload) {
+      this.loadedBundles.add(canonicalBundleName(assets.inventory, name));
+    }
   }
 
   /**
@@ -419,10 +445,31 @@ export class EmscriptenEngineHost implements EngineHost {
     const module = this.requireModule();
     const assets = this.assets;
     if (assets === null) throw new Error('engine host used before load() resolved');
-    if (this.loadedBundles.has(name)) return;
-    const location = resolveBundleJsLocation(assets.baseUrl, assets.inventory, name);
-    await this.loader.mountDataPackage(module, location);
-    this.loadedBundles.add(name);
+    // Canonicalize an alias tier to its real tier (manifest `aliasOf`) so a
+    // back-compat name (`texlive-basic`) mounts — or no-ops — against `core`
+    // instead of double-mounting a byte-identical third copy (its files would
+    // EEXIST at the same paths).
+    const canonical = canonicalBundleName(assets.inventory, name);
+    if (this.loadedBundles.has(canonical)) return;
+    // In-flight idempotency: concurrent loadBundle calls for the same tier share
+    // ONE mount Promise (a second concurrent LZ4.loadPackage of the same paths
+    // would EEXIST). resolveBundleJsLocation throws HERE (synchronously) for an
+    // unknown name, before any in-flight entry is recorded.
+    const pending = this.inflightBundles.get(canonical);
+    if (pending !== undefined) return pending;
+    const location = resolveBundleJsLocation(assets.baseUrl, assets.inventory, canonical);
+    const mount = this.loader
+      .mountDataPackage(module, location)
+      .then(() => {
+        this.loadedBundles.add(canonical);
+      })
+      .finally(() => {
+        // A FAILED mount is NOT cached (the tier stays un-loaded), so a later
+        // retry re-mounts (item-5 contract); clearing on success frees the entry.
+        this.inflightBundles.delete(canonical);
+      });
+    this.inflightBundles.set(canonical, mount);
+    return mount;
   }
 
   run(step: EngineRunStep, onLine: EngineLogSink): EngineRunResult {

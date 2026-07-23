@@ -238,6 +238,74 @@ describe('EmscriptenEngineHost.loadBundle — on-demand mount', () => {
 });
 
 // ---------------------------------------------------------------------------
+// loadBundle hardening (M4 items 6–7 review nits): in-flight idempotency +
+// alias canonicalization. A manifest-style inventory with `bundles` carrying an
+// `aliasOf` back-compat tier.
+// ---------------------------------------------------------------------------
+
+function aliasedInventory(): AssetsInventory {
+  return {
+    schemaVersion: 2,
+    assets: [
+      { path: 'busytex.js', role: 'engine-js' },
+      { path: 'busytex.wasm', role: 'engine-wasm' },
+      { path: 'core.js', role: 'bundle-js' },
+      { path: 'core.data', role: 'bundle-data' },
+      { path: 'texlive-basic.js', role: 'bundle-js' },
+      { path: 'texlive-basic.data', role: 'bundle-data' },
+      { path: 'academic.js', role: 'bundle-js' },
+      { path: 'academic.data', role: 'bundle-data' },
+    ],
+    bundles: [
+      { name: 'core', files: ['core.js', 'core.data'], provides: ['latex'] },
+      { name: 'academic', files: ['academic.js', 'academic.data'], provides: ['siunitx'] },
+      { name: 'texlive-basic', aliasOf: 'core' },
+    ],
+  };
+}
+
+function assetsPreloading(inv: AssetsInventory, preload: string[]): AssetsConfig {
+  return { baseUrl: '/dist', inventory: inv, bundles: { preload, onDemand: [] } };
+}
+
+describe('EmscriptenEngineHost.loadBundle — hardening (items 6–7)', () => {
+  it('shares ONE mount for concurrent loadBundle calls (in-flight idempotency, no double LZ4)', async () => {
+    const { factory } = fakeFactory();
+    const loader = new FakeLoader(factory);
+    const host = new EmscriptenEngineHost(loader);
+    await host.load(assetsWith(inventory(false))); // preload: ['texlive-basic']
+
+    // Three concurrent mounts of the same tier before any resolves — they must
+    // share one in-flight Promise (a second concurrent LZ4.loadPackage → EEXIST).
+    await Promise.all([host.loadBundle('academic'), host.loadBundle('academic'), host.loadBundle('academic')]);
+    expect(loader.mountedPackageLocations).toEqual(['/dist/academic.js']); // mounted exactly once
+  });
+
+  it('canonicalizes an alias tier: loadBundle(texlive-basic) no-ops against a preloaded core', async () => {
+    const { factory } = fakeFactory();
+    const loader = new FakeLoader(factory);
+    const host = new EmscriptenEngineHost(loader);
+    await host.load(assetsPreloading(aliasedInventory(), ['core'])); // preload core
+
+    await host.loadBundle('texlive-basic'); // aliasOf core → already mounted
+    await host.loadBundle('core'); // the real name → already mounted
+    expect(loader.mountedPackageLocations).toEqual([]); // neither mounted a duplicate copy
+  });
+
+  it('mounting an alias mounts its CANONICAL tier bundle-js (core.js), and core then no-ops', async () => {
+    const { factory } = fakeFactory();
+    const loader = new FakeLoader(factory);
+    const host = new EmscriptenEngineHost(loader);
+    await host.load(assetsPreloading(aliasedInventory(), [])); // nothing preloaded
+
+    await host.loadBundle('texlive-basic'); // canonical core → mount core.js (not the alias copy)
+    expect(loader.mountedPackageLocations).toEqual(['/dist/core.js']);
+    await host.loadBundle('core'); // already mounted via the alias
+    expect(loader.mountedPackageLocations).toEqual(['/dist/core.js']);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // mountViaRunDependencies — the environment-agnostic completion protocol
 //
 // The real file_packager loader (post-init) adds one run dependency for its

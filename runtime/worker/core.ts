@@ -48,6 +48,16 @@
 // by `passes`. XeTeX finalizes through xdvipdfmx; pdfTeX writes the PDF directly.
 // The abstract-step → applet mapping (`toRunStep`) is the ONLY per-engine
 // argv/format knowledge; the decision logic is entirely in `sequencing.ts`.
+//
+// §5.4 BUNDLE RESOLUTION (M4 items 6–7): on-demand tiers mount LAZILY here (via
+// the `host.loadBundle` seam), replacing item 5's eager-at-init stand-in. (a) A
+// static \usepackage/\RequirePackage scan of the project sources preselects a
+// matching on-demand tier BEFORE the first pass (`bundle-resolution.ts`). (b) A
+// pass that fails naming a not-found file (`extractMissingFiles`, from the
+// diagnostics parser) mounts the un-handled on-demand tier(s) and re-runs the
+// step ONCE — the correctness net for anything the scan can't see. Both are
+// worker-local (no network beyond the tier's own asset load) and BOUNDED: each
+// on-demand tier is attempted at most once per session (the `handledBundles` set).
 // ---------------------------------------------------------------------------
 
 import {
@@ -76,6 +86,12 @@ import {
   type StepFsFacts,
   type StepObservation,
 } from './sequencing';
+import { extractMissingFiles } from '../src/diagnostics';
+import {
+  scanRequiredPackages,
+  selectBundlesForMissingFiles,
+  selectBundlesForPackages,
+} from './bundle-resolution';
 
 // ---------------------------------------------------------------------------
 // The injected engine host contract
@@ -135,8 +151,10 @@ export interface EngineHost {
    * §5.4). Idempotent per name (a preload tier, or one already loaded, is a
    * no-op); resolves once the tier's files are visible to the engine FS. The
    * mount persists across subsequent jobs' memory resets (it is a JS-heap
-   * operation — see the real host's `loadBundle`). Item 5 drives this eagerly for
-   * each configured `onDemand` tier; items 6–7 drive it lazily (§5.4 scan/retry).
+   * operation — see the real host's `loadBundle`). The core drives this LAZILY
+   * (M4 items 6–7): the §5.4(a) static \usepackage scan preselects a tier before
+   * the first pass, and the §5.4(b) missing-file retry mounts one after a pass
+   * fails naming a not-found file. Idempotent + bounded per session.
    */
   loadBundle(name: string): Promise<void>;
   /** Run one applet against the (possibly freshly-staged) job FS, streaming lines to `onLine`. */
@@ -343,18 +361,57 @@ export function describeError(error: unknown): string {
 /**
  * Build the worker core over its injected dependencies. The returned handler is
  * called once per inbound (already validated) {@link ClientMessage}; it emits a
- * stream of correlated {@link WorkerMessage}s through `post`. Jobs are handled
- * one at a time (the worker is single-threaded and serialises by construction);
+ * stream of correlated {@link WorkerMessage}s through `post`. `handle` is async
+ * (a `compile` may await an on-demand bundle mount), so it is NOT serial by
+ * construction — the caller (worker/entry.ts) chains calls into a FIFO queue so
+ * one job completes before the next re-stages the shared PROJECT_DIR;
  * correlation on `jobId` makes stale/foreign messages safe regardless.
  */
 export function createWorkerCore(deps: WorkerCoreDeps): WorkerCore {
   const { host, post } = deps;
   const now = deps.now ?? Date.now;
 
-  // Session state. `loaded` gates compiles; `bundlesLoaded` feeds result stats.
-  // Warm state is a cache: the client re-inits on a fresh worker after cancel.
+  // Session state. `loaded` gates compiles; the bundle sets feed the §5.4 lazy
+  // resolution + result stats. Warm state is a cache: the client re-inits on a
+  // fresh worker after cancel (DESIGN.md §5.2).
   let loaded = false;
-  let bundlesLoaded: readonly string[] = [];
+  // The init config, retained so a compile can consult the manifest `provides`
+  // index (the §5.4 scan) and the on-demand tier list.
+  let assetsConfig: AssetsConfig | null = null;
+  // Bundles the session has loaded OR ATTEMPTED to load: preload tiers (seeded at
+  // init) plus every on-demand tier the §5.4 scan/retry has tried. It is the
+  // scan's skip-set AND the retry's BOUND — a tier marked handled is never
+  // re-attempted, so a persistently-missing package cannot loop (each on-demand
+  // tier is tried at most once per session).
+  const handledBundles = new Set<string>();
+  // Tiers actually MOUNTED, in load order (preload first, then lazily-loaded
+  // on-demand) — the deduplicated `stats.bundlesLoaded` value.
+  const bundlesLoaded: string[] = [];
+
+  /**
+   * Mount one on-demand tier lazily (the §5.4 seam onto the host's `loadBundle`),
+   * idempotent and BOUNDED. Marks the tier handled BEFORE awaiting, so a mount
+   * that throws is never re-attempted (bound: once per tier per session). On
+   * success the tier joins `bundlesLoaded`; on failure a best-effort advisory is
+   * streamed and the caller proceeds (the pass then surfaces the real
+   * missing-file diagnostic). Returns true iff the tier is now mounted.
+   */
+  async function ensureBundle(name: string, onLine: EngineLogSink): Promise<boolean> {
+    if (bundlesLoaded.includes(name)) return true; // already mounted (preload or earlier)
+    if (handledBundles.has(name)) return false; // already attempted and failed — bounded
+    handledBundles.add(name);
+    try {
+      await host.loadBundle(name);
+      bundlesLoaded.push(name);
+      return true;
+    } catch (error) {
+      onLine(
+        'stderr',
+        `wasmtex: on-demand bundle '${name}' could not be loaded (${describeError(error)}); continuing without it`,
+      );
+      return false;
+    }
+  }
 
   async function onInit(msg: ClientMessage & { type: 'init' }): Promise<void> {
     if (loaded) {
@@ -367,20 +424,19 @@ export function createWorkerCore(deps: WorkerCoreDeps): WorkerCore {
     }
     try {
       await host.load(msg.assets);
-      const mounted = [...msg.assets.bundles.preload];
-      // On-demand trigger (M4 item 5): eagerly mount each configured on-demand
-      // tier into the live engine, AFTER load() took the memory snapshot. This
-      // proves the §5.4 mount mechanism + snapshot survival end to end while the
-      // real §5.4 triggers (static \usepackage scan / missing-file retry) are
-      // items 6–7. A tier that fails to mount fails init (an on-demand tier the
-      // caller explicitly configured could not be satisfied) — items 6–7's lazy
-      // path makes a miss recoverable instead. `bundlesLoaded` reflects exactly
-      // the tiers actually mounted, in preload-then-on-demand order.
-      for (const name of msg.assets.bundles.onDemand) {
-        await host.loadBundle(name);
-        mounted.push(name);
+      // Seed the session bundle state from the PRELOAD tiers (deduplicated, so
+      // bundlesLoaded never reports ['core','core']). On-demand tiers are NOT
+      // mounted here — items 6–7 mount them LAZILY (the §5.4 static \usepackage
+      // scan and the missing-file retry), replacing item 5's eager-at-init
+      // stand-in. Init therefore fails only if the engine or a PRELOAD tier fails.
+      handledBundles.clear();
+      bundlesLoaded.length = 0;
+      for (const name of msg.assets.bundles.preload) {
+        if (handledBundles.has(name)) continue;
+        handledBundles.add(name);
+        bundlesLoaded.push(name);
       }
-      bundlesLoaded = mounted;
+      assetsConfig = msg.assets;
       loaded = true;
       post(initializedMessage(msg.jobId));
     } catch (error) {
@@ -389,7 +445,7 @@ export function createWorkerCore(deps: WorkerCoreDeps): WorkerCore {
     }
   }
 
-  function onCompile(msg: CompileMessage): void {
+  async function onCompile(msg: CompileMessage): Promise<void> {
     const { jobId, engine } = msg;
 
     if (!SUPPORTED_ENGINES.has(engine)) {
@@ -402,12 +458,15 @@ export function createWorkerCore(deps: WorkerCoreDeps): WorkerCore {
       );
       return;
     }
-    if (!loaded) {
+    if (!loaded || assetsConfig === null) {
       // The client (item 7) always initialises first; a compile before a
       // successful init is a client-side ordering bug, surfaced structurally.
       post(fatalMessage(jobId, 'internal', 'compile received before the engine was initialised'));
       return;
     }
+    // Non-null once `loaded` (set together at init); the §5.4 scan/retry read the
+    // manifest `provides` index and the on-demand tier list from it.
+    const config = assetsConfig;
 
     const startedAt = now();
     const transcript: string[] = [];
@@ -448,6 +507,27 @@ export function createWorkerCore(deps: WorkerCoreDeps): WorkerCore {
     // project files; every later step reuses it (sees the prior applet's output).
     let staged = false;
 
+    // §5.4(a) static scan (M4 item 6): before the first pass, scan the project
+    // sources for \usepackage/\RequirePackage names and PRESELECT any on-demand
+    // tier whose provided-package index lists one, so a doc that names an
+    // on-demand package compiles first try (no failed probe pass). An UNMATCHED
+    // name is "unknown → do nothing" (item-4 policy, enforced in
+    // selectBundlesForPackages): a core-served package whose .sty ships in core
+    // but whose name is not a provided-package name never triggers a download; a
+    // genuinely-missing name falls through to the §5.4(b) retry. Skipped entirely
+    // when no on-demand tiers are configured (nothing to preselect).
+    if (config.bundles.onDemand.length > 0) {
+      const names = scanRequiredPackages(msg.files, msg.entry);
+      const preselect = selectBundlesForPackages(
+        names,
+        config.inventory,
+        msg.files,
+        config.bundles.onDemand,
+        handledBundles,
+      );
+      for (const name of preselect) await ensureBundle(name, onLine);
+    }
+
     // Drive the §5.3 machine: run each step, observe, feed back, until terminal.
     // Defense-in-depth iteration bound: termination normally rests on the
     // machine's own monotonic-progress invariants (5 engine passes + 3 tool
@@ -466,7 +546,33 @@ export function createWorkerCore(deps: WorkerCoreDeps): WorkerCore {
         const stage = staged ? undefined : stageInfo;
         staged = true;
         const runStep = toRunStep(step, ctx, stage);
-        const result = host.run(runStep, onLine);
+        const logMark = transcript.length;
+        let result = host.run(runStep, onLine);
+        // §5.4(b) missing-file retry (M4 item 7): a step that FAILED naming a
+        // not-found file may be missing an on-demand tier. Mount the un-handled
+        // on-demand tier(s) and re-run this SAME step ONCE. Bounded: ensureBundle
+        // marks each tier handled, so a genuinely-missing package fails cleanly
+        // after one recompile — never a download loop. The retry re-runs the
+        // identical runStep, so a failed FIRST pass re-stages a pristine job FS
+        // (the just-mounted tier lives in /texlive, orthogonal to the job dir).
+        if (result.exitCode !== 0 && config.bundles.onDemand.length > 0) {
+          const missing = extractMissingFiles(`${result.stdout}\n${result.stderr}`);
+          const toLoad = selectBundlesForMissingFiles(missing, config.bundles.onDemand, handledBundles);
+          if (toLoad.length > 0) {
+            const probeLines = transcript.length - logMark;
+            let mounted = false;
+            for (const name of toLoad) if (await ensureBundle(name, onLine)) mounted = true;
+            if (mounted) {
+              result = host.run(runStep, onLine);
+              // The probe pass streamed live (honest real-time), but it was a
+              // lazy-load DISCOVERY, not a document error — drop its lines from the
+              // FINAL consolidated transcript so result.log + diagnostics reflect
+              // the authoritative retry (a resolved miss shows no spurious "File
+              // not found"; a still-missing file shows the retry's single error).
+              transcript.splice(logMark, probeLines);
+            }
+          }
+        }
         lastExit = result.exitCode;
         for (const [path, bytes] of result.outputs) collected.set(path, bytes);
 
@@ -536,7 +642,7 @@ export function createWorkerCore(deps: WorkerCoreDeps): WorkerCore {
           await onInit(message);
           return;
         case 'compile':
-          onCompile(message);
+          await onCompile(message);
           return;
       }
     },

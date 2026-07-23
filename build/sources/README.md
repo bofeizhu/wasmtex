@@ -1,5 +1,10 @@
 # build/sources/
 
+> Since the M2 rebase the ACTIVE build consumes the TL **2026** pins
+> (`[texlive-source-2026]`, `[texlive-iso-2026]`); the TL 2023 examples below
+> remain accurate for the lock format and stay pinned until the 2023 blocks
+> are retired (a later M2 item).
+
 Fetches and verifies every external input the reproducible build depends on.
 `pins.lock` is the single source of truth; `fetch.sh` reads it, downloads each
 source into a cache **outside the repo tree**, and verifies it. Nothing is

@@ -2,64 +2,71 @@
   SPDX-License-Identifier: MIT
   Original work authored in the WasmTeX repository (see LICENSE). The patched
   file (libpng) carries its own license (libpng license); this HEADER and the
-  accompanying diff's *changes* are original WasmTeX work, not derived from
-  any GPL/AGPL source. The diff's context lines necessarily quote small
+  now-removed diff's *changes* were original WasmTeX work, not derived from
+  any GPL/AGPL source. The diff's context lines necessarily quoted small
   excerpts of the patched libpng source, which remain under the libpng
-  license.
+  license — the diff-context-excerpt licensing clause (retained here for the
+  archival record).
 -->
 
-# Patch: libpng-macos-fp-h
+# Patch: libpng-macos-fp-h — RETIRED at TL 2026 (M2 item 4, 2026-07-23)
 
-- **Target:** `libs/libpng/libpng-src/pngpriv.h` in the TeX Live 2023 source
-  tree (`texlive-source-2023.0`, libpng 1.6.39). Applied with `patch -p1` from
-  the staged `source/texlive/` root by `build/artifacts/build-native.sh`
-  (`do_prep` → `apply_macos_patches`, idempotent). This modifies only the
-  extracted TeX Live work copy at build time, never the source tree in-repo.
-- **Milestone:** M0 item 5N (native arm64 macOS build).
+**Status: RETIRED.** The defect this patch fixed no longer exists in the TL 2026
+source tree, because libpng upstream removed the offending guard entirely between
+1.6.39 (TL 2023) and 1.6.55 (TL 2026). The `pngpriv-h.patch` diff was removed;
+this HEADER is kept as the archival record so the annual rebaser knows the patch
+existed, why it was needed, and why it is gone (do not resurrect it against a
+future libpng that no longer carries the guard).
 
-## What
+## Why it is gone (TL 2026 evidence)
 
-Remove `|| defined(TARGET_OS_MAC)` from the preprocessor guard (pngpriv.h:517-518)
-that selects the classic Mac OS `<fp.h>` floating-point header over the standard
-`<math.h>`:
+In `libs/libpng/libpng-src/pngpriv.h` at TL 2023 (libpng 1.6.39) the floating-point
+header selection read (the block this patch narrowed):
 
 ```c
--#  if (defined(__MWERKS__) && defined(macintosh)) || defined(applec) || \
--    defined(THINK_C) || defined(__SC__) || defined(TARGET_OS_MAC)
-+#  if (defined(__MWERKS__) && defined(macintosh)) || defined(applec) || \
-+    defined(THINK_C) || defined(__SC__)
+#  include <float.h>
+
+#  if (defined(__MWERKS__) && defined(macintosh)) || defined(applec) || \
+    defined(THINK_C) || defined(__SC__) || defined(TARGET_OS_MAC)
+   /* ... #include <fp.h> ... */
+#  else
+#     include <math.h>
+#  endif
 ```
 
-With the term removed, none of the remaining classic-Mac macros are defined
-under Apple clang, so the guard's `#else` branch includes `<math.h>` (correct).
+At TL 2026 (libpng 1.6.55) that entire classic-Mac `<fp.h>` branch is gone. The
+block was reorganized to unconditionally include `<math.h>` (pngpriv.h ~541-560):
 
-## Why
+```c
+#if defined(PNG_FLOATING_POINT_SUPPORTED) ||\
+    defined(PNG_FLOATING_ARITHMETIC_SUPPORTED)
+   /* ... DBL_DIG / DBL_MIN / DBL_MAX ... */
+#  include <float.h>
 
-On a modern macOS SDK, `TARGET_OS_MAC` is defined to `1` — it is set on *every*
-Apple platform (macOS/iOS/…), pulled in transitively by system headers libpng
-already includes before this point (verified: just `<stdlib.h>` is enough). It is
-therefore a false signal for "classic Mac OS (pre-OSX Carbon)", which is the era
-`<fp.h>` belongs to. `<fp.h>` does not exist on modern macOS, so the native TeX
-Live build fails compiling every libpng translation unit:
-
-```
-pngpriv.h:524:16: fatal error: 'fp.h' file not found
-  524 | #      include <fp.h>
+#  include <math.h>
+   /* (only an Amiga SAS/C _M68881 special-case remains; no TARGET_OS_MAC, no <fp.h>) */
+#endif
 ```
 
-Upstream busytex builds on Linux, where none of these macros are defined and the
-`#else` (`<math.h>`) branch is taken — so the bug is invisible there and no
-Makefile/CFLAGS knob exists to redirect it. The other guard terms (`__MWERKS__`,
+There is no `TARGET_OS_MAC` and no `<fp.h>` reference anywhere in the 2026
+`pngpriv.h`, so the modern-Apple false positive that broke the native macOS build
+cannot occur. Verified 2026-07-23 by extracting the file from the pinned
+`texlive-source-2026.0.tar.gz` (pins.lock [texlive-source-2026]).
+
+## Historical record (what the patch did, TL 2023)
+
+Removed `|| defined(TARGET_OS_MAC)` from the `pngpriv.h` guard that selected the
+classic Mac OS `<fp.h>` header over `<math.h>`. On a modern macOS SDK
+`TARGET_OS_MAC` is defined to `1` on *every* Apple platform (pulled in
+transitively by system headers), so it was a false signal for "classic Mac OS
+(pre-OSX)". `<fp.h>` does not exist on modern macOS, so every libpng translation
+unit failed to compile (`fatal error: 'fp.h' file not found`). Upstream busytex
+builds on Linux, where none of these macros are defined and the `<math.h>` branch
+is taken, so the bug was invisible there. The other guard terms (`__MWERKS__`,
 `applec`, `THINK_C`, `__SC__`) are genuine classic-Mac / CodeWarrior / THINK C /
-Symantec C signals and are left intact; only the modern-Apple false positive is
-removed. The `#include <float.h>` above (which actually provides the
-`DBL_DIG/DBL_MIN/DBL_MAX` the block's comment requires) is unchanged.
+Symantec C signals and were left intact.
 
-## Upstream-able?
+## Upstream-able? (moot)
 
-**Yes.** Using `TARGET_OS_MAC` as a classic-Mac-OS discriminator is incorrect on
-any Apple platform since Mac OS X; the standard `<math.h>` path is what current
-Apple toolchains want. A libpng bug report / PR narrowing this guard (e.g. gating
-on `TARGET_OS_MAC` only together with a pre-OSX signal, or dropping it) would be
-appropriate. Recorded here so the TL-rebase patch-replay (`make rebase`) resurfaces
-it if a future libpng still carries the guard.
+Was **yes** — and upstream libpng did exactly this (dropped the `TARGET_OS_MAC`
+term and the `<fp.h>` path) by 1.6.55. No further action.

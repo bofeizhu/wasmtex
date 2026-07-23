@@ -79,13 +79,15 @@ snapshot at the TeX Live 2026 rebase and the tiered bundles are generated
 (DESIGN.md §5.4, §7, §9) — no TeX Live program or package source is *vendored
 into this repository*, so nothing in this section falls under the M0 item-7
 audit's vendored-coverage requirement. The engine sources (`texlive-source`,
-tag `texlive-2023.0`) and the texmf tree (the frozen `texlive2023-20230313.iso`)
-are fetched into an out-of-tree cache by `build/sources/fetch.sh` and consumed by
-the build; they are pinned by hash in `build/sources/pins.lock`. One narrow
-exception: patch files under `build/patches/` carry small excerpts of the
-patched third-party sources (currently libpng and zlib, both permissively
-licensed) as diff context lines, under those sources' own licenses (see each
-patch's HEADER.md). Expected license
+tag `texlive-2026.0`, since the M2 rebase) and the texmf tree (the frozen
+`texlive2026-20260301.iso`) are fetched into an out-of-tree cache by
+`build/sources/fetch.sh` and consumed by the build; they are pinned by hash in
+`build/sources/pins.lock` (the TL 2023 pins remain recorded there until
+retired). One narrow exception: the retired patch records under
+`build/patches/*/HEADER.md` quote small excerpts of the patched third-party
+sources (libpng and zlib, both permissively licensed — the defects were fixed
+upstream in TL 2026 and the patches retired) under those sources' own
+licenses. Expected license
 families include the Knuth license, LPPL, GPL (some engines and tools), and OFL
 (fonts); each is enumerated per package when the tiered bundles are generated
 (DESIGN.md §5.4, §7).

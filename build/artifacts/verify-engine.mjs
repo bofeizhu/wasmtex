@@ -23,7 +23,7 @@
 //      emscripten JS helpers; the hollow one imported 363. Cheap; catches this
 //      exact regression class directly.
 //   2. real execution: `xetex --version` runs to exit 0 and prints the expected
-//      TeX Live 2023 banner.
+//      TeX Live 2026 banner.
 //
 // Usage:  node verify-engine.mjs [distDir]      (distDir defaults to ./dist)
 
@@ -41,7 +41,10 @@ const require = createRequire(import.meta.url);
 // pass a hollow binary. (Measured healthy count is logged on every run.)
 const MAX_ENV_IMPORTS = 150;
 const APPLET = 'xetex';
-const EXPECT_VERSION = 'TeX Live 2023';
+// Build-side pin (M2 item 4, sanctioned): the engine banner cut over from
+// "TeX Live 2023" to "TeX Live 2026" with the TL 2026 rebase. This is a build
+// gate constant, not runtime code — the runtime never asserts a TL year.
+const EXPECT_VERSION = 'TeX Live 2026';
 
 const distDir = resolve(process.argv[2] || 'dist');
 const wasmPath = join(distDir, 'busytex.wasm');

@@ -21,7 +21,10 @@
 #   (c) Every build/patches/<name>/*.patch has a sibling HEADER.md, and each
 #       patch carries the diff-context-excerpt licensing-clause reference (an
 #       SPDX line plus a pointer to HEADER.md's "excerpt" clause). The sibling
-#       HEADER.md must itself state that clause.
+#       HEADER.md must itself state that clause. Zero ACTIVE patches is allowed
+#       (a patch is RETIRED when its defect is fixed upstream — e.g. both TL 2023
+#       macOS patches retired at the TL 2026 rebase); a retired patch dir keeps
+#       its HEADER.md as the archival record, which this check still enforces.
 #   (d) No GPL/AGPL SPDX identifier appears in runtime/ or demo/ sources — the
 #       copyleft-in-runtime tripwire (DESIGN.md §7). Matches only
 #       "SPDX-License-Identifier:" lines, so prose that merely mentions GPL
@@ -127,10 +130,38 @@ for pf in build/patches/*/*.patch; do
     err "$pf lacks the diff-context-excerpt licensing-clause reference (HEADER.md + excerpt)"
   fi
 done
+# Retired patches: a build/patches/<name>/ dir with a HEADER.md but no *.patch
+# (its defect was fixed upstream). Allowed, but the archival HEADER.md must be
+# present — enforce that so a retired dir is a real record, not a broken shell.
+retired_count=0
+for hdr in build/patches/*/HEADER.md; do
+  [ -e "$hdr" ] || continue
+  dir=$(dirname "$hdr")
+  if ! ls "$dir"/*.patch >/dev/null 2>&1; then
+    retired_count=$((retired_count + 1))
+    if ! grep -qi 'retired' "$hdr"; then
+      err "$hdr is a retired patch dir (no *.patch) but its HEADER.md does not record the retirement"
+    fi
+    # Retired HEADERs carry the third-party source excerpts now (old + new
+    # upstream blocks quoted as evidence) — the excerpt clause remains
+    # license-load-bearing after retirement.
+    if ! grep -qi 'excerpt' "$hdr"; then
+      err "$hdr (retired) lacks the diff-context-excerpt licensing clause"
+    fi
+  fi
+done
+# Losing the archival records entirely is a failure: the excerpt clauses and
+# retirement evidence must remain in-tree even when zero patches are active.
+if [ $((patch_count + retired_count)) -eq 0 ]; then
+  err "build/patches/ has neither active patches nor retired HEADER.md records"
+fi
 if [ "$patch_count" -eq 0 ]; then
-  err "no *.patch files found under build/patches/ (expected libpng + zlib)"
+  # Zero active patches is legitimate: every macOS source patch was retired when
+  # its defect was fixed upstream at the TL 2026 rebase (see the retired HEADER.md
+  # records). Not a failure.
+  ok "no active patches — all $retired_count retired upstream (see build/patches/*/HEADER.md)"
 else
-  ok "$patch_count patch(es): each has a HEADER.md sibling and the context-excerpt clause reference"
+  ok "$patch_count active patch(es): each has a HEADER.md sibling and the context-excerpt clause reference ($retired_count retired)"
 fi
 
 # ---------------------------------------------------------------------------

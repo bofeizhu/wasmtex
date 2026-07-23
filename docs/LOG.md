@@ -505,6 +505,40 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-24 — M2 item 4: TL 2026 build lands; ICU 78 blocker isolated
+
+**Done.** `coder` agent cut the build over to the TL 2026 pins: full
+prep→native→basic→wasm→bundle→dist green, execution gate passing with
+the "TeX Live 2026_busytexwasm" banner. The drift forecast resolved
+far better than feared: **emsdk stays at 3.1.43** (it compiled
+harfbuzz 12.3.2 and icu 78.2 outright — no capability gap); **both
+macOS patches retired** (upstream fixed the TARGET_OS_MAC defects in
+libpng 1.6.55 and zlib 1.3.2; HEADER.md files rewritten as dated
+retirement records, audit check (c) extended: all-retired allowed,
+archival records + excerpt clauses enforced, zero-records fails).
+Only three drift fixes, all in our Makefile with the mod-list updated:
+CXXSTD=gnu++17 (Apple clang defaults to C++14; ICU 78 needs 17),
+zisbitset native duplicate → REDEFINE, and three new TL 2026 common
+symbols (wasm-ld doesn't coalesce commons; complete collision set
+computed, not whack-a-moled). SOURCE_DATE_EPOCH → the TL 2026 freeze
+date (1772323200); fresh work tree; 2023 build preserved as fallback.
+
+**Numbers.** Formats collapsed impressively (pdflatex.fmt −64.7%,
+xelatex.fmt −48.7%); bundle −10.9%; wasm +4.4% (newer libs). Review
+should-fixes applied: notices updated to the 2026 pins + retired-patch
+excerpt wording; the orphaned texmfrepo make rule now fails loud
+instead of silently succeeding on empty stdin; sources README gained
+the active-pins banner.
+
+**The blocker (isolated, not fixed — next unit).** wasm XeTeX aborts
+at font-manager init: ICU 78's converter-alias table does not load
+(`ucnv_countAvailable()=0`; canonical names open, aliases fail) —
+a 70→78 data-build/load regression, root-caused with differential
+probes (native ICU 78 shows it too; TL 2023 ICU 70 is fine). pdfTeX
+is fully functional; runtime 179/186 and smoke 1/4 are ALL
+XeTeX-only failures. Fix direction journaled (ICU data
+packaging/TOC; iterable against native ICU without wasm rebuilds).
+
 ## 2026-07-23 — M2 item 3: build/upstream dissolved into build/engines (loop)
 
 **Done.** `coder` agent forked the build config into our own tree:

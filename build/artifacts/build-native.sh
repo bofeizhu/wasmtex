@@ -23,11 +23,19 @@
 # This is the host mirror of run-in-container.sh's offline strategy — but
 # native, no Docker, real jobserver parallelism.
 #
-# The build tree lives OUT OF TREE at ~/.cache/wasmtex/build/native/busytex
+# The build tree lives OUT OF TREE at ~/.cache/wasmtex/build/native/busytex-2026
 # (override WASMTEX_WORK_DIR), a sibling of the source/toolchain caches: the
-# multi-GB TL source tree + ~4.8 GB texmfrepo staging stay off the repo volume;
+# multi-GB TL source tree + ~6 GB texmfrepo staging stay off the repo volume;
 # only dist/ (git-ignored) lands in the repo. build/engines/ is the source of
 # truth — its files are SYNCED into the work tree (below) and make runs there.
+#
+# TL 2026 REBASE (M2 item 4): the default work dir is a FRESH sibling
+# (`busytex-2026`, was `busytex` for the TL 2023 build). Reason: the 2023 tree's
+# configure caches (native/wasm-texlive.cache), staged 2023 source/, dumped
+# .fmt formats and texmfrepo ISO staging must NOT contaminate the 2026 build.
+# Keeping them in separate dirs (rather than wiping) also leaves the known-good
+# TL 2023 tree intact as a fallback until the rebase is accepted — the same
+# additive discipline as the pins.lock 2023/2026 coexistence (M2 item 2).
 #
 # This path is DEVELOPMENT-ONLY (DESIGN.md §9): only container-built,
 # pin-verified artifacts are ever released. Source inputs stay pinned/verified.
@@ -41,9 +49,9 @@
 #
 # Env overrides:
 #   WASMTEX_CACHE_DIR   pinned-source cache (default ~/.cache/wasmtex/sources)
-#   WASMTEX_WORK_DIR    build tree          (default ~/.cache/wasmtex/build/native/busytex)
+#   WASMTEX_WORK_DIR    build tree          (default ~/.cache/wasmtex/build/native/busytex-2026)
 #   WASMTEX_JOBS        make parallelism    (default: hw.ncpu)
-#   SOURCE_DATE_EPOCH   repro epoch         (default: busytex pin commit date)
+#   SOURCE_DATE_EPOCH   repro epoch         (default: TL 2026 freeze 2026-03-01)
 # =============================================================================
 set -uo pipefail
 
@@ -66,16 +74,23 @@ set -e
 
 stage="${1:-${WASMTEX_STAGE:-all}}"
 cache_dir="${WASMTEX_CACHE_DIR:-$HOME/.cache/wasmtex/sources}"
-work="${WASMTEX_WORK_DIR:-$HOME/.cache/wasmtex/build/native/busytex}"
+work="${WASMTEX_WORK_DIR:-$HOME/.cache/wasmtex/build/native/busytex-2026}"
 dist="$repo/dist"
 machinery="$repo/build/engines"
 
 # --- Reproducibility hooks (same derivation as the container flow) -----------
-# SOURCE_DATE_EPOCH is the busytex pin commit date (f2bd7b11, 1781618797);
-# FORCE_SOURCE_DATE makes the TeX engines honour it when dumping .fmt formats.
-# native-env.sh already exports TZ=UTC and LC_ALL=LANG=C.UTF-8; re-assert for
-# safety under a caller that unset them. The M3 double-build is the real gate.
-export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1781618797}"
+# SOURCE_DATE_EPOCH is the TL 2026 freeze date, 2026-03-01T00:00:00Z = 1772323200
+# (M2 item 4 cutover; was the busytex pin commit date 1781618797 for the TL 2023
+# build). Rationale: the build machinery is OURS now (forked at M2 item 3), so the
+# busytex commit is a frozen fork-point reference, not a property of the artifacts.
+# 2026-03-01 is the coherent epoch for a TL-2026 build — it is the SAME freeze
+# point as BOTH the source tag (texlive-2026.0 @ r78235, committed 2026-03-01) and
+# the ISO (texlive2026-20260301.iso). Tying the epoch to the TL freeze date makes
+# each annual build self-descriptive (the stamp tracks the sources, not the fork
+# point). FORCE_SOURCE_DATE makes the TeX engines honour it when dumping .fmt
+# formats. native-env.sh already exports TZ=UTC and LC_ALL=LANG=C.UTF-8; re-assert
+# for safety under a caller that unset them. The M3 double-build is the real gate.
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1772323200}"
 export FORCE_SOURCE_DATE="${FORCE_SOURCE_DATE:-1}"
 export TZ=UTC
 export LC_ALL="${LC_ALL:-C.UTF-8}"
@@ -126,11 +141,14 @@ machinery_files=(
   Makefile busytex.c emcc_wrapper.py
 )
 
-# Cached inputs (names match build/sources/pins.lock).
-tl_src="$cache_dir/texlive-source-2023.0.tar.gz"
+# Cached inputs (names match build/sources/pins.lock). TL 2026 cutover (M2 item
+# 4): the TL source tarball + ISO filenames switch to the 2026 pins
+# ([texlive-source-2026] / [texlive-iso-2026]); expat/fontconfig are unchanged
+# (deliberately NOT re-pinned for 2026 — see pins.lock + M2-journal item 2).
+tl_src="$cache_dir/texlive-source-2026.0.tar.gz"
 expat_src="$cache_dir/expat-2.5.0.tar.gz"
 fontconfig_src="$cache_dir/fontconfig-2.13.96.tar.gz"
-iso="$cache_dir/texlive2023-20230313.iso"
+iso="$cache_dir/texlive2026-20260301.iso"
 
 banner() { printf '\n>> [%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
@@ -194,7 +212,7 @@ do_prep() {
   stage_tarball expat      "$expat_src"
   stage_tarball fontconfig "$fontconfig_src"
 
-  # Pre-stage the TL 2023 texmf repository from the frozen ISO. Faithful to the
+  # Pre-stage the TL 2026 texmf repository from the frozen ISO. Faithful to the
   # Makefile's source/texmfrepo.txt rule (`... | bsdtar -x -C source/texmfrepo`),
   # reading the local ISO instead of the split-release cache URL. macOS bsdtar
   # reads the ISO9660 image directly; the root carries install-tl + archive/ + tlpkg/.
@@ -298,7 +316,7 @@ do_dist() {
 #      (every unresolved dependency symbol stubbed to abort(-1)). Cheap, and
 #      catches this exact regression class directly.
 #   2. real execution — `xetex --version` runs to exit 0 and emits the
-#      TeX Live 2023 banner (WebAssembly.validate + a size check cannot: they
+#      TeX Live 2026 banner (WebAssembly.validate + a size check cannot: they
 #      were both true for the hollow artifact that shipped in the first 5N run).
 do_verify() {
   banner "verify: execution gate — run engine under node + env-import sanity"

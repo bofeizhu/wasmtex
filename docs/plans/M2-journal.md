@@ -436,3 +436,472 @@ that they are re-pinned + re-pointed at `build/engines/` on arm64 at M3.
   relink + green execution gate proves the link graph and the config are coherent
   on TL 2023.
 
+
+---
+
+## Item 4 — Build against TL 2026
+
+Dated 2026-07-23. Goal: `make artifacts` (prep -> native -> basic -> wasm ->
+bundle -> dist) against the TL 2026 pins, execution gate green with a **TeX Live
+2026** banner. This is the first from-scratch build on the new pins; the journal
+is as much the deliverable as the binary. Written as the work runs.
+
+Provenance: no GPL/AGPL WASM-TeX wrapper source was opened. Drift research is
+confined to the vendored TL 2026 sources themselves (extracted from the pinned
+`texlive-source-2026.0.tar.gz`) and upstream release notes on TUG/GitHub
+`TeX-Live` channels where consulted.
+
+### Pre-build decisions (before the first stage ran)
+
+**Pin cutover (build-native.sh).** Cached-input filenames switched to the 2026
+pins: `texlive-source-2026.0.tar.gz` + `texlive2026-20260301.iso` (pins.lock
+[texlive-source-2026] / [texlive-iso-2026], already fetched+verified at item 2).
+expat/fontconfig unchanged (item 2 decision — not re-pinned for 2026).
+
+**SOURCE_DATE_EPOCH: switched to the TL 2026 freeze date, `1772323200`
+(2026-03-01T00:00:00Z)** — was `1781618797` (the busytex pin commit date) for the
+TL 2023 build. Justification: (1) the build machinery is OURS now (forked at item
+3), so the busytex commit is a frozen fork-point reference, not a property of the
+artifacts. (2) 2026-03-01 is the coherent epoch for a TL-2026 build — the SAME
+freeze point as BOTH the source tag (texlive-2026.0 @ r78235, committed
+2026-03-01) and the ISO (texlive2026-20260301.iso); item 2 chose the `.0` tag
+precisely for that freeze-date coherence, and the epoch now rides it. (3)
+Annual-rebase semantics: tying the epoch to the TL freeze date makes each year's
+build self-descriptive (the stamp tracks the sources, not the fork point);
+keeping the busytex commit epoch would stamp every future annual build with the
+same fork-point date. The .fmt formats embed this via FORCE_SOURCE_DATE, so it
+reaches the artifacts. Recorded in the build-native.sh comment.
+
+**Work dir: fresh `~/.cache/wasmtex/build/native/busytex-2026`** (WASMTEX_WORK_DIR
+default bumped from `busytex`). Reason: the 2023 tree's configure caches
+(native/wasm-texlive.cache), staged 2023 source/, dumped .fmt formats and the ISO
+texmfrepo staging must not contaminate the 2026 build. Chose a fresh sibling dir
+over wiping so the known-good TL 2023 tree stays intact as a fallback until the
+rebase is accepted — same additive discipline as the pins.lock 2023/2026
+coexistence. Disk: 808 GiB free; the 2026 texmfrepo ISO staging (~from a 6.32 GiB
+ISO) + source tree + native/wasm builds fit comfortably alongside the 2023 tree.
+
+**Execution-gate banner (sanctioned build-side pin).** `verify-engine.mjs`
+`EXPECT_VERSION` cut over `TeX Live 2023` -> `TeX Live 2026`. This is a build gate
+constant, not runtime code (the runtime never asserts a TL year).
+
+**Makefile (ours) URL/reference cutover.** Documentary `URL_texlive` /
+`URL_texlive_full_iso` and the illustrative `tags/texlive-*.0` doc-URLs bumped
+2023.0 -> 2026.0; `URL_texlive_full_iso_cache` retired empty (busytex's split-ISO
+GitHub release existed only for 2023 — the frozen 2026 ISO is pinned + pre-staged
+offline by the driver, bypassing the curl rule). The build RULES are
+version-agnostic (they operate on `source/texlive/` regardless of TL year). Header
+mod-list updated (item-4 cutover bullet).
+
+### Patch re-test outcomes (both RETIRED)
+
+The drift forecast (item 2) flagged zlib 1.2.13->1.3.2 and libpng 1.6.39->1.6.55
+landing on the two `TARGET_OS_MAC` patches. Re-tested by extracting the exact
+target files from the pinned `texlive-source-2026.0.tar.gz` and inspecting the
+guards **before** running prep:
+
+- **`libpng-macos-fp-h` -> RETIRED.** In libpng 1.6.55 the classic-Mac `<fp.h>`
+  guard `(... || defined(TARGET_OS_MAC))` is gone entirely; `pngpriv.h` now
+  unconditionally `#include <float.h>` then `#include <math.h>` (no
+  `TARGET_OS_MAC`, no `<fp.h>` anywhere in the file). Upstream fixed exactly what
+  the patch narrowed. Defect cannot occur -> patch removed.
+- **`zlib-macos-fdopen` -> RETIRED.** In zlib 1.3.2 the guard collapsed from
+  `#if defined(MACOS) || defined(TARGET_OS_MAC)` + the `#ifndef Z_SOLO ... fdopen
+  NULL` machinery to just `#if defined(MACOS)`; upstream additionally ADDED
+  correct modern-Apple handling (`#ifdef __APPLE__ -> OS_CODE 19`) and a
+  `#ifndef OS_CODE -> OS_CODE 3 /* Unix */` fallback. No `TARGET_OS_MAC`, no
+  `fdopen` in the 2026 file. Defect cannot occur -> patch removed.
+
+Retirement mechanics: each `.patch` file removed (otherwise prep's
+`apply_macos_patches` would fail to apply the stale context against the reorganized
+2026 source, aborting the build); each `HEADER.md` kept and rewritten as a RETIRED
+archival record (what/why + the TL 2026 upstream-fix evidence + date), so a future
+rebaser knows the patch existed and why it is gone. `build/patches/` now has ZERO
+active patches -> `apply_macos_patches` is a clean no-op for the 2026 build.
+
+License-audit check (c) previously FAILED closed on zero patches ("expected libpng
++ zlib"). Relaxed (audit is ours): zero active patches is legitimate when every
+patch was retired upstream; the check now also enumerates retired dirs and
+enforces each keeps a HEADER.md that records the retirement. `license-audit.sh`
+green after the change (a/b 4 engine files, c "no active patches — all 2 retired",
+d/e green).
+
+### emsdk posture
+
+Per the item-4 decision rule: attempt the build with the pinned emsdk **3.1.43
+FIRST** (verified on-host: emsdk at pinned commit d9c66fa2, `emcc --version` ==
+3.1.43). Bump ONLY if the newer vendored C++ (harfbuzz 12.3.2, icu 78.2) genuinely
+cannot compile — documented errors first, then the minimum exact version, pinned
+everywhere in the same breath. Starting the build now with 3.1.43.
+
+### Stage: prep — GREEN (~15 s wall)
+
+Launched 00:14:17Z. Staged into the fresh `busytex-2026` work tree:
+- `source/texlive` — TL 2026 engine source tree from `texlive-source-2026.0.tar.gz`
+  (strip-components=1). `version.ac`: `tex_live_version = 2026`. texlive.txt
+  sentinel 1,409,421 lines.
+- `source/expat`, `source/fontconfig` — unchanged pins (expat 2.5.0, fontconfig
+  2.13.96).
+- `source/texmfrepo` — 6.3 GB from `texlive2026-20260301.iso` via `bsdtar -x`
+  (fast on NVMe). `install-tl` + `tlpkg/texlive.tlpdb` present; `archive/` carries
+  **14932** `*.tar.xz` packages (incl. the three the Makefile tar-extracts:
+  texlive-scripts.r78213, latexconfig.r68923, tex-ini-files.r73863);
+  `release-texlive.txt` banner "TeX Live ... version 2026".
+- `apply_macos_patches` a clean **no-op** (zero active patches — both retired). No
+  "applying patch" / "already applied" lines in the log, confirming the stale
+  patch removal was correct (had the .patch files remained, prep would have
+  aborted trying to apply their reorganized context).
+- build config (Makefile/busytex.c/emcc_wrapper.py) synced into the work tree.
+- `SOURCE_DATE_EPOCH=1772323200` confirmed in the stage banner.
+
+Polling mechanism note (for the checkpoint contract): stages run via
+`run_in_background` writing a `<stage>.rc` exit-code sentinel + `<stage>.log`;
+in-turn polling is a bounded `timeout N bash -c 'until [ -f rc ]; do sleep K;
+done'` condition-wait (NOT a bare foreground sleep, NOT a Monitor). Confirmed
+working on prep.
+
+### Stage: native — DRIFT #1 (ICU 78 / C++17), FIXED in the Makefile
+
+First native attempt (launched 00:22Z) FAILED at rc=2 after ~9 min, in the XeTeX
+static lib (`build/native/texlive/texk/web2c/busytex_libxetex.a`, Makefile:419),
+compiling `xetexdir/XeTeXLayoutInterface.cpp`. 20 errors, all from ICU 78 public
+headers included by XeTeX:
+
+    icu/include/unicode/char16ptr.h:429: error: no template named 'is_pointer_v'
+      in namespace 'std'; did you mean 'is_pointer'?
+    icu/include/unicode/stringpiece.h:135: error: no template named 'is_same_v' ...
+    icu/include/unicode/bytestream.h:272: error: no template named 'void_t' ...
+
+**Root cause.** `std::is_pointer_v` / `is_same_v` / `void_t` are C++17 library
+features. ICU 78.2 (TL 2026, up from ICU 70.1 at TL 2023 — item-2 drift table)
+uses them in its PUBLIC headers, so any consumer that includes them must compile
+as C++17. TL's build force-adds `-std=c++17` only inside the ICU subdir (visible
+in the log: "configure: Adding CXXFLAGS option -std=c++17") and otherwise relies
+on the compiler DEFAULTING to >=C++17 — which Linux gcc 11+/clang 16+ do (gnu++17).
+The XeTeX compile command carried NO `-std=` at all, so it used the host default.
+Verified on-host: **Apple clang 21.0.0 defaults to `__cplusplus = 201402L` (C++14)**
+— so `is_pointer_v` is not exposed and XeTeX fails against ICU 78 headers. This is
+exactly the "expected C++ drift" the item-2 table flagged for icu 70->78, but it
+bit at the NATIVE compiler (Apple clang), not emsdk — the native host compiler is
+older-in-effective-default than the reference Linux toolchain, independent of the
+emsdk question.
+
+**Fix (layer: our Makefile).** Introduced `CXXSTD = -std=gnu++17` and threaded it
+through the C++ compiles: `CXXFLAGS_native` (flows to the native configure and the
+native xetex/pdftex/xdvipdfmx CXX), `CXXFLAGS_TEXLIVE_wasm` (wasm configure), and
+the wasm engine `CXX=` lines (XeTeX/pdfTeX/xdvipdfmx). Chose **gnu++17** over strict
+c++17: it is the reference Linux platform's effective web2c standard (gcc defaults
+to gnu++, not strict c++), a minimal bump from the gnu++14 host default, and keeps
+the GNU extensions the tree's already-compiled C++ files used — lowest risk of a
+strict-mode regression in a sibling file. Applied to the CXX side only (a C++ std
+on a C compile warns/errs). This is a config-owned compiler-flag fix, not a source
+defect, so the Makefile (ours) is the correct layer — no patch. Header mod-list
+updated.
+
+Verification before the long rebuild: re-ran the exact failing compile with
+`-std=c++17` added -> exit 0, clean object (21904 B). Then cleaned the XeTeX C++
+layout objects (`xetexdir/*.o` + `libxetex.a` + `busytex_libxetex.a`) so they
+rebuild uniformly at gnu++17 (the pre-error objects had compiled at gnu++14; the
+big generated web2c C objects and xetexdir/image/*.o are unaffected — they are C
+or non-ICU C++). Note for M3: the container from-scratch build compiles the whole
+tree uniformly at gnu++17; this dev-native resume is functionally equivalent
+(gnu++14/gnu++17 objects are ABI-compatible under one libc++). Re-synced the
+Makefile into the work tree (via prep) and relaunched native at 00:31Z.
+
+### Stage: native — DRIFT #2 (zisbitset duplicate symbol), FIXED in the Makefile
+
+Second native attempt got PAST XeTeX (C++17 fix confirmed: zero is_pointer_v/
+is_same_v/void_t errors this run) and past pdfTeX compilation, then FAILED at the
+FINAL multicall link (`build/native/busytex`, Makefile:420) with:
+
+    ld: warning: ignoring duplicate libraries: ...libkpathsea.a, lib.a, libmd5.a
+    duplicate symbol '_zisbitset' in:
+        .../build/native/texlive/texk/web2c/pdftex-pdftex0.o
+        .../build/native/texlive/texk/web2c/xetex-xetex0.o
+    ld: 1 duplicate symbols
+
+**Root cause.** `zisbitset` is a NEW TL 2026 web2c-generated global function (a "z"
+wrapper, `T _zisbitset` — verified via nm) emitted into BOTH pdftex0.c and
+xetex0.c by TL 2026's tangle/web2c. It did not exist at TL 2023. The busytex
+multicall links xetex+pdftex+bibtex8+xdvipdfmx+makeindex+kpathsea into one binary
+and prevents cross-engine global collisions with the `*_REDEFINE` lists
+(`-D<sym>=busy<prog>_<sym>`, "needed until wasm-ld supports --localize-hidden").
+XeTeX is the unrenamed primary; pdfTeX/bibtex8/xdvipdfmx rename away from it. Since
+`zisbitset` is new, it was in no list, so pdfTeX's copy kept the bare name and
+collided with XeTeX's. (Only 1 duplicate in the whole link; not present in
+bibtex8/xdvipdfmx objects — verified via nm, so PDFTEX_REDEFINE alone suffices.)
+
+**Fix (layer: our Makefile).** Added `zisbitset` to `PDFTEX_REDEFINE` -> pdfTeX's
+copy becomes `busypdftex_zisbitset`, XeTeX keeps `zisbitset`, collision gone. This
+is the standard busytex collision mechanism; `CFLAGS_PDFTEX` feeds BOTH
+`OPTS_PDFTEX_native` and `OPTS_PDFTEX_wasm`, so the single list entry fixes the
+native AND the (upcoming) wasm link. A `-D` macro renames the symbol consistently
+across every pdfTeX TU (definition + all references), so the engine stays
+internally consistent. Config-owned, no source defect -> Makefile, not a patch.
+Comment added above the redefine block. Forced a clean pdfTeX object rebuild (rm
+the 25 pdftex-*.o / pdftexdir/*.o / libpdftex.a / busytex_libpdftex.a) so every
+pdfTeX TU recompiles with the new `-Dzisbitset=busypdftex_zisbitset`; re-synced the
+Makefile and relaunched native.
+
+### Stage: native — GREEN (after drifts #1 + #2)
+
+Third native attempt: rc=0. Binary `build/native/busytex` = **31,639,288 B**, Mach-O
+64-bit arm64 (TL 2023 lua-free native was 30,294,664 B -> +1,344,624 B / +4.4%,
+expected from the newer/larger harfbuzz 12 + icu 78). Benign link warnings only:
+"ignoring duplicate libraries" (Apple ld dedups the .a listed twice), "reducing
+alignment of section __DATA,__common" (alignment note), and "pattern recipe did
+not update peer target build/native/busytex.js" (the `busytex`/`busytex.js` rule
+has two targets; native builds only the former).
+
+Native multicall smoke (validates the fixes end to end):
+- `xetex --version`   -> `XeTeX 3.141592653-2.6-0.999998 (TeX Live 2026_busytexnative)`
+- `pdftex --version`  -> `pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026_busytexnative)`
+  (confirms the zisbitset rename is transparent — pdfTeX runs)
+- `bibtex8 --version` -> `8-bit Big BibTeX version 0.99d-x4.03 (TeX Live 2026)`
+- `xdvipdfmx --version` -> `xdvipdfmx Version 20260113 ...`
+- `kpsewhich` dispatch -> `kpathsea version 6.4.2`
+All engines dispatch; banner is **TeX Live 2026**. Engine version bumps vs 2023:
+XeTeX 0.999996 -> 0.999998, kpathsea -> 6.4.2. Proceeding to basic.
+
+### Stage: basic — GREEN
+
+rc=0 (install-tl off the local texmfrepo + format dump, ~fast). fmtutil dumped the
+full scheme-basic format set (incl. lua* formats built by HOST TeX — the documented
+item-3 non-hermetic leak; those outputs are pruned, never shipped). The load-bearing
+prune left exactly the RETAINED set:
+- `xetex/xelatex.fmt`  = 4,472,954 B
+- `pdftex/pdflatex.fmt` = 2,286,489 B
+and removed all other pdftex/xetex/lua/dev/plain formats + `luahbtex/ luatex/ tex/`
+whole dirs + `bin/ tlpkg/ doc/ scripts/ source/ install-tl*`. Format paths
+(`pdftex/pdflatex.fmt`, `xetex/xelatex.fmt`) match the runtime FORMAT_* constants —
+item 5 re-verifies the MEMFS layout deliberately; here they land where expected.
+Proceeding to wasm.
+
+### Stage: wasm — DRIFT #3 (3 common-symbol duplicates, wasm-ld only), FIXED
+
+First wasm attempt: the C++ dependency tree built cleanly under emsdk 3.1.43's
+clang (libharfbuzz/libicuuc/libicudata/libfreetype/libgraphite2/libTECkit/
+libpplib/libxpdf/libpng/libz all produced — the CXXSTD=gnu++17 fix carried to
+wasm, and NO other emsdk-clang compile failure), the ICU locale data packaged,
+and all engines compiled. It then FAILED at the final wasm link (Makefile:428):
+
+    wasm-ld: error: duplicate symbol: savearitherror
+    wasm-ld: error: duplicate symbol: oldselectorignorederr
+    wasm-ld: error: duplicate symbol: outputcanend
+      >>> defined in .../xetexdir/xetex-xetexextra.o
+      >>> defined in .../pdftexdir/pdftex-pdftexextra.o
+
+Note `zisbitset` is ABSENT from this list — the drift-#2 redefine fixed it for the
+wasm link too (confirming CFLAGS_PDFTEX covers both toolchains).
+
+**Root cause (why native passed but wasm failed).** All three are **COMMON symbols**
+(tentative definitions, nm type 'C' — verified) newly emitted by TL 2026 into both
+pdftexextra.o and xetexextra.o. Apple ld64 COALESCES common symbols (merges same-name
+tentative defs), so the native multicall link merged them silently and passed;
+**wasm-ld does not coalesce commons and reports them as duplicates.** In a normal TL
+build xetex and pdftex are SEPARATE executables, so these never collide there — the
+collision is specific to busytex's multicall link, which is what the `*_REDEFINE`
+lists exist to resolve.
+
+**Completeness (no whack-a-mole).** Rather than iterate, computed the full collision
+set = the intersection of the GLOBAL (uppercase-nm-type: T/D/B/C/S/R) defined symbols
+of the xetex core objects vs the pdftex core objects. Result: **exactly these three**
+(all 'C'); `zisbitset` no longer intersects (renamed); none in bibtex8/xdvipdfmx.
+
+**Fix (layer: our Makefile).** Added `savearitherror oldselectorignorederr
+outputcanend` to `PDFTEX_REDEFINE` (alongside zisbitset) -> pdfTeX gets its own
+storage (busypdftex_*), more correct for a multicall than native's silent common
+merge, and wasm-ld is satisfied. Rebuilt native pdfTeX too (not strictly needed — the
+native binary isn't shipped and already served basic + wasm-tool-seeding — but it
+keeps the on-disk binary coherent with the config and validated the renames cheaply):
+native rc=0, binary 31,639,496 B (+208 B), `pdftex/xetex --version` both run, banner
+TeX Live 2026. Relaunched wasm (resume: pdfTeX recompile + relink; deps/libxetex/icu
+data all preserved).
+
+### Stage: wasm — GREEN (after drift #3)
+
+rc=0. Outputs:
+- `busytex.wasm` = **27,524,414 B** (TL 2023 lua-free: 26,369,418 B -> +1,154,996 B
+  / +4.4%, from harfbuzz 7->12 + icu 70->78 + freetype/xpdf bumps).
+- `busytex.js` = **273,991 B** (byte-identical to the TL 2023 loader — the emscripten
+  JS glue is templated off the export list, not the wasm content).
+
+### emsdk decision: KEPT at 3.1.43 (NO bump)
+
+Per the item-4 decision rule (bump ONLY if the build genuinely requires it): the
+pinned **emsdk 3.1.43** compiled ALL of TL 2026's newer vendored C++ — harfbuzz
+12.3.2, icu 78.2, freetype 2.14.1, teckit, graphite2, pplib, xpdf 4.06 — and linked
+the wasm multicall, with the ONLY code change being the CXXSTD=-std=gnu++17 flag
+(which is a C++-standard-selection issue, NOT an emsdk-capability issue: emsdk
+3.1.43's clang (LLVM 17) already DEFAULTS to gnu++17, so the flag was strictly
+needed for the NATIVE Apple-clang path and is belt-and-suspenders on wasm). No
+compiler-capability failure (no "unknown attribute", no unsupported C++ feature, no
+libc++ gap) surfaced under 3.1.43. Therefore the emsdk pin is UNCHANGED; pins.lock
+[toolchain-image], native-host.md, native-env.sh, the toolchain README and the
+Dockerfile all stay as-is. The two drift fixes were both TeX-Live-source drifts
+(ICU's C++17 header requirement; new multicall-colliding globals), resolved in our
+Makefile — not toolchain problems. The M0-era container image claims are therefore
+NOT invalidated by an emsdk change (there is none); M3's container re-pin inherits
+3.1.43 unchanged.
+
+### Stage: bundle — GREEN
+
+rc=0. `texlive-basic.data` = 52,775,230 B; `texlive-basic.js` = 1,459,979 B.
+
+### Stage: dist — GREEN, EXECUTION GATE PASSED (TeX Live 2026 banner)
+
+rc=0. dist/ assembled: busytex.js/.wasm, texlive-basic.js/.data, formats/{pdflatex,
+xelatex}.fmt, SHA256SUMS, assets.json. gen-assets classified **7 assets** into the
+same 6 roles as TL 2023 (bundle-data, bundle-js, checksums, engine-js, engine-wasm,
+format x2) — no glue role, no unclassified artifact (roles unchanged, as designed).
+`assets.json generated=2026-03-01T00:00:00.000Z` confirms SOURCE_DATE_EPOCH=1772323200.
+
+Execution gate (verify-engine.mjs):
+- assets.json parses (7 entries).
+- wasm imports: **60 total, 53 from "env"** (ceiling 150) — SOUND (identical to the
+  TL 2023 53; not the hollow-archive 363).
+- `xetex --version` exit 0, banner **"XeTeX 3.141592653-2.6-0.999998 (TeX Live
+  2026_busytexwasm)"** -> gate assertion "reports TeX Live 2026" PASSED.
+- The engine's own version dump confirms EVERY item-2 drift-table library linked at
+  the forecast version: **ICU 78.2, zlib 1.3.2, FreeType2 2.14.1, Graphite2 1.3.14,
+  HarfBuzz 12.3.2, libpng 1.6.55**, pplib v2.2, fontconfig 2.13.96 (the un-repinned
+  pin — decision holds). zlib 1.3.2 + libpng 1.6.55 are the two retired-patch targets,
+  confirmed linked and working.
+
+### dist inventory + size deltas vs TL 2023 (lua-free, M2 item 3 baseline)
+
+| Artifact | TL 2023 | TL 2026 | Delta |
+| --- | --- | --- | --- |
+| busytex.wasm | 26,369,418 | 27,524,414 | +1,154,996 (+4.4%) |
+| busytex.js | 273,991 | 273,991 | 0 (templated loader) |
+| texlive-basic.data | 59,247,516 | 52,775,230 | -6,472,286 (-10.9%) |
+| texlive-basic.js | 1,433,972 | 1,459,979 | +26,007 (+1.8%) |
+| formats/pdflatex.fmt | 6,477,728 | 2,286,489 | -4,191,239 (-64.7%) |
+| formats/xelatex.fmt | 8,714,792 | 4,472,954 | -4,241,838 (-48.7%) |
+| (native busytex) | 30,294,664 | 31,639,496 | +1,344,832 (+4.4%) |
+
+- wasm/native +4.4%: harfbuzz 7->12 + icu 70->78 + freetype/xpdf bumps (bigger code).
+- bundle data -10.9%: TL 2026 scheme-basic TDS is smaller than 2023's.
+- **.fmt formats -~4.2 MB EACH (near-constant absolute drop, not proportional)**:
+  both pdflatex.fmt and xelatex.fmt shed ~4.2 MB, pointing at a SHARED preloaded
+  block present in 2023 but not 2026 (most likely hyphenation-pattern preloading,
+  which LaTeX/TL changed in recent years to preload fewer patterns). The formats
+  DUMPED successfully; whether they LOAD+typeset is validated by the runtime suite
+  below (a format-load failure there would be a real defect; a byte/text-shape
+  difference is expected fixture churn for item 6). FLAGGED for item 5 (formats +
+  dist pruning re-verifies the FORMAT_* MEMFS constants against the TL 2026 TDS).
+
+### Verification: runtime suite (typecheck + vitest) — 179/186, 7 XeTeX failures
+
+`npm run typecheck` (runtime/): CLEAN. `npm test` (vitest run): **179 passed, 7 failed**
+(9 of 10 test files fully green; all 7 failures in `typeset-integration.test.ts`, the
+real-wasm tests). The 7 failures are ALL XeTeX/xelatex; every pdfTeX and unit test
+passes. This is NOT fixture churn — it is a CONFIRMED functional regression (below).
+
+#### CRITICAL FINDING — ICU 78 converter-alias-table not loaded -> XeTeX broken on wasm
+
+**Symptom.** Every wasm XeTeX/xelatex compile aborts at font-manager init:
+`internal error; cannot read font names` (exit 3). Source:
+`xetexdir/XeTeXFontMgr_FC.cpp:326` in `XeTeXFontMgr_FC::initialize()`, which does
+`ucnv_open("macintosh"/"UTF16BE"/"UTF8", &err)` then `if (err != 0) exit(3)`.
+
+**Root cause (confirmed, version-attributed).** Direct probes of the BUILT ICU
+(tiny harness linking libicuuc + libicudata, run against each build):
+- TL 2026 ICU **78.2**: `ucnv_countAvailable() = 0`; `ucnv_open` by CANONICAL name
+  works (`macos-0_2-10.2`, `ISO-8859-1`, `US-ASCII`, algorithmic UTF-8/16BE) but by
+  ALIAS FAILS with `U_FILE_ACCESS_ERROR` (`macintosh`, `ibm-942`, `Shift_JIS`,
+  `windows-1252`).
+- TL 2023 ICU **70.1** (same busytex build config, unchanged): `countAvailable = 232`;
+  `ucnv_open("macintosh") = U_ZERO_ERROR` (ok).
+So ICU 78's runtime is NOT loading the converter **alias table** (`cnvalias.icu`),
+even though `cnvalias.icu` IS present in the built data package (verified: it is in
+`.../data/out/build/icudt78l/cnvalias.icu` and the `icudt78l.dat` TOC — 1 hit, same
+as 2023's icudt72l.dat). XeTeX asks for the ALIAS "macintosh"; with no alias table
+ICU can't resolve it -> `U_FILE_ACCESS_ERROR` -> "cannot read font names" -> exit 3.
+
+**Scope / attribution.** NATIVE ICU 78 has the SAME `countAvailable = 0` (native
+XeTeX dodges it — it uses the CoreText font manager `XeTeXFontMgr_Mac`, not `_FC`, so
+`ucnv_open` is never called; that is why native `xetex --version`, the execution gate,
+and all pdfTeX paths pass). This is therefore a genuine **ICU 70->78 data-build /
+data-load regression** in the busytex-style custom ICU packaging, NOT caused by any
+item-4 edit (CXXSTD / redefines don't touch ICU data) and NOT a test-harness artifact.
+pdfTeX is fully functional end to end (uses TFM fonts, no ICU converters).
+
+**Why this is journaled, not fixed here (scope + discipline).** Item-4 acceptance
+("dist/ assembles, gate green") is MET; the task scopes runtime-suite breakage to
+items 5/6 and says report+journal, don't fix, in item 4. This is beyond fixture
+regen — it is a real build defect — but the fix is a deep ICU-78 data-packaging
+investigation (the alias table is packaged yet not loaded at runtime; likely an ICU
+78 data-TOC / packaging-mode change vs ICU 70), with multi-cycle ICU+wasm rebuilds
+(~30-40 min each). Rabbit-holing it here risks the thrash the checkpoint rule warns
+against. **Flagged as the #1 blocker for M2 to actually ship XeTeX.**
+
+**Fix direction for the next agent (head start):**
+- The defect is in the ICU **data build** (native AND wasm share it), reproducible in
+  seconds with a libicuuc+libicudata probe of `ucnv_countAvailable()` (expect 0 now,
+  must be > 0). Fast iterate against NATIVE ICU — no wasm rebuild needed to test the
+  data fix; only the final artifact needs the wasm ICU rebuilt.
+- `cnvalias.icu` is generated (gencnval) and IS in the package, so it is a LOAD/TOC
+  issue, not an exclusion. Investigate ICU 78's data packaging vs the busytex config:
+  the `--without-assembly -O icupkg.inc` pkgdata path, the data TOC/package name, and
+  any ICU 78 change to how `cnvalias` is registered/looked up. Compare the icudt78l
+  vs icudt72l `.dat` TOC layout. Consider whether ICU 78 needs a data-packaging-mode
+  or gencnval flag the version-agnostic busytex Makefile does not supply.
+- Layer: most likely our Makefile's ICU build rule (build/engines/Makefile
+  `build/%/texlive/libs/icu/...` + `OPTS_ICU_*`), possibly a small ICU source/config
+  patch (build/patches/) if ICU 78 needs one.
+
+#### Breakage inventory for item 6 (the 7 failing integration tests)
+All in runtime/test/typeset-integration.test.ts; all XeTeX, all the SAME ICU root
+cause above (result.ok=false / missing 'Undefined control sequence' because XeTeX
+exits 3 before parsing):
+1. "compiles hello-world through xetex -> xdvipdfmx to a valid PDF"
+2. "multiple jobs on one host: a failing compile surfaces the TeX error"
+3. "reruns a \label/\ref document ... until cross-references resolve" (xelatex)
+4. "compiles a bibtex8 document end to end (xelatex -> bibtex8 -> reruns -> xdvipdfmx)"
+5. "compiles hello-world through the PUBLIC createTypesetter API to a valid PDF"
+6. "cancelling a just-dispatched compile ... next job compiles on a fresh instance"
+7. "a deliberately broken document yields structured diagnostics" (xetex exits 3)
+NOTE: these are NOT fixture-text mismatches — they are ALL blocked by the ICU defect.
+Once ICU converter aliases load, re-run; any REMAINING diffs (banner/log cosmetics,
+PDF bytes) are then the genuine item-6 fixture-regen work. pdfTeX-only tests already
+pass, so the harness + runtime are sound.
+
+### Verification: demo smoke (Playwright) — 1/4 (was 4/4 on TL 2023)
+
+`npm test` (demo/): **1 passed, 3 failed**. Same ICU root cause — the 3 failures are
+all XeTeX; the 1 pass is pdfTeX. Consistent with the runtime suite.
+- PASS: pdfTeX text-bearing PDF.
+- FAIL: "hello-world (XeTeX) compiles to a valid, text-bearing PDF" — `internal error;
+  cannot read font names` (exit 3).
+- FAIL: "a deliberately broken document surfaces structured diagnostics (§8)" — XeTeX
+  exits 3 before the intended `\undefined` error is reached.
+- FAIL: "cancel() ... next compile succeeds on a fresh worker (§5.2)" — the post-cancel
+  follow-up is a XeTeX compile -> font error. (The cancel/lifecycle mechanics are fine;
+  it fails only because its follow-up job is XeTeX.)
+Once the ICU alias fix lands, all three should recover (modulo genuine item-6 fixture
+cosmetics). No demo/runtime CODE change is warranted — the failures are 100% the engine
+ICU defect, not the runtime, worker, or harness.
+
+### Item 4 — outcome summary
+
+`make artifacts` COMPLETES against the TL 2026 pins: prep -> native -> basic -> wasm ->
+bundle -> dist, execution gate GREEN asserting the **TeX Live 2026** banner. Stage
+results: prep GREEN; native GREEN (after drift #1 ICU-C++17 + drift #2 zisbitset);
+basic GREEN; wasm GREEN (after drift #3 three common-symbol renames); bundle GREEN;
+dist GREEN + gate PASSED. gen-assets: 7 assets / same 6 roles (unchanged). License
+audit GREEN (patch HEADERs retired + check (c) relaxed). emsdk KEPT at 3.1.43 (no
+bump). Both TL 2023 macOS patches RETIRED (defects fixed upstream in libpng 1.6.55 /
+zlib 1.3.2). SOURCE_DATE_EPOCH cut to the TL 2026 freeze (1772323200). Fresh
+`busytex-2026` work tree; TL 2023 tree preserved as fallback.
+
+**Acceptance for item 4 (dist/ assembles, gate green): MET.**
+
+**Known blocker carried forward (NOT an item-4 acceptance item):** wasm XeTeX cannot
+typeset — ICU 78 converter-alias-table load regression (root cause fully characterized
+above). pdfTeX is fully functional. This must be fixed before M2's corpus/acceptance
+(items 5-9) can pass for XeTeX. Flagged as the #1 follow-up.
+
+Deviations from DESIGN.md: none (native-first dev build per §9; only container-built
+artifacts release; the banner + epoch are sanctioned build-side pins). No DESIGN.md
+edits needed.

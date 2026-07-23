@@ -1,15 +1,14 @@
 # generator: xetex; \undefinedcontrolsequencexyz on l.4 of the root file
-This is XeTeX, Version 3.141592653-2.6-0.999995 (TeX Live 2023_busytexwasm) (preloaded format=/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt)
+This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026_busytexwasm) (preloaded format=/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt)
 entering extended mode
 (./main.tex
-LaTeX2e <2022-11-01> patch level 1
-L3 programming layer <2023-02-22>
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-01-19>
 (/texlive/texmf-dist/tex/latex/base/article.cls
-Document Class: article 2022/07/02 v1.4n Standard LaTeX document class
+Document Class: article 2025/01/22 v1.4n Standard LaTeX document class
 (/texlive/texmf-dist/tex/latex/base/size10.clo))
 (/texlive/texmf-dist/tex/latex/l3backend/l3backend-xetex.def)
 No file main.aux.
-(/texlive/texmf-dist/tex/latex/base/ts1cmr.fd)
 ! Undefined control sequence.
 l.4 \undefinedcontrolsequencexyz
                                 

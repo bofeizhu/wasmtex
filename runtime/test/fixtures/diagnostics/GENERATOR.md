@@ -7,7 +7,8 @@
 
 These `*.txt` files are **verbatim `result.log` transcripts captured from the
 real pinned engine** (`dist/busytex.{js,wasm}` + `texlive-basic.{js,data}`,
-TeX Live 2023 busytex build) — not hand-written. They ground the §5.1
+TeX Live 2026 busytex build; regenerated at the M2 rebase from TL 2023) — not
+hand-written. They ground the §5.1
 diagnostics parser (`runtime/src/diagnostics.ts`) in actual engine output, per
 M1 rebase-proofing rule 2 (parser fixtures come from real transcripts and
 regenerate at every rebase; the conformance corpus re-runs them).
@@ -71,14 +72,147 @@ hard part rather than the easy one:
   the reported `on input line N` is that file's own line — a self-consistent
   attribution that a root-file-only scanner cannot produce.
 
+## Source documents (exact — line numbers are load-bearing)
+
+Every fixture is the `result.log` of ONE compile of a `main.tex` entry with the
+engine noted and `passes=auto, bibliography=off, index=off`. The `l.N` /
+`on input line N` the parser extracts is fixed by the exact line the erroring
+command sits on, so these bodies are reproduced verbatim (a blank line 3 is
+deliberate where it positions an error on l.4). The M2 rebase confirmed that
+different fillers producing the same `l.N` yield the same transcript, but the
+exact bodies below are the pinned, deterministic input.
+
+- `undefined-control-sequence.{xetex,pdftex}.txt` (engine xetex / pdftex):
+  ```tex
+  \documentclass{article}
+  \begin{document}
+
+  \undefinedcontrolsequencexyz
+  \end{document}
+  ```
+- `missing-input-file.txt` (xetex):
+  ```tex
+  \documentclass{article}
+  \begin{document}
+
+  \input{nosuchinputfile}
+  \end{document}
+  ```
+- `missing-package.{,pdftex.}txt` (xetex / pdftex): error reported at l.3
+  (`\begin{document}`) after the failed `\usepackage` on l.2:
+  ```tex
+  \documentclass{article}
+  \usepackage{nosuchpackagexyz}
+  \begin{document}
+  \end{document}
+  ```
+- `no-end-document.txt` (xetex) — no `\end{document}`:
+  ```tex
+  \documentclass{article}
+  \begin{document}
+  ```
+- `undefined-references.txt` (xetex) — `\ref`+`\cite` on l.3; reruns to the
+  5-pass cap (refs never resolve):
+  ```tex
+  \documentclass{article}
+  \begin{document}
+  See~\ref{nosuchlabel} and~\cite{nosuchcite}.
+  \end{document}
+  ```
+- `error-in-subfile.txt` (xetex) — `main.tex` + `chapters/broken.tex`; the error
+  is on l.4 of the SUBFILE:
+  ```tex
+  % main.tex
+  \documentclass{article}
+  \begin{document}
+  Intro in the root file.
+  \input{chapters/broken}
+  After.
+  \end{document}
+  ```
+  ```tex
+  % chapters/broken.tex
+  Some prose in the subfile.
+
+  Another paragraph, then a bad macro:
+  \undefinedsubcmd
+  trailing text.
+  ```
+- `package-warning.txt` (xetex) — `main.tex` + `localpkg.sty` (`\PackageWarning`
+  on l.3 of the .sty):
+  ```tex
+  % main.tex
+  \documentclass{article}
+  \usepackage{localpkg}
+  \begin{document}
+  Body.
+  \end{document}
+  ```
+  ```tex
+  % localpkg.sty
+  \ProvidesPackage{localpkg}[2026/01/01 v1.0 local test package]
+  % deliberately noisy
+  \PackageWarning{localpkg}{This package is deliberately noisy\MessageBreak and warns across two lines}
+  \endinput
+  ```
+- `class-warning.txt` (xetex) — `main.tex` + `localcls.cls` (`\ClassWarning` on
+  l.4 of the .cls; the class's fixed `2026/01/01` date is intentional and
+  version-independent):
+  ```tex
+  % main.tex
+  \documentclass{localcls}
+  \begin{document}
+  Body.
+  \end{document}
+  ```
+  ```tex
+  % localcls.cls
+  \NeedsTeXFormat{LaTeX2e}
+  \ProvidesClass{localcls}[2026/01/01 v1.0 local test class]
+  \LoadClass{article}
+  \ClassWarning{localcls}{This class is deliberately noisy\MessageBreak on two lines}
+  \endinput
+  ```
+- `clean.txt` (xetex):
+  ```tex
+  \documentclass{article}
+  \begin{document}
+  Hello, world.
+  \end{document}
+  ```
+- `overfull-box.txt` (xetex) — the `\hbox` is on l.3; exactly **48** `a`s make it
+  `235.0pt too wide` (Latin Modern `lmr` metrics; stable across the TL 2023→2026
+  rebase, so the width + glyph run reproduce byte-for-byte):
+  ```tex
+  \documentclass{article}
+  \begin{document}
+  \hbox to 5pt{aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+  \end{document}
+  ```
+
 ## How to regenerate (at a TL rebase)
 
 Drive the real `EmscriptenEngineHost` (via `test/support/node-engine-loader.ts`)
-against a freshly built `dist/`, compiling each document in the table above and
-writing its `result.log` (prefixed with the `# generator:` note) back into this
-directory. The throwaway generator that produced this set is not committed
-(journal discipline); the documents + engine choices above fully specify the
-regeneration. After regenerating, re-run `diagnostics.test.ts`: if the pinned
-engine's wording genuinely changed, update the expected `Diagnostic[]` in that
-test (and the parser only if a new marker family appeared), never the other way
-round.
+against a freshly built `dist/`, compiling each document above through the
+worker core (`createWorkerCore`, so the §5.3 sequencing runs) and writing the
+`result` message's `log` field (prefixed with the existing `# generator:` note,
+then a trailing `\n`) back into this directory. The throwaway generator is not
+committed (journal discipline); the bodies above fully specify it.
+
+After regenerating, re-run `diagnostics.test.ts`: if the pinned engine's wording
+genuinely changed, update the expected `Diagnostic[]` in that test (and the
+parser only if a new marker family appeared), never the other way round.
+
+**TL 2026 rebase deltas (M2 item 6), for the next rebaser's eye.** Regenerating
+against TL 2026 changed ONLY version strings + render byte counts and the
+expected `Diagnostic[]` needed NO change. The version churn: the XeTeX banner
+(`0.999995`→`0.999998`, `2023`→`2026`), `LaTeX2e <2022-11-01> patch level 1`
+→ `LaTeX2e <2025-11-01>` (the ` patch level 1` suffix is gone in the newer
+release), `L3 programming layer` date, `article.cls` date, and the `.xdv`/`.pdf`
+byte tallies. The ONE structural change: TL 2026's kernel no longer auto-loads
+`(…/ts1cmr.fd)` at `\begin{document}`, so that line vanishes from every doc that
+reaches the body — but it was always a balanced `(…)` that opened AND closed
+before the diagnostic, so it never sat on the parser's paren stack at an error,
+and attribution/line were unaffected. This is exactly the version-agnostic
+property rebase-proofing rule 2 predicts: the parser anchors on the `! `/
+`Warning:` markers and the paren stack, not on incidental font-descriptor loads.

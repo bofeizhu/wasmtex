@@ -1115,3 +1115,188 @@ git-ignored (dev artifact); nothing hand-built is committed.
 186/186 runtime + 4/4 demo). M2 items 5-9 (formats/dist re-verify, fixture regen, corpus,
 CJK, wrap-up) are unblocked for XeTeX. The M2 item-4 "outcome summary" blocker note (the
 preceding section) is superseded by this one.
+
+---
+
+## Item 5 — Formats + dist verification
+
+Dated 2026-07-23. Three deliberate re-checks of what items 3/4 produced (formats pruned
+to xelatex+pdflatex; assets reclassified for free; the FORMAT_* MEMFS constants), closing
+the M1 acceptance carry-forward. No artifacts rebuilt — dist/ is item 4b's output; this
+item confirms it against the runtime contract. Provenance: only the TL 2026 vendored
+sources + the built dist/ were inspected; no GPL/AGPL WASM-TeX wrapper source opened.
+
+### 5.1 — dist/ format + asset inventory (7 assets / 6 roles, lua-free)
+
+`dist/formats/` is EXACTLY `{pdflatex.fmt, xelatex.fmt}` — lua-free: `find dist -iname
+'*lua*' -o -iname '*.fmt'` returns only those two (no `lualatex.fmt`/`luahblatex.fmt`
+anywhere). `assets.json` (generated `2026-03-01T00:00:00.000Z` — SOURCE_DATE_EPOCH)
+classifies 7 assets into 6 roles; every artifact matched a `gen-assets` ROLE_RULE (no
+unclassified artifact), and `shasum -a 256 -c SHA256SUMS` verified all six hashed files:
+
+| path | bytes | role |
+| --- | --- | --- |
+| SHA256SUMS | 509 | checksums |
+| busytex.js | 273,991 | engine-js |
+| busytex.wasm | 27,508,145 | engine-wasm |
+| formats/pdflatex.fmt | 2,286,489 | format |
+| formats/xelatex.fmt | 4,472,954 | format |
+| texlive-basic.data | 52,775,230 | bundle-data |
+| texlive-basic.js | 1,459,979 | bundle-js |
+
+Roles: `{checksums, engine-js, engine-wasm, format×2, bundle-data, bundle-js}` — the same
+6 as TL 2023, no glue role (dropped item 3), matching `protocol.ts AssetRole` and the
+`assets.test.ts KNOWN_ROLES`. The rebase reclassified structurally (by extension/sibling),
+exactly the rebase-proofing payoff the plan predicted.
+
+### 5.2 — MEMFS TDS probe: FORMAT_* constants vs the real TL 2026 TDS (carry-forward CLOSED)
+
+THE deliberate check the M1 acceptance carried forward. Rather than infer the layout from
+the tests passing, a node probe loaded the real `EmscriptenEngineHost` against dist/ and
+LISTED the mounted MEMFS (the bundle's TDS, mounted at `/texlive` by the file_packager):
+
+- `FS.analyzePath('/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt').exists = true`
+  → matches `core.ts` `FORMAT_XELATEX` byte-for-byte.
+- `FS.analyzePath('/texlive/texmf-dist/texmf-var/web2c/pdftex/pdflatex.fmt').exists = true`
+  → matches `FORMAT_PDFLATEX`.
+- `readdir('/texlive/texmf-dist/texmf-var/web2c')` = `[metafont, pdftex, xetex]` (+ an
+  `updmap.log`) — NO `luatex`/`luahbtex` engine dirs, so lua-free is confirmed at the TDS
+  level, not just in dist/formats/.
+- `readdir(.../web2c/xetex)` = `[xelatex.fmt, + fmtutil .log files]`;
+  `readdir(.../web2c/pdftex)` = `[pdflatex.fmt, + .log files]` — the `.fmt` files sit at
+  exactly the constant paths; the extra `.log` files are harmless fmtutil residue.
+
+The FORMAT_* MEMFS constants are CONFIRMED against the actual TL 2026 TDS layout: the
+rebase did NOT move the format paths (the TDS convention `texmf-var/web2c/<engine>/<fmt>`
+is rebase-stable, as the M1 constant comment claimed). **The M1 carry-forward — "conformance
+catches a layout change" — is formally CLOSED: the deliberate probe shows no change, and had
+one occurred the FORMAT_* `--fmt` argv would have failed the real-wasm suite.**
+
+### 5.3 — Why the .fmt files each shed ~4.2 MB (one honest paragraph)
+
+Item 4 flagged a near-constant ~4.2 MB *compressed* drop (xelatex 8.71→4.47 MB, pdflatex
+6.48→2.29 MB) and guessed hyphenation preloading. Investigated to the point of a definitive
+answer without chasing deeper: **it is NOT fmt compression.** Both TL 2023 AND TL 2026 `.fmt`
+are gzip-compressed (magic `1f 8b 08 00` in both years — verified against the TL 2023 tree
+preserved in `~/.cache/wasmtex/build/native/busytex/`), so gzip'd fmts predate TL 2023 and
+the "zlib'd fmts landed in TL ~2024" hypothesis is rejected. It is also NOT a fmt-dump-format
+change: the `W2TX` format identifier + `pdftex` engine tag are byte-identical across years.
+The DECOMPRESSED content itself shrank a near-constant ~9-10 MB per format (xelatex
+31.45→22.27 MB, −9.18; pdflatex 18.01→7.81 MB, −10.19); the ~4.2 MB compressed drop is just
+the gzip shadow of that (the engines' differing compression ratios are why the compressed
+drops don't track the uncompressed ones proportionally). A shared block that shrank ~equally
+in both LaTeX formats points at reduced preloaded pattern/kernel data between the 2022-11 and
+2025-11 LaTeX2e releases (the fixtures' banner moved `LaTeX2e <2022-11-01> patch level 1` →
+`<2025-11-01>`); the exact array is not chased further per scope. BENIGN either way: the
+smaller formats dump, load (banner `preloaded format=…/xelatex.fmt`), and typeset correctly —
+186/186 runtime incl. real xelatex+pdflatex, execution gate green, demo smoke 4/4.
+
+### Item 5 — outcome
+
+All three verifications PASS: dist inventory is the pruned lua-free 7-asset/6-role set with
+integrity verified; the FORMAT_* MEMFS constants are confirmed against the mounted TL 2026
+TDS (M1 carry-forward closed); the .fmt shrink is a benign content reduction, not a
+compression or format change. No deviations. No artifacts touched.
+
+---
+
+## Item 6 — Fixture regeneration (rebase-proofing rule 2)
+
+Dated 2026-07-23. The first real exercise of the regeneration discipline: re-capture all 21
+fixtures (12 diagnostics + 9 sequencing) from the TL 2026 dist per the two `GENERATOR.md`
+procedures, then read the divergences as the version-agnostic scorecard. Provenance: fixtures
+are transcripts of OUR pinned engine; no third-party source consulted.
+
+### Method + the one real friction (a GENERATOR.md finding)
+
+Drove the real `EmscriptenEngineHost` through `createWorkerCore` against dist/ from a
+throwaway vitest spec (NOT committed — journal discipline), capturing the `ResultMessage.log`
+for diagnostics (the full multi-pass `result.log`) and per-`host.run()` sliced transcripts +
+exit codes for sequencing (a thin recording decorator around the host). Overwrote the fixtures
+in place and used `git diff` against the committed TL 2023 versions as the oracle. All 18
+compiles ran green (structures: crossref `engine→engine→xdvipdfmx`; bibtex `engine→bibtex8→
+engine→engine→xdvipdfmx`; makeindex `engine→makeindex→engine→engine→xdvipdfmx`), so no doc
+needed reshaping.
+
+**FRICTION → FINDING.** Both `GENERATOR.md` files claimed "the documents … fully specify the
+regeneration", but they did NOT: the exact document BODIES were unspecified — the blank-line
+fillers that position an error on `l.4`, the `.sty`/`.cls` layout that puts `\PackageWarning`
+on line 3 / `\ClassWarning` on line 4, and the 48-`a` overfull box. I reverse-engineered them
+from the `l.N` / `on input line N` the old transcripts pin, then FIXED both `GENERATOR.md`:
+added a "Source documents (exact)" section giving every fixture's verbatim body + engine +
+options + (sequencing) which pass it slices, so the next annual rebase is deterministic. Also
+learned + documented the write formula: the engine stream ends each run `…shutdown)\n\n` and
+the original generator appended one more newline (fixtures end `…\n\n\n`).
+
+### The version-agnostic scorecard — what HELD
+
+The whole point of rule 2. The parser + detector tests pass with **ZERO test-file changes** —
+every expected `Diagnostic[]` and every detector boolean unchanged (`diagnostics.test.ts`
+37/37, `sequencing.test.ts` 41/41 against the regenerated fixtures). Every detector-anchored
+substring survived the rebase verbatim: `Undefined control sequence.`, `! Emergency stop.`,
+`LaTeX Error: File \`…' not found.`, `Reference/Citation \`…' … undefined on input line N`,
+`There were undefined references`, `Label(s) may have changed. Rerun to get cross-references
+right`, the `Package/Class … Warning:` + folded `(name)` continuation, and the bibtex8 /
+makeindex exit codes (0/1/2 and 0). **The three bibtex8 fixtures (`bibtex8-{clean,
+warning-undefined-entry,error-missing-bst}`) are BYTE-IDENTICAL to TL 2023** — BibTeX emits
+no version banner in these transcripts, the cleanest possible demonstration of the claim.
+
+### The version-agnostic scorecard — what CHURNED (all cosmetic, expected)
+
+- XeTeX banner `0.999995` → `0.999998`; `TeX Live 2023` → `2026`.
+- `LaTeX2e <2022-11-01> patch level 1` → `LaTeX2e <2025-11-01>` (the ` patch level 1` suffix
+  is gone in the newer base release — a token DROP, still not a detector anchor).
+- `L3 programming layer <2023-02-22>` → `<2026-01-19>`.
+- `Document Class: article 2022/07/02 v1.4n` → `2025/01/22 v1.4n` (date only; `v1.4n` same).
+- `makeindex, version 2.17 [TeX Live 2023]` → `2.18 [TeX Live 2026]`.
+- `.xdv`/`.pdf` render byte counts (e.g. clean `752`→`516` xdv, `4059`→`3050` pdf) — font/PDF
+  generation differences.
+
+### The ONE structural change (benign — NOT a detector finding)
+
+TL 2026's kernel no longer auto-loads `(…/base/ts1cmr.fd)` at `\begin{document}`, so that
+line vanishes from EVERY doc that reaches the body (14 of the 21 fixtures (12 of the 18 compiles)). It matters for
+NOTHING the parser reads: in every case it was a *balanced* `(…)` that opened AND closed
+before the diagnostic, so it was never on the parser's parenthesis stack at an error/warning —
+attribution (`file`) and `line` are unaffected. In `no-end-document` the TL 2023 `(ts1cmr.fd))`
+double-close becomes a single `)`, but the stack is empty at `! Emergency stop.` either way →
+still promoted to `{severity:'error', message:'Emergency stop.'}` with no file/line. Its
+disappearance also un-wraps a col-79 line break in `quiescent-crossref-pass2` (cosmetic). This
+is EXACTLY the property rebase-proofing rule 2 predicts: the parser anchors on the `! ` /
+`Warning:` markers + paren-stack semantics, not on incidental font-descriptor loads. Recorded
+in both `GENERATOR.md` under "TL 2026 rebase deltas" so the next rebaser expects it.
+
+**Net: the "divergences are findings" clause produced ZERO detector/parser findings.** The
+only real finding was the `GENERATOR.md` under-specification (fixed in the docs, not the code).
+
+### Provenance updates (item 6.4)
+
+TL 2023 → TL 2026 references updated: both `GENERATOR.md` (header build-year + the sequencing
+"verified marker strings" heading), and the two test files' provenance comments/labels
+(`diagnostics.test.ts` fixture-corpus comment "pinned TL2023 engine" → TL2026;
+`sequencing.test.ts` corpus comment + the `describe('… over real TL2026 fixtures')` label).
+No assertion changed — comments/labels only. The fixture `# generator:` / `# exit=` headers
+carry no TL-year reference, so none needed touching.
+
+### Gates (item 6.3) — all green
+
+- runtime `npm run typecheck`: clean.
+- runtime `npm test` (vitest): **186/186** (10/10 files) on the regenerated fixtures — incl.
+  the real-wasm integration suite (xelatex→xdvipdfmx PDF, crossref rerun 2 passes, bibtex8
+  e2e 3 passes, public-API PDF, cancel+reinit, subfile diagnostics).
+- demo `npm test` (Playwright/chromium): **4/4** (XeTeX text-bearing PDF + clean diagnostics;
+  pdfTeX text; broken-doc file+line diagnostics; cancel()+fresh-worker).
+- execution gate (`verify-engine.mjs`): PASSED (banner `TeX Live 2026`; 53 env imports).
+- license audit: all checks passed.
+
+### Deviations from DESIGN.md
+
+None. Fixtures are test inputs regenerated from the pinned engine (rebase-proofing rule 2);
+no runtime, parser, or detector logic changed (the version-agnostic claim held, so none was
+warranted). The throwaway generator is not committed. dist/ untouched (item 4b's output).
+
+### Item 6 — outcome
+
+**Item 6 COMPLETE.** 21 fixtures regenerated against TL 2026; version-agnostic claim VALIDATED
+(zero detector/parser changes; one benign `ts1cmr.fd` structural delta that touches no anchor);
+GENERATOR under-specification fixed; all five gates green.

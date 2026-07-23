@@ -1,15 +1,14 @@
 # generator: xetex; \ref{nosuchlabel}+\cite{nosuchcite} → LaTeX warnings + "There were undefined references."
-This is XeTeX, Version 3.141592653-2.6-0.999995 (TeX Live 2023_busytexwasm) (preloaded format=/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt)
+This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026_busytexwasm) (preloaded format=/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt)
 entering extended mode
 (./main.tex
-LaTeX2e <2022-11-01> patch level 1
-L3 programming layer <2023-02-22>
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-01-19>
 (/texlive/texmf-dist/tex/latex/base/article.cls
-Document Class: article 2022/07/02 v1.4n Standard LaTeX document class
+Document Class: article 2025/01/22 v1.4n Standard LaTeX document class
 (/texlive/texmf-dist/tex/latex/base/size10.clo))
 (/texlive/texmf-dist/tex/latex/l3backend/l3backend-xetex.def)
 No file main.aux.
-(/texlive/texmf-dist/tex/latex/base/ts1cmr.fd)
 
 LaTeX Warning: Reference `nosuchlabel' on page 1 undefined on input line 3.
 
@@ -21,21 +20,20 @@ LaTeX Warning: Citation `nosuchcite' on page 1 undefined on input line 3.
 LaTeX Warning: There were undefined references.
 
  )
-Output written on main.xdv (1 page, 796 bytes).
+Output written on main.xdv (1 page, 720 bytes).
 Transcript written on main.log.
 program exited (with status: 0), but keepRuntimeAlive() is set (counter=0) due to an async operation, so halting execution but not exiting the runtime or preventing further async execution (you can use emscripten_force_exit, if you want to force a true shutdown)
 
 
-This is XeTeX, Version 3.141592653-2.6-0.999995 (TeX Live 2023_busytexwasm) (preloaded format=/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt)
+This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026_busytexwasm) (preloaded format=/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt)
 entering extended mode
 (./main.tex
-LaTeX2e <2022-11-01> patch level 1
-L3 programming layer <2023-02-22>
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-01-19>
 (/texlive/texmf-dist/tex/latex/base/article.cls
-Document Class: article 2022/07/02 v1.4n Standard LaTeX document class
+Document Class: article 2025/01/22 v1.4n Standard LaTeX document class
 (/texlive/texmf-dist/tex/latex/base/size10.clo))
 (/texlive/texmf-dist/tex/latex/l3backend/l3backend-xetex.def) (./main.aux)
-(/texlive/texmf-dist/tex/latex/base/ts1cmr.fd)
 
 LaTeX Warning: Reference `nosuchlabel' on page 1 undefined on input line 3.
 
@@ -47,21 +45,20 @@ LaTeX Warning: Citation `nosuchcite' on page 1 undefined on input line 3.
 LaTeX Warning: There were undefined references.
 
  )
-Output written on main.xdv (1 page, 796 bytes).
+Output written on main.xdv (1 page, 720 bytes).
 Transcript written on main.log.
 program exited (with status: 0), but keepRuntimeAlive() is set (counter=0) due to an async operation, so halting execution but not exiting the runtime or preventing further async execution (you can use emscripten_force_exit, if you want to force a true shutdown)
 
 
-This is XeTeX, Version 3.141592653-2.6-0.999995 (TeX Live 2023_busytexwasm) (preloaded format=/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt)
+This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026_busytexwasm) (preloaded format=/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt)
 entering extended mode
 (./main.tex
-LaTeX2e <2022-11-01> patch level 1
-L3 programming layer <2023-02-22>
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-01-19>
 (/texlive/texmf-dist/tex/latex/base/article.cls
-Document Class: article 2022/07/02 v1.4n Standard LaTeX document class
+Document Class: article 2025/01/22 v1.4n Standard LaTeX document class
 (/texlive/texmf-dist/tex/latex/base/size10.clo))
 (/texlive/texmf-dist/tex/latex/l3backend/l3backend-xetex.def) (./main.aux)
-(/texlive/texmf-dist/tex/latex/base/ts1cmr.fd)
 
 LaTeX Warning: Reference `nosuchlabel' on page 1 undefined on input line 3.
 
@@ -73,21 +70,20 @@ LaTeX Warning: Citation `nosuchcite' on page 1 undefined on input line 3.
 LaTeX Warning: There were undefined references.
 
  )
-Output written on main.xdv (1 page, 796 bytes).
+Output written on main.xdv (1 page, 720 bytes).
 Transcript written on main.log.
 program exited (with status: 0), but keepRuntimeAlive() is set (counter=0) due to an async operation, so halting execution but not exiting the runtime or preventing further async execution (you can use emscripten_force_exit, if you want to force a true shutdown)
 
 
-This is XeTeX, Version 3.141592653-2.6-0.999995 (TeX Live 2023_busytexwasm) (preloaded format=/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt)
+This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026_busytexwasm) (preloaded format=/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt)
 entering extended mode
 (./main.tex
-LaTeX2e <2022-11-01> patch level 1
-L3 programming layer <2023-02-22>
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-01-19>
 (/texlive/texmf-dist/tex/latex/base/article.cls
-Document Class: article 2022/07/02 v1.4n Standard LaTeX document class
+Document Class: article 2025/01/22 v1.4n Standard LaTeX document class
 (/texlive/texmf-dist/tex/latex/base/size10.clo))
 (/texlive/texmf-dist/tex/latex/l3backend/l3backend-xetex.def) (./main.aux)
-(/texlive/texmf-dist/tex/latex/base/ts1cmr.fd)
 
 LaTeX Warning: Reference `nosuchlabel' on page 1 undefined on input line 3.
 
@@ -99,21 +95,20 @@ LaTeX Warning: Citation `nosuchcite' on page 1 undefined on input line 3.
 LaTeX Warning: There were undefined references.
 
  )
-Output written on main.xdv (1 page, 796 bytes).
+Output written on main.xdv (1 page, 720 bytes).
 Transcript written on main.log.
 program exited (with status: 0), but keepRuntimeAlive() is set (counter=0) due to an async operation, so halting execution but not exiting the runtime or preventing further async execution (you can use emscripten_force_exit, if you want to force a true shutdown)
 
 
-This is XeTeX, Version 3.141592653-2.6-0.999995 (TeX Live 2023_busytexwasm) (preloaded format=/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt)
+This is XeTeX, Version 3.141592653-2.6-0.999998 (TeX Live 2026_busytexwasm) (preloaded format=/texlive/texmf-dist/texmf-var/web2c/xetex/xelatex.fmt)
 entering extended mode
 (./main.tex
-LaTeX2e <2022-11-01> patch level 1
-L3 programming layer <2023-02-22>
+LaTeX2e <2025-11-01>
+L3 programming layer <2026-01-19>
 (/texlive/texmf-dist/tex/latex/base/article.cls
-Document Class: article 2022/07/02 v1.4n Standard LaTeX document class
+Document Class: article 2025/01/22 v1.4n Standard LaTeX document class
 (/texlive/texmf-dist/tex/latex/base/size10.clo))
 (/texlive/texmf-dist/tex/latex/l3backend/l3backend-xetex.def) (./main.aux)
-(/texlive/texmf-dist/tex/latex/base/ts1cmr.fd)
 
 LaTeX Warning: Reference `nosuchlabel' on page 1 undefined on input line 3.
 
@@ -125,13 +120,13 @@ LaTeX Warning: Citation `nosuchcite' on page 1 undefined on input line 3.
 LaTeX Warning: There were undefined references.
 
  )
-Output written on main.xdv (1 page, 796 bytes).
+Output written on main.xdv (1 page, 720 bytes).
 Transcript written on main.log.
 program exited (with status: 0), but keepRuntimeAlive() is set (counter=0) due to an async operation, so halting execution but not exiting the runtime or preventing further async execution (you can use emscripten_force_exit, if you want to force a true shutdown)
 
 
 main.xdv -> main.pdf
 [1]
-4727 bytes written
+4182 bytes written
 
 

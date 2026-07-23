@@ -9,7 +9,7 @@
 // §5.3 branch — engine differences, bibliography on/off/auto, index with/without
 // a non-empty .idx, rerun-until-quiescent, the hard cap, explicit-N exactness,
 // and the failure/abort thresholds; (2) the rerun-marker detector + abort
-// thresholds driven by REAL transcript FIXTURES captured from the pinned TL2023
+// thresholds driven by REAL transcript FIXTURES captured from the pinned TL2026
 // engine (fixtures/sequencing/, see GENERATOR.md) — so detector accuracy is
 // proven against actual engine output, not folklore strings (M1 rebase-proofing
 // rule 2). No wasm, no worker: the machine is a pure reducer.
@@ -355,7 +355,7 @@ function readFixture(name: string): { exit: number; text: string } {
   return { exit: Number(m[1]), text: raw.slice(nl + 1) };
 }
 
-describe('sequencing — rerun detector over real TL2023 fixtures', () => {
+describe('sequencing — rerun detector over real TL2026 fixtures', () => {
   it.each([
     'rerun-crossref-pass1.txt', // "Label(s) may have changed. Rerun to get cross-references right." + undefined refs
     'rerun-citations-pass2.txt', // "Rerun to get cross-references right." after bibtex

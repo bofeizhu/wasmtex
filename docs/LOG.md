@@ -505,6 +505,30 @@ files — gate extended (now 16 sources). Nits: @types/node exact-pinned;
 vitest.config.ts brought under typecheck. All re-verified green
 (typecheck, 2/2 tests, audit).
 
+## 2026-07-24 — M2 items 5+6: formats verified; fixtures regenerated
+
+**Item 5.** Deliberate re-checks closed: dist/formats exactly
+{xelatex,pdflatex}.fmt lua-free; assets.json 7 assets/6 roles all
+verified; a node MEMFS probe LISTED the mounted TL 2026 TDS and
+confirmed the FORMAT_* constants byte-for-byte (no lua dirs) — the M1
+acceptance carry-forward is formally closed. The ~4.2 MB fmt shrink
+root-caused honestly: not compression (both years gzip'd, W2TX
+identical) — the decompressed dumps themselves shrank ~9-10 MB each;
+benign.
+
+**Item 6 — the version-agnostic scorecard.** All 21 fixtures
+re-captured from the TL 2026 engines per GENERATOR.md. The claim
+HELD completely: 78/78 parser+detector tests with ZERO assertion
+changes; every anchored substring and exit code survived; the 3
+bibtex8 fixtures came back BYTE-IDENTICAL across TeX Live years.
+Churn was purely cosmetic (banners, LaTeX2e/L3/class dates,
+makeindex 2.17→2.18). One benign structural delta (TL 2026 no longer
+auto-loads ts1cmr.fd — balanced parens, never on the attribution
+stack). Regeneration friction became a fix: both GENERATOR.md files
+gained exact source-document sections (they had under-specified the
+bodies). Gates: 186/186, smoke 4/4, execution gate + audit green —
+independently re-run. Review: approve, one journal count fix.
+
 ## 2026-07-24 — M2 item 4b: ICU 78 alias blocker FIXED; XeTeX restored
 
 **Root cause (precise).** ICU 78's `initAliasData` gained a length

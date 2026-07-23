@@ -6,7 +6,7 @@
 //
 // Unit tests for the pure §5.1 diagnostics parser (M1 item 8). Two layers:
 //   (1) FIXTURE CORPUS — every transcript under fixtures/diagnostics/ (captured
-//       verbatim from the pinned TL2023 engine, see GENERATOR.md) parsed to its
+//       verbatim from the pinned TL2026 engine, see GENERATOR.md) parsed to its
 //       EXACT Diagnostic[] (not just counts), so extraction is proven against
 //       real engine output, not folklore (M1 rebase-proofing rule 2).
 //   (2) HOSTILE / PATHOLOGICAL INPUTS — 10 MB single line, deeply nested and

@@ -34,35 +34,155 @@ export const stripSpaces = (s) => s.replace(/\s+/g, '');
  * Object streams (/Type /ObjStm, PDF 1.5+) are FlateDecode too, so page-tree
  * and page objects hidden inside them are exposed to the callers that scan the
  * inflated text (e.g. {@link countPages}).
+ *
+ * Stream bounding is /Length-AUTHORITATIVE, not text-search-based. A PDF stream
+ * is `<<dict>> stream EOL <compressed-bytes> EOL endstream`, and the dict's
+ * `/Length N` is the EXACT byte count of <compressed-bytes>. When N is a direct
+ * integer we slice exactly those bytes — extraction never hunts for `endstream`
+ * and never trims a "delimiter EOL" that is really a compressed byte.
+ *
+ * This is load-bearing. The compressed bytes are arbitrary binary that can:
+ *   (a) contain the literal sequence `endstream` — a boundary search stops there
+ *       and truncates the stream; or
+ *   (b) simply END in 0x0d (or 0x0a) — a "strip the writer's trailing EOL" step
+ *       then chops a real final byte.
+ * Either corrupts the deflate stream so inflateSync throws and the stream is
+ * silently dropped. When the dropped stream is the /ObjStm holding the page tree,
+ * {@link countPages} reports 0 pages on a perfectly valid PDF. And because a PDF's
+ * build timestamp is embedded IN that ObjStm (xdvipdfmx writes /CreationDate,
+ * /ModDate there), its compressed bytes are re-rolled on every build — so case
+ * (b) in particular (~1/256 of builds: the ObjStm's last compressed byte lands on
+ * 0x0d) makes the drop INTERMITTENT and environment-correlated — it passes locally
+ * yet reddens CI on a byte-shifted rebuild. Binding by /Length removes the guesswork.
+ *
+ * Fallback: when /Length is an indirect reference (`N M R`) — legal, though the
+ * xdvipdfmx / pdfTeX output this probe targets always writes a direct integer — we
+ * bound by `endstream`, but RETRY successive matches (and the plausible EOL-strip
+ * candidates for each) until one inflates, so an `endstream` byte sequence inside
+ * the compressed data can never abort the extraction. Non-flate streams
+ * (uncompressed objects) fail inflate and are skipped in either path.
  */
 export function inflateStreams(pdf) {
   const buf = Buffer.from(pdf);
   const out = [];
   let i = 0;
   for (;;) {
-    const s = buf.indexOf('stream', i);
-    if (s < 0) break;
-    // `indexOf('stream')` also matches inside 'endstream'; skip those.
-    if (buf.toString('latin1', Math.max(0, s - 3), s).endsWith('end')) {
-      i = s + 6;
-      continue;
-    }
-    let start = s + 6;
+    const kw = nextStreamKeyword(buf, i);
+    if (kw < 0) break;
+    // Data begins after the `stream` keyword and its single EOL (CRLF or LF, per
+    // the PDF spec). A zlib stream begins 0x78 — never 0x0a/0x0d — so skipping one
+    // leading EOL here never eats a compressed byte.
+    let start = kw + 6;
     if (buf[start] === 0x0d) start++;
     if (buf[start] === 0x0a) start++;
-    const e = buf.indexOf('endstream', start);
-    if (e < 0) break;
-    let end = e;
-    if (buf[end - 1] === 0x0a) end--;
-    if (buf[end - 1] === 0x0d) end--;
-    try {
-      out.push(inflateSync(buf.subarray(start, end)));
-    } catch {
-      /* not a flate stream (e.g. an uncompressed object) — ignore */
+
+    const len = directStreamLength(buf, kw);
+    if (len != null) {
+      // Authoritative: exactly /Length bytes. No EOL trimming, no `endstream` search.
+      const inflated = tryInflate(buf, start, start + len);
+      if (inflated) out.push(inflated);
+      // Resume PAST this stream's real `endstream` (it follows the counted bytes),
+      // so a `stream`/`endstream` sequence inside the compressed data can never be
+      // mistaken for the next stream's boundary.
+      const es = buf.indexOf('endstream', start + len);
+      i = es < 0 ? start + len : es + 9;
+    } else {
+      // Indirect (or unparseable) /Length: bound by `endstream`, retrying past any
+      // spurious in-binary matches until a candidate inflates.
+      const { inflated, next } = inflateByEndstreamSearch(buf, start);
+      if (inflated) out.push(inflated);
+      i = next;
     }
-    i = e + 9;
   }
   return out;
+}
+
+/** Next `stream` keyword at/after `from` that is not the tail of `endstream`. */
+function nextStreamKeyword(buf, from) {
+  let s = from;
+  for (;;) {
+    s = buf.indexOf('stream', s);
+    if (s < 0) return -1;
+    // `indexOf('stream')` also matches inside `endstream`; skip those.
+    if (buf.toString('latin1', Math.max(0, s - 3), s).endsWith('end')) {
+      s += 6;
+      continue;
+    }
+    return s;
+  }
+}
+
+/**
+ * The direct-integer `/Length` of the stream whose `stream` keyword is at `kw`,
+ * or null when the dict cannot be parsed or /Length is an indirect ref (`N M R`,
+ * which the caller then resolves via the `endstream` fallback). The stream dict is
+ * the `<< … >>` immediately preceding the keyword; its extent is found by matching
+ * `>>`/`<<` depth (so a nested dict such as /DecodeParms is handled correctly).
+ */
+function directStreamLength(buf, kw) {
+  const dictEnd = buf.lastIndexOf('>>', kw);
+  if (dictEnd < 0) return null;
+  let depth = 0;
+  let dictStart = -1;
+  for (let j = dictEnd; j >= 0; j--) {
+    if (buf[j] === 0x3e && buf[j + 1] === 0x3e) {
+      depth++;
+      j--;
+    } else if (buf[j] === 0x3c && buf[j + 1] === 0x3c) {
+      depth--;
+      j--;
+      if (depth === 0) {
+        dictStart = j + 1;
+        break;
+      }
+    }
+  }
+  if (dictStart < 0) return null;
+  const dict = buf.toString('latin1', dictStart, dictEnd + 2);
+  // `/Length 829` → direct integer; `/Length 12 0 R` → indirect (trailing group matches).
+  const m = dict.match(/\/Length\s+(\d+)(\s+\d+\s+R\b)?/);
+  if (!m || m[2]) return null;
+  return Number(m[1]);
+}
+
+/** inflateSync over buf[start,end), or null on any failure (non-flate / truncated). */
+function tryInflate(buf, start, end) {
+  if (end <= start) return null;
+  try {
+    return inflateSync(buf.subarray(start, end));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Bound a stream by `endstream` when its /Length is not a usable direct integer.
+ * The first `endstream` can be a byte sequence inside the compressed data, so we
+ * try successive matches; for each we try the plausible data ends (stripping a 1-
+ * or 2-byte EOL delimiter, or none) and accept the first that inflates — so this
+ * path is itself immune to both an in-binary `endstream` and a trailing-EOL byte.
+ * Returns the inflated bytes (or null) and the offset at which to resume scanning.
+ */
+function inflateByEndstreamSearch(buf, start) {
+  let from = start;
+  let firstE = -1;
+  for (;;) {
+    const e = buf.indexOf('endstream', from);
+    if (e < 0) {
+      // Exhausted with nothing inflatable (e.g. a genuinely non-flate stream on
+      // this indirect-/Length path). Resume just PAST THE FIRST `endstream`
+      // (the pre-fix behavior) — NOT buf.length: aborting the whole scan here
+      // would silently drop every later stream, incl. a page-bearing ObjStm,
+      // reintroducing the 0-pages-on-a-valid-PDF class this module exists to fix.
+      return { inflated: null, next: firstE >= 0 ? firstE + 9 : buf.length };
+    }
+    if (firstE < 0) firstE = e;
+    for (const end of [e - 1, e - 2, e]) {
+      const inflated = tryInflate(buf, start, end);
+      if (inflated) return { inflated, next: e + 9 };
+    }
+    from = e + 9;
+  }
 }
 
 /** Decode a ToUnicode destination (a run of UTF-16BE code units) to a JS string.

@@ -5,6 +5,45 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — Fix: conformance pdf-probe drops a page-tree object stream (CI red)
+
+**Red CI fixed** (item-8 build run 30050548281: `conformance` failed,
+`idx-makeindex` probed 0 pages on a VALID 2-page PDF; build + demo-smoke
+green). NOT a product regression — a test-oracle bug. `idx-makeindex`'s
+page tree lives entirely inside one FlateDecode object stream (`/ObjStm`)
+that embeds the build timestamp, so its compressed bytes re-roll every
+run (the CI PDF was 7648 B vs 7656 B locally). `conformance/pdf-probe.mjs`
+`inflateStreams` bounded each stream by an `endstream` TEXT SEARCH then
+stripped a trailing EOL — and when the stream's last COMPRESSED byte was
+`0x0d` it over-stripped one byte, truncating the deflate stream →
+`inflateSync` throws → the page ObjStm silently dropped → 0 pages.
+Empirically 56/4000 timestamp variants failed, ALL with last-byte
+`0x0d` (perfect correlation); the `endstream`-in-binary sibling was 0/4000
+(far rarer). Intermittent, environment-correlated — exactly why it hid
+until now.
+
+**Fix:** `inflateStreams` is now `/Length`-authoritative — slice exactly
+`/Length N` bytes (no EOL trim, no `endstream` search) when N is a direct
+integer; fall back to a retry-successive-`endstream` search only for an
+indirect `/Length N M R`. A valid flate stream is never silently dropped.
+`{count,viaPagesCount,leafPageObjects}` shape unchanged; §8 oracle NOT
+weakened (a broken/truncated/wrong PDF still reads wrong — verified
+adversarially: fail-safe undercount, never a false green).
+
+**Review: request-changes → fixed.** The new indirect-`/Length` fallback,
+on exhausting all candidates, returned `next: buf.length` — aborting the
+WHOLE scan and dropping every later stream (a latent recurrence of the
+same 0-pages class). Fixed to resume past the first `endstream`; added a
+case-D regression test (non-flate indirect-`/Length` stream before the
+page stream). `conformance/pdf-probe.test.mjs` (NEW, 10 tests, wired into
+build.yml CI): reproduces the exact drop against the verbatim pre-fix
+logic. Validated: 6000-variant sweep 0 drops; conformance green ×5 vs the
+CI artifact (idx-makeindex = 2 pages every time); runtime 267/267.
+
+**Observation (descoped):** the PDF's embedded timestamp is nondeter-
+ministic run-to-run (repro is descoped — §6.1 amendment); the fix targets
+the PROBE, not the PDF.
+
 ## 2026-07-24 — M4 item 8: beyond-basic corpus + integration (target-driven)
 
 **Done, reviewer-approved (no blockers).** The conformance corpus now

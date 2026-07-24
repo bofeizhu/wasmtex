@@ -50,6 +50,7 @@ describe('published ESM uses explicit .js specifiers (native Node + browser port
       const source = readFileSync(file, 'utf8');
       for (const match of source.matchAll(RELATIVE_SPECIFIER)) {
         const spec = match[1];
+        if (spec === undefined) continue; // capture group always matches, but narrow for TS
         if (!/\.(?:js|json)$/.test(spec)) {
           offenders.push(`${file.slice(RUNTIME_ROOT.length)}: '${spec}'`);
         }

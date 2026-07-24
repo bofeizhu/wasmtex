@@ -1,12 +1,19 @@
-# wasmtex
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/wordmark-dark.svg">
+    <img alt="WasmTeX" src=".github/wordmark-light.svg" height="56">
+  </picture>
+</h1>
 
-**Current-TeX-Live LaTeX → PDF, entirely in the browser.** A real TeX Live 2026 typesetter compiled to WebAssembly — compile LaTeX to PDF in any browser-class runtime (web page, Web Worker, Electron renderer), with no server and no network at compile time.
+<p align="center"><strong>Current-TeX-Live LaTeX → PDF, entirely in the browser.</strong></p>
 
-[![npm](https://img.shields.io/npm/v/wasmtex.svg)](https://www.npmjs.com/package/wasmtex)
-[![license](https://img.shields.io/npm/l/wasmtex.svg)](LICENSE)
-![types](https://img.shields.io/npm/types/wasmtex.svg)
+<p align="center">
+  <a href="https://www.npmjs.com/package/wasmtex"><img alt="npm" src="https://img.shields.io/npm/v/wasmtex.svg"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/npm/l/wasmtex.svg"></a>
+  <img alt="types" src="https://img.shields.io/npm/types/wasmtex.svg">
+</p>
 
-wasmtex packages the genuine **XeTeX** and **pdfTeX** engines from **TeX Live 2026** — plus `bibtex8`, `makeindex`, and automatic engine reruns — behind one small, friendly JavaScript API. Point it at your `.tex` sources, get back a `Uint8Array` PDF. The same code that runs on your laptop runs offline in your users' tabs.
+wasmtex packages the genuine **XeTeX** and **pdfTeX** engines from **TeX Live 2026** — plus `bibtex8`, `makeindex`, and automatic engine reruns — behind one small, friendly JavaScript API. Point it at your `.tex` sources, get back a `Uint8Array` PDF, entirely client-side: no server, and no network at compile time. The same code that runs on your laptop runs offline in your users' tabs.
 
 > Pre-1.0: published on npm and usable today; the API may still change before 1.0.
 

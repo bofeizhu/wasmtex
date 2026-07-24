@@ -11,7 +11,7 @@
 # native-first pivot): builds our engine config (build/engines/) RAW on the
 # arm64 macOS host, fully offline, against the verified cache
 # (~/.cache/wasmtex/sources), and lands the engine wasm/js, engine .fmt formats,
-# and the texlive-basic data bundle in dist/ (git-ignored). The build tree lives
+# and the core + academic data bundles in dist/ (git-ignored). The build tree lives
 # out of tree (~/.cache/wasmtex/build); only dist/ enters the repo.
 #
 # Prerequisites (once):

@@ -69,6 +69,14 @@ const BROKEN_FILES = {
     '\\undefinedsubcmd\ntrailing text.\n',
 };
 
+// An academic-only document (§5.4): `siunitx` is served ONLY by the academic
+// tier (absent from core), so compiling this with preload:['core'],
+// onDemand:['academic'] mounts the academic tier ON DEMAND, IN THE BROWSER, at
+// compile time — the M4-deferred real-browser proof of the JS-heap mount.
+const SIUNITX_DOC =
+  '\\documentclass{article}\n\\usepackage{siunitx}\n\\begin{document}\n' +
+  'The speed of light is \\SI{299792458}{\\meter\\per\\second}.\n\\end{document}\n';
+
 // ---------------------------------------------------------------------------
 // Shared page-error/console-error capture.
 // ---------------------------------------------------------------------------
@@ -136,7 +144,9 @@ test('hello-world (XeTeX) compiles to a valid, text-bearing PDF with clean diagn
   // --- stats surfaced (DESIGN.md §5.1 result.stats) ---
   expect(result.stats).toBeTruthy();
   expect(result.stats.passes).toBeGreaterThanOrEqual(1);
-  expect(result.stats.bundlesLoaded).toContain('texlive-basic');
+  // The default doc is core-only (preload:['core']); academic is NOT pulled.
+  expect(result.stats.bundlesLoaded).toContain('core');
+  expect(result.stats.bundlesLoaded, 'the core-only default doc must not pull academic').not.toContain('academic');
   expect(typeof result.stats.elapsedMs).toBe('number');
 
   // --- the migration is real: no vendored glue loaded; the runtime worker is ---
@@ -234,4 +244,58 @@ test('cancel() surfaces CancelledError and the next compile succeeds on a fresh 
 
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
+});
+
+test('on-demand academic tier mounts IN THE BROWSER: a siunitx doc compiles via preload:[core]+onDemand:[academic] (§5.4, M4 deferral)', async ({ page }) => {
+  const { consoleErrors, pageErrors } = watchErrors(page);
+  // `?manual=1`: boot the typesetter (preload core only) WITHOUT the default
+  // auto-compile — this test drives its own academic-requiring job.
+  await page.goto('/demo/?manual=1', { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.__wasmtex && window.__wasmtex.ready !== null, null, { timeout: 150_000 });
+  await page.evaluate(() => window.__wasmtex.ready);
+
+  // Skip gracefully if the served dist/ is core-only (a partial build): the
+  // academic tier (~496 MB) is not always present in CI. Presence is read from
+  // the shipped manifest's bundle list — no multi-hundred-MB probe download.
+  const hasAcademic = await page.evaluate(async () => {
+    try {
+      const m = await (await fetch('/dist/manifest.json')).json();
+      return (m.bundles || []).some((b) => b.name === 'academic' && (b.files || []).length > 0);
+    } catch {
+      return false;
+    }
+  });
+  test.skip(!hasAcademic, 'served dist/ has no academic tier (core-only build) — skipping the on-demand browser mount');
+
+  // Compile the siunitx doc: the §5.4 static \usepackage scan resolves `siunitx`
+  // against the manifest `provides` index → preselects `academic` → the tier is
+  // fetched + mounted into the LIVE engine's JS heap in-browser, then the compile
+  // runs. Generous wall time: mounting the academic .data is the slow path.
+  const out = await page.evaluate(
+    (doc) => window.__wasmtex.run({ engine: 'xetex', entry: 'main.tex', files: { 'main.tex': doc } }),
+    SIUNITX_DOC,
+  );
+  console.log(
+    `[smoke] on-demand siunitx: ok=${out.ok} exit=${out.exitCode} size=${out.size}B ` +
+      `bundles=[${out.stats?.bundlesLoaded}] passes=${out.stats?.passes} elapsed=${out.elapsedMs}ms`,
+  );
+
+  expect(out.ok, `siunitx compile failed (exit=${out.exitCode}); log tail:\n${(out.log || '').slice(-1800)}`).toBe(true);
+  expect(out.pdfBase64, 'no PDF bytes were produced').toBeTruthy();
+  expect(out.diagnostics, 'a clean siunitx doc parses to zero diagnostics').toEqual([]);
+
+  // The academic tier mounted ON DEMAND in-browser (it was NOT preloaded at
+  // init): bundlesLoaded is exactly [core, academic] — core from preload, academic
+  // from the compile-time §5.4 scan. This is the JS-heap mount proven in a real
+  // browser, not just Node.
+  expect(out.stats.bundlesLoaded).toContain('core');
+  expect(out.stats.bundlesLoaded, 'academic must have mounted on demand in-browser').toContain('academic');
+
+  const pdf = Buffer.from(out.pdfBase64, 'base64');
+  expect(pdf.byteLength, 'PDF should exceed 1 KB').toBeGreaterThan(1024);
+  expect(pdf.subarray(0, 5).toString('latin1'), 'PDF must start with %PDF-').toBe('%PDF-');
+  expect(pdf.subarray(-96).toString('latin1').replace(/\s+$/, '').endsWith('%%EOF'), 'PDF must end with %%EOF').toBe(true);
+
+  expect(pageErrors, `uncaught page errors:\n${pageErrors.join('\n')}`).toEqual([]);
+  expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
 });

@@ -52,8 +52,8 @@ const SCHEMA_WITNESS = {
 } satisfies AssetsInventory;
 
 const ENTRY_WITNESS = {
-  path: 'texlive-basic.data',
-  bytes: 79503467,
+  path: 'core.data',
+  bytes: 53867624,
   sha256: '2222222222222222222222222222222222222222222222222222222222222222',
   role: 'bundle-data',
 } satisfies AssetEntry;
@@ -77,7 +77,7 @@ function pinEntryFields(
 // Runtime contract against the real generated file.
 // ---------------------------------------------------------------------------
 
-// The six roles the generator emits (build/manifest/gen-assets.mjs ROLE TABLE).
+// The seven roles the generator emits (build/manifest/gen-assets.mjs ROLE TABLE).
 // (glue-pipeline / glue-worker were retired at M2 item 3 when the vendored
 // busytex glue was dropped from dist/.)
 const KNOWN_ROLES: ReadonlySet<string> = new Set([
@@ -87,6 +87,7 @@ const KNOWN_ROLES: ReadonlySet<string> = new Set([
   'bundle-js',
   'bundle-data',
   'checksums',
+  'license-inventory', // dist/licenses.json (M5 item 2 shipped-aggregate inventory)
 ]);
 
 // dist/ lives at the repo root; this file is runtime/test/, i.e. two levels down.
@@ -116,8 +117,8 @@ describe('assets.json <-> protocol schema (M1 item 4)', () => {
     expect(count).toBe(SCHEMA_WITNESS.assets.length);
 
     const [path, bytes] = pinEntryFields(ENTRY_WITNESS);
-    expect(path).toBe('texlive-basic.data');
-    expect(bytes).toBe(79503467);
+    expect(path).toBe('core.data');
+    expect(bytes).toBe(53867624);
   });
 
   it.runIf(present)(

@@ -521,3 +521,173 @@ is data (JSON, exempt from the header scan). Inputs read are our own
 `dist/manifest.json` and `build/budgets.json` only — no third-party code. No
 GPL/AGPL source and no other WASM-TeX wrapper opened or consulted (none
 encountered); the budget model is original.
+
+---
+
+## Item 6 — soak + browser matrix + real-browser on-demand mount + demo migration + alias drop
+
+Dated 2026-07-24. The hardening finale (five parts): a real-wasm soak test (50
+sequential jobs, seeded cancellations, no cross-job contamination, dispose frees
+the engine); the DESIGN §8 browser matrix (Chromium + Firefox + WebKit); the
+M4-deferred real-browser on-demand academic mount; migrating the demo off the
+`texlive-basic` alias to the tiered `preload:['core'], onDemand:['academic']`
+model; and dropping the `texlive-basic` byte-alias emission from the build. All
+validated locally against a freshly-regenerated native `dist/` (no container
+build). Runtime/demo/build work; the release/publish steps stay user-gated.
+
+### Part 1 — soak test (`runtime/test/soak.test.ts`, real wasm, node)
+
+Drives the PUBLIC §5.1 API over the real busytex wasm (the in-process
+`WorkerFactory` the integration suite already uses). 50 sequential jobs on ONE
+typesetter (`preload:['core']`), each a DISTINCT pdfLaTeX document with a unique
+marker (`SOAKUID####MARK`) in both a `\typeout` (→ `result.log`) and the body
+(→ the PDF). Engine choice **pdfTeX**: the soak stresses the LIFECYCLE, not engine
+coverage (XeTeX is already soaked by integration + conformance + the demo), and
+pdfTeX's literal `(...)` content stream makes the per-job content proof a
+self-contained inflate + string scan (no ToUnicode CMap). Skips cleanly without
+`dist/`, like `typeset-integration`.
+
+- **Seeded, deterministic cancels.** A tiny inlined LCG (Numerical-Recipes
+  constants — public-domain math, not copied) drives a fixed cancel pattern
+  (seed `0x50a1c0de`, ~30 %). No `Math.random`. Result: **37 completed / 13
+  cancelled**, stable run to run.
+- **Cancels are REAL worker terminations, not queued-drops.** First cut showed
+  `workerSpawns=3`: a synchronous `cancel()` after `typeset()` races the dispatch
+  pump, which drains on microtasks AFTER `await job.done` resolves — so the job
+  was usually still QUEUED (a queued-drop, no worker kill). Fix: drain the pump
+  with a macrotask (`setTimeout(…,0)`) before each job, so the next `typeset()`
+  dispatches against an IDLE pump + ready worker → the job is ACTIVE (posted) the
+  instant `typeset()` returns → a synchronous `cancel()` is a genuine
+  `Worker.terminate()` mid-flight, respawning a fresh engine. After the fix:
+  **`workerSpawns=12`** (11 real terminate+reinit cycles) — a genuine soak of the
+  §5.2 respawn path.
+- **No cross-job contamination.** Each completed job asserts its own marker is
+  present in BOTH transcript and recovered PDF text, and — O(n) per job — that
+  EVERY other job index's marker (prior, cancelled, or future) is ABSENT from
+  both. A stale-worker / spliced-log leak from a terminated job would trip it.
+  All 37 completions clean.
+- **Memory: what was measured + the deterministic gate.** An instrumented factory
+  counts every spawned worker and its `terminate()`; `live = spawned − terminated`
+  is the engine instances still referenced. After `dispose()`: **`live===0` and
+  `terminated===spawned` (12/12)** — every ~64 MiB-linear-memory + 54 MB-core-MEMFS
+  engine is dereferenced — and a FRESH typesetter then compiles cleanly. That
+  object-lifecycle gate is the meaningful, non-flaky "dispose frees the ~80 MB
+  engine" proof. I ALSO measured `process.memoryUsage()` (rss / external /
+  arrayBuffers) at baseline / peak / post-dispose+gc and log them. **EMPIRICAL
+  FINDING (documented, not gated):** none return to baseline in the Node
+  in-process harness — e.g. rss `92 → 1283 → 1283 MB`, external `4 → 1321 →
+  1321 MB`, arrayBuffers `0.2 → 243 → 243 MB`, even with `--expose-gc`. V8 retains
+  freed wasm linear memory and collects dropped Emscripten modules lazily (no
+  memory-pressure trigger). That is UN-COLLECTED GARBAGE, not a reference leak
+  (`live` oscillates 0↔1 during the run, 0 after dispose) — exactly the "RSS too
+  noisy in Node" case the task anticipates, so the lifecycle gate is the assertion
+  and the numbers are reported. Loose non-flaky sanity: post-dispose arrayBuffers
+  < peak + slack. Wall ~27 s.
+
+### Part 2 — browser matrix (`demo/playwright.config.mjs`)
+
+Added `firefox` (Desktop Firefox) + `webkit` (Desktop Safari) projects; Chromium
+stays primary. The whole smoke suite runs on all three (workers:1, one shared
+`serve.mjs`). **Result: 15/15 (5 tests × 3 browsers), all green.** No
+per-browser limitation to report — everything the task asked to run honestly runs
+on all three. Only performance note: Firefox's on-demand academic mount (496 MB
+file_packager into the JS heap) took **~14.6 s** vs ~5 s on Chromium/WebKit — a
+heavier large-ArrayBuffer path in Firefox, but a full pass, not a skip.
+
+### Part 3 — real-browser on-demand academic mount (the M4 deferral)
+
+New smoke test: with `preload:['core'], onDemand:['academic']`, compile a
+`\usepackage{siunitx}` doc (academic-only) IN A REAL BROWSER → the §5.4(a) static
+scan preselects academic → the tier is fetched + mounted into the LIVE engine's
+JS heap in-browser → a valid PDF, `bundlesLoaded === [core, academic]`. This
+proves the JS-heap mount works in a browser, not just Node (the M4-deferred
+proof). **Passes on Chromium, Firefox, AND WebKit.** Guarded: it reads the
+served `dist/manifest.json` bundle list first and green-skips if the served dist
+is core-only (a partial CI build), so it never spuriously fails — no
+multi-hundred-MB probe download.
+
+### Part 4 — demo migration (`demo/index.html`, `demo/README.md`)
+
+`preload:['texlive-basic']` → `preload:['core'], onDemand:['academic']`. The
+DEFAULT document stays core-only (so the existing content proof + negative
+control + `bundlesLoaded=[core]` all hold — the smoke's `not.toContain('academic')`
+is a new tripwire that the default doc does NOT pull academic). Added an
+**`example` dropdown**: "siunitx units" fills the textarea with an academic-only
+doc, so compiling it mounts academic on demand and the stats row visibly shows
+`bundles=[core, academic]` — the tiering demonstrated for a human, live. README
+rewritten (browser matrix, the tiered model, the on-demand skip-guard, the
+`playwright install` step).
+
+### Part 5 — drop the `texlive-basic` alias
+
+Removed the `cp core.{js,data} texlive-basic.{js,data}` emission from BOTH
+drivers (`build-native.sh` + `run-in-container.sh`), with a comment recording the
+drop + the breaking-change note. **The runtime's `aliasOf` mechanism STAYS**
+(`engine-host.ts` + the gen-assets/check-sizes alias detection + their synthetic
+tests): a consumer that still supplies an alias inventory keeps working; the
+BUILD simply no longer produces one. Regenerated the native `dist/` WITHOUT the
+alias: regenerated `build/stage/tiers.json` with the canonical repo `stage-tiers.mjs`
+(the work-tree synced copy predated `--manifest`; verified the repo `resolve.mjs`
+only ADDED `extractRelease` — `resolveTiers`/the split/provides are byte-identical,
+and core=157 / academic=2414 provides + rev 78233 match the packed bundles and the
+pre-drop manifest), then `make artifacts STAGE=dist` (native, sanctioned — copies
+the already-packed bundles, no re-`file_packager`, no non-determinism churn on the
+conformance-validated bundles). `dist/` now ships **only `core` + `academic`**
+(manifest bundles `[academic, core]`, no alias); the execution gate passed
+(XeTeX → TeX Live 2026 banner). Migrated `typeset-integration.test.ts` off the
+alias → `core` (it REQUIRED `texlive-basic.{js,data}`; would otherwise silently
+skip post-drop). `.github/workflows` + `conformance/run.mjs` REQUIRED were already
+`core`+`academic` (M4 item 8 — verified). **Breaking change for any 0.0.1 consumer
+that named `texlive-basic`** — flagged here for the release notes / M5 acceptance.
+
+### A gap the regen surfaced: the `license-inventory` asset role
+
+The regen ran the CURRENT `do_dist`, which (M5 item 2) emits `dist/licenses.json`
+(role `license-inventory`) — a file the OLD on-disk dist the runtime tests ran
+against never had. So the runtime real-dist tests saw the role for the first
+time. The protocol's `AssetRole` is an OPEN union (`(string & {})`), so the
+runtime TOLERATES it (conformance + the on-demand tests loaded the dist fine),
+but the named-hints list didn't include it and `assets.test.ts`'s strict
+`KNOWN_ROLES` gate rejected it. Fix: added `'license-inventory'` to the protocol
+`AssetRole` hints + `KNOWN_ROLES` (the runtime should NAME every role that ships
+in its manifest). Also updated the two real-dist alias assertions (`manifest.test.ts`
+now asserts the alias is GONE — exactly `[academic, core]`; `assets.test.ts`'s
+synthetic witness de-references the retired alias → `core.data`). An item-2
+loose end, surfaced (not silently) by a correctly-built dist.
+
+### Validation (local, against the regenerated alias-free `dist/`)
+
+- **Soak green** (measurement + gate above): 37 completed / 13 cancelled,
+  workerSpawns=12, live-after-dispose=0, fresh reinit clean; memory reported.
+- **Runtime suite: 268/268** (13 files), incl. the migrated integration, the
+  soak, the on-demand-tier tests, and the fixed real-dist assertions. `typecheck`
+  clean.
+- **Conformance: 12/12** against the alias-free dist (manifest integrity preflight
+  OK; `sci-paper`/`unicode-math`/`tikz-standalone`/`cjk-*` mount academic on
+  demand as before).
+- **Browser matrix: 15/15** — chromium + firefox + webkit, incl. the new
+  on-demand test (per-browser results above).
+- **Build tooling: 54/54** (`gen-assets` + `check-sizes` + `licenses` unit tests
+  — the retained alias-detection code still passes with synthetic fixtures).
+- **Drivers**: `bash -n` clean; alias `cp` gone (0 lines); `texlive-basic` in
+  `build/artifacts/*.sh` is now comment-only.
+
+### Flagged for the orchestrator / release notes
+
+- **BREAKING (release notes):** `texlive-basic` is dropped at v0.1.0 — a 0.0.1
+  consumer that named the `texlive-basic` bundle must switch to `core`
+  (+ `academic` on demand). Acceptable pre-1.0 (name-reservation release).
+- **`M5.md` item 6 checkbox** left unchecked — flipped by the orchestrator on
+  review/acceptance (the item-2/3/4/5 pattern).
+- The `license-inventory` role addition touches `runtime/src/protocol.ts` (the
+  constitutional trust module) — a one-line, additive, type-only union member;
+  worth a reviewer glance even though it is behaviourally inert (types erased).
+
+### Provenance
+
+Original work, SPDX-MIT. The soak PRNG is textbook LCG math (public domain,
+inlined, not copied); the soak's pdfTeX text extractor is a self-contained
+reduction of `conformance/pdf-probe.mjs` (our own module — it can't be imported
+into the typechecked runtime tree, which is outside its rootDir and plain JS).
+No GPL/AGPL source and no other WASM-TeX wrapper opened or consulted (none
+encountered).

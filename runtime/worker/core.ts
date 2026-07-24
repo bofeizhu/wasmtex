@@ -22,7 +22,8 @@
 // journal "execution-model study"; the EngineHost contract below assumes it):
 //
 //   * ONE persistent MODULARIZE engine instance is loaded once (`host.load`),
-//     carrying the ~79 MB texlive-basic bundle so it is NOT reloaded per run.
+//     carrying the preloaded tier bundle(s) (~54 MB for `core`) — plus any
+//     on-demand tier mounted later — so they are NOT reloaded per run.
 //   * A compile is several applet runs (xetex, then xdvipdfmx; later bibtex8 /
 //     makeindex) sharing ONE Emscripten MEMFS. The MEMFS lives in the JS heap,
 //     so intermediate outputs (e.g. the `.xdv`) survive between runs — that is

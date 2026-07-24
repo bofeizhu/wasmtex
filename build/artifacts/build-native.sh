@@ -297,9 +297,9 @@ do_bundle() {
 do_dist() {
   banner "dist: assemble $dist (engine + formats + bundle + checksums)"
   # Our own assembly: the engine wasm/js, the standalone .fmt formats, and the
-  # texlive-basic data bundle. The vendored busytex worker/pipeline glue is NO
-  # LONGER shipped — the M1 runtime replaced its role and M2 makes the config
-  # ours, so dist/ carries only WasmTeX-consumed artifacts (M2 item 3 decision).
+  # per-tier data bundles (core + academic). The vendored busytex worker/pipeline
+  # glue is NO LONGER shipped — the M1 runtime replaced its role and M2 makes the
+  # config ours, so dist/ carries only WasmTeX-consumed artifacts (M2 item 3 decision).
   local wasm="$work/build/wasm" fmtdir="$work/build/texlive-tiers/texmf-dist/texmf-var/web2c"
 
   rm -rf "${dist:?}"/*
@@ -316,14 +316,13 @@ do_dist() {
     cp "$wasm/data/$t.js"   "$dist/$t.js"
     cp "$wasm/data/$t.data" "$dist/$t.data"
   done < "$work/build/stage/tiers.txt"
-  # Back-compat ALIAS (M4 item 3; dropped at M5). texlive-basic.{js,data} are byte
-  # copies of core.{js,data} so the demo + published 0.0.1 consumers that still
-  # name the `texlive-basic` bundle keep working unchanged. Consequence:
-  # texlive-basic.js loads core.data internally (its baked file_packager
-  # reference), so do NOT preload BOTH `texlive-basic` and `core` in one session
-  # (that would mount core.data twice). See docs/plans/M4.md risks + DESIGN §6.3 note.
-  cp "$wasm/data/core.js"   "$dist/texlive-basic.js"
-  cp "$wasm/data/core.data" "$dist/texlive-basic.data"
+  # (The `texlive-basic.{js,data}` back-compat byte-alias of `core` — carried
+  # M4→M5 for 0.0.1 consumers — is DROPPED at M5 item 6. dist/ now ships only the
+  # real tier names (`core`, `academic`); the alias emission was removed here. This
+  # is a BREAKING change for any 0.0.1 consumer that named `texlive-basic` — noted
+  # in the release notes. The runtime's aliasOf mechanism stays (engine-host.ts),
+  # so a consumer that still supplies an alias inventory keeps working; the BUILD
+  # simply no longer produces one.)
   # Standalone engine formats (also embedded in core; surfaced per spec).
   find "$fmtdir" -name '*.fmt' -exec cp {} "$dist/formats/" \;
 

@@ -235,12 +235,12 @@ describe('real dist/manifest.json (M4 item 4)', () => {
     expect(m.engines).toContain('pdftex');
     expect(m.engines).toContain('bibtex8');
 
-    // bundles: core + academic real tiers, texlive-basic alias, disjoint provides.
+    // bundles: core + academic real tiers ONLY (the texlive-basic byte-alias of
+    // core was dropped from the build at M5 item 6), disjoint provides.
     expect(Array.isArray(m.bundles)).toBe(true);
     const byName = new Map((m.bundles ?? []).map((b) => [b.name, b]));
     const core = byName.get('core');
     const academic = byName.get('academic');
-    const basic = byName.get('texlive-basic');
     expect(core).toBeDefined();
     expect(academic).toBeDefined();
 
@@ -255,9 +255,10 @@ describe('real dist/manifest.json (M4 item 4)', () => {
     const overlap = (academic?.provides ?? []).filter((p) => coreSet.has(p));
     expect(overlap).toEqual([]);
 
-    // The alias is honestly marked, not a duplicate third tier.
-    expect(basic?.aliasOf).toBe('core');
-    expect(basic?.provides).toBeUndefined();
+    // The retired texlive-basic alias is GONE: exactly the two real tiers ship,
+    // no alias bundle (M5 item 6 dropped the byte-alias emission from the build).
+    expect(byName.has('texlive-basic')).toBe(false);
+    expect((m.bundles ?? []).map((b) => b.name).sort()).toEqual(['academic', 'core']);
 
     // Real bundles carry files + bytes; the helper resolves against them.
     expect(core?.files).toContain('core.data');

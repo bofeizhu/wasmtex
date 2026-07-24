@@ -136,7 +136,7 @@ export type PassPolicy = 'auto' | PassCount;
 export type AutoOff = 'auto' | 'off';
 
 /**
- * A role an asset plays in the pipeline. These six literals are exactly the
+ * A role an asset plays in the pipeline. These seven literals are exactly the
  * roles the manifest generator (`build/manifest/gen-assets.mjs`) emits — one per
  * artifact kind in a built `dist/`. The `(string & {})` arm keeps them as
  * autocomplete hints while leaving the set OPEN: the generator OWNS the schema,
@@ -152,6 +152,7 @@ export type AssetRole =
   | 'bundle-js' // an Emscripten file_packager bundle loader
   | 'bundle-data' // an Emscripten file_packager bundle data blob
   | 'checksums' // the SHA256SUMS integrity list
+  | 'license-inventory' // the licenses.json shipped-aggregate license inventory (M5 item 2)
   | (string & {});
 
 /**

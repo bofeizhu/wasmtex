@@ -3,8 +3,9 @@
 A minimal static page — paste LaTeX, get a PDF — that also serves as the CI
 smoke test. Since M1 item 9 the page drives the `wasmtex` **runtime** (the §5
 `createTypesetter` API over a correlated worker), not the vendored busytex glue.
-Playwright drives it in Chromium (primary; Electron-equivalent), with Firefox
-and WebKit as an advisory matrix deferred to M5.
+Playwright drives it across the DESIGN.md §8 **browser matrix** — Chromium
+(primary; Electron-equivalent), Firefox, and WebKit (all three run the same
+smoke suite as of M5 item 6).
 
 ## What it loads
 
@@ -13,11 +14,19 @@ The page (`index.html`) imports the built runtime as a native ES module from
 
 ```js
 createTypesetter({
-  assetsBaseUrl: '/dist/',                 // engine wasm + texlive-basic bundle
+  assetsBaseUrl: '/dist/',                 // engine wasm + core (preload) + academic (on-demand)
   workerUrl: '/runtime/dist/worker.js',    // our classic worker (replaces the glue)
-  bundles: { preload: ['texlive-basic'], onDemand: [] },
+  bundles: { preload: ['core'], onDemand: ['academic'] },
 })
 ```
+
+The page drives the **tiered** asset model (DESIGN.md §5.4): `core` is preloaded
+at init; `academic` mounts **on demand** at compile time, only when a document
+needs it. The default document is core-only; the **"siunitx units" example** (the
+`example` dropdown) uses an academic-only package, so compiling it pulls the
+academic tier on demand — the stats row then shows `bundles=[core, academic]`,
+demonstrating the split live. This replaces the retired `texlive-basic`
+byte-alias of `core`, which was dropped from the build at M5 item 6.
 
 `serve.mjs` serves the **repo root** on one origin, so `/dist/…` (engine
 artifacts) and `/runtime/dist/…` (built runtime) resolve same-origin — the
@@ -45,11 +54,16 @@ smoke. It runs `needs: artifacts-build`, downloading the `dist/` engine artifact
 that workflow built and asserting they landed before driving the smoke — the
 functional release gate, not the earlier green-skip stub.
 
+The **on-demand browser test** (siunitx → academic mount) needs the `academic`
+tier present in the served `dist/`. If `dist/` is a core-only (partial) build, it
+**skips gracefully** (it reads the tier list from `dist/manifest.json` first).
+
 ## Commands
 
 ```
-npm --prefix ../runtime ci   # once: install the runtime's build tools
-npm run build:runtime        # build runtime/dist (client ESM + worker.js)
-npm run serve                # http://127.0.0.1:8099/demo/
-npm test                     # pretest builds the runtime, then the Playwright smoke
+npm --prefix ../runtime ci        # once: install the runtime's build tools
+npx playwright install --with-deps # once: install the chromium/firefox/webkit browsers
+npm run build:runtime             # build runtime/dist (client ESM + worker.js)
+npm run serve                     # http://127.0.0.1:8099/demo/
+npm test                          # pretest builds the runtime, then the Playwright smoke (chromium + firefox + webkit)
 ```

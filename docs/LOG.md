@@ -5,6 +5,46 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M5 item 6: soak + browser matrix + demo migration + alias drop
+
+**Done, reviewer-approved.** The hardening finale, 5 parts:
+- **Soak** (`runtime/test/soak.test.ts`): 50 seeded-deterministic sequential
+  jobs, 37 completed / 13 cancelled → **12 REAL worker terminate+respawns**
+  (fixed a first cut where sync-cancels were queued-drops by draining the
+  pump so the job is ACTIVE when cancelled). ZERO cross-job contamination
+  (each job's unique marker present + all 49 others absent, in transcript
+  AND recovered PDF). `dispose()` → `live===0`, terminated===spawned.
+- **Memory finding — CONFIRMED-BENIGN (no dispose leak).** rss/external
+  don't return to baseline in the Node in-process harness, BUT arrayBuffers
+  PLATEAU at ~243 MB (≈≤2 live engines, not 12×~150 MB) — dropped engines'
+  linear memory + MEMFS ARE collected. The residue is V8/OS page retention,
+  not a reference leak (client dispose nulls the worker; adapter terminate
+  nulls the core→module→wasm graph). The §10 browser target uses
+  Worker.terminate() which reclaims the whole isolate regardless.
+- **Browser matrix**: firefox+webkit added → 15/15 (5 tests × 3), no skips,
+  incl. a REAL in-browser on-demand academic mount on all three (the M4
+  deferral closed; Firefox ~14 s for the 496 MB mount vs ~5 s elsewhere).
+- **Demo migrated** to preload:[core]/onDemand:[academic] with a live
+  on-demand siunitx example; default doc stays core-only (tripwire intact).
+- **texlive-basic alias DROPPED** from both drivers; regenerated dist ships
+  only core+academic (manifest/assets/SHA256SUMS carry no alias); the
+  runtime `aliasOf` mechanism is retained for a consumer supplying a custom
+  inventory. Surfaced + fixed: the `license-inventory` role (M5 item 2)
+  wasn't in the runtime's KNOWN_ROLES → added to protocol.ts AssetRole +
+  the test's closed gate (still rejects unknown roles).
+
+**BREAKING (0.1.0 release notes):** `texlive-basic` is removed — any 0.0.1
+consumer that named it must switch to `core` (+ `academic` on demand).
+Acceptable pre-1.0.
+
+**Review: request-changes → both fixed.** (1) The soak's `workerSpawns > 1`
+would have passed the very queued-drop bug it guards (that bug produced 3);
+tightened to `> cancelled.length/2`. (2) The embedding guide (a LIVE
+consumer doc) still documented the texlive-basic alias + showed it in the
+example manifest — an embedder following it would hit an init failure;
+purged to past-tense. Count-comment nits (six→seven roles, Makefile).
+268 runtime / 12 conformance / 15 browser / 54 build-tooling green.
+
 ## 2026-07-24 — M5 item 5: size budgets (preload-path tripwire)
 
 **Done, self-reviewed.** `build/budgets.json` (checked-in, human-

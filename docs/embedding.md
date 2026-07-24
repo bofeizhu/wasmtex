@@ -210,9 +210,10 @@ So a host can preload only `core` for fast cold starts and let documents that
 actually need the heavy set pull `academic` transparently — while a plain
 document never pays for it and never hits the network.
 
-> The manifest also lists a `texlive-basic` bundle as a back-compat **alias**
-> of `core`. It is deprecated and being removed for the first release; new hosts
-> should use `core`.
+> Earlier `0.0.x` builds also shipped a `texlive-basic` bundle as a back-compat
+> **alias** of `core`; it was removed at `v0.1.0`. Use `core` (+ `academic` on
+> demand). The runtime still honors an `aliasOf` entry if a custom inventory you
+> supply defines one, but the shipped manifest no longer contains it.
 
 ## 6. The job API
 
@@ -344,8 +345,7 @@ The manifest's relevant shape:
   "engines": ["bibtex8", "kpsewhich", "makeindex", "pdftex", "xdvipdfmx", "xetex"],
   "bundles": [
     { "name": "core",     "files": ["core.data", "core.js"],         "bytes": 55334848,  "provides": ["amsmath", "hyperref", ...] },
-    { "name": "academic", "files": ["academic.data", "academic.js"], "bytes": 505887127, "provides": ["pgf", "beamer", "fontspec", ...] },
-    { "name": "texlive-basic", "aliasOf": "core" }
+    { "name": "academic", "files": ["academic.data", "academic.js"], "bytes": 505887127, "provides": ["pgf", "beamer", "fontspec", ...] }
   ],
   "assets": [
     { "path": "busytex.wasm", "bytes": 27508145, "sha256": "1c9b96dc…", "role": "engine-wasm" },

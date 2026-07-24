@@ -4,10 +4,12 @@
 // Provenance: original work authored in the WasmTeX repository (see LICENSE).
 //   Not derived from any third-party source.
 //
-// Playwright config for the M0 demo smoke. Chromium ONLY: DESIGN.md §8 makes
-// Chromium the primary target (Electron-equivalent); Firefox/WebKit are the
-// advisory browser matrix deferred to M5. The `webServer` block boots
-// demo/serve.mjs (repo root, correct application/wasm MIME) for the run.
+// Playwright config for the demo smoke. BROWSER MATRIX (M5 item 6, DESIGN.md §8):
+// Chromium (primary; Electron-equivalent) + Firefox + WebKit (the §8 advisory
+// matrix, promoted from "deferred" to running at M5). The same smoke suite runs
+// on all three; a genuine per-browser limitation is documented, never silently
+// skipped. The `webServer` block boots demo/serve.mjs (repo root, correct
+// application/wasm MIME) once for the whole matrix.
 
 import { defineConfig, devices } from '@playwright/test';
 
@@ -30,6 +32,8 @@ export default defineConfig({
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
   ],
   webServer: {
     command: 'node serve.mjs',

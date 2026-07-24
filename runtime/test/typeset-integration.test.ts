@@ -5,7 +5,7 @@
 //   Not derived from any third-party source.
 //
 // The typeset-path integration test (M1 acceptance; M0 gap #2). It drives the
-// REAL EngineHost — the actual busytex wasm + the 79 MB texlive-basic bundle —
+// REAL EngineHost — the actual busytex wasm + the ~54 MB `core` bundle —
 // under Node via the test-only node loader, compiling hello-world through the
 // full xetex → xdvipdfmx sequence and asserting a valid %PDF- result. This is
 // the node-driven cousin of the Playwright demo smoke (DESIGN.md §8; runtime
@@ -38,12 +38,14 @@ import { createNodeModuleLoader, createNodeWorkerFactory } from '../node/harness
 
 // dist/ lives at the repo root; this file is runtime/test/, two levels down.
 const distDir = fileURLToPath(new URL('../../dist/', import.meta.url));
+// Preloads the `core` tier (the M5 item-6 alias drop retired the `texlive-basic`
+// byte-alias of core; this suite migrated to the real tier name in lockstep).
 const REQUIRED = [
   'assets.json',
   'busytex.js',
   'busytex.wasm',
-  'texlive-basic.js',
-  'texlive-basic.data',
+  'core.js',
+  'core.data',
 ];
 const present = REQUIRED.every((f) => existsSync(distDir + f));
 
@@ -63,7 +65,7 @@ function assetsFromDist(): AssetsConfig {
   return {
     baseUrl: distDir,
     inventory,
-    bundles: { preload: ['texlive-basic'], onDemand: [] },
+    bundles: { preload: ['core'], onDemand: [] },
   };
 }
 
@@ -112,7 +114,7 @@ describe('typeset integration (real wasm engine, node)', () => {
       expect(result.pdf).toBeInstanceOf(Uint8Array);
       expect(result.log.length).toBeGreaterThan(0);
       expect(result.stats.passes).toBe(1);
-      expect(result.stats.bundlesLoaded).toEqual(['texlive-basic']);
+      expect(result.stats.bundlesLoaded).toEqual(['core']);
 
       const pdf = result.pdf!;
       expect(pdf.length).toBeGreaterThan(1000);
@@ -271,7 +273,7 @@ describe('typeset integration (real wasm engine, node)', () => {
     120_000,
   );
 
-  // bibtex8 end to end (item 6). The texlive-basic bundle carries plain.bst
+  // bibtex8 end to end (item 6). The `core` bundle carries plain.bst
   // (verified: build/… bundle inventory), so a \bibliographystyle{plain} +
   // \bibliography document compiles fully: xelatex → bibtex8 (on the .aux) →
   // reruns to incorporate the .bbl and resolve citations → xdvipdfmx.
@@ -378,7 +380,7 @@ describe('public API over real wasm (createTypesetter, in-process adapter, node)
       expect(result.ok).toBe(true);
       expect(result.exitCode).toBe(0);
       expect(result.stats.passes).toBe(1);
-      expect(result.stats.bundlesLoaded).toEqual(['texlive-basic']);
+      expect(result.stats.bundlesLoaded).toEqual(['core']);
       expect(result.diagnostics).toEqual([]); // item 8: a clean compile parses to zero diagnostics
       expect(logLines.length).toBeGreaterThan(0); // the transcript streamed through onLog
 

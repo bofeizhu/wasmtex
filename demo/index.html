@@ -10,8 +10,16 @@
     (M1 item 9). The vendored worker/pipeline glue scripts were dropped from
     /dist entirely at M2 item 3; our runtime's worker (/runtime/dist/worker.js)
     replaced their role. (The busytex ENGINE artifacts — busytex.js/.wasm + the
-    texlive-basic bundle — are still loaded, by OUR worker, from /dist: they are
-    the engine, not the retired glue.)
+    `core` bundle (preloaded) and the `academic` bundle (mounted on demand) — are
+    still loaded, by OUR worker, from /dist: they are the engine, not the retired
+    glue.)
+
+  M5 item 6: the demo drives the TIERED asset model — preload:['core'],
+    onDemand:['academic']. The default document is core-only; the "siunitx units"
+    example pulls the academic tier on demand at compile time (§5.4 static
+    \usepackage scan), so the stats row visibly shows bundles=[core, academic]
+    when it compiles. This replaces the retired `texlive-basic` byte-alias of
+    core (dropped from the build at M5 item 6).
 
   M1 item 9: the demo migrated off the vendored glue onto the typed §5 runtime.
     The page loads the runtime as a native ES module, calls createTypesetter,
@@ -131,13 +139,21 @@
 
 <header>
   <h1>WasmTeX &middot; demo</h1>
-  <span class="sub">runtime v1 &middot; createTypesetter &rarr; XeTeX &rarr; xdvipdfmx, in-browser</span>
+  <span class="sub">runtime v1 &middot; createTypesetter &rarr; XeTeX &rarr; xdvipdfmx, in-browser &middot; core preloaded, academic on demand</span>
   <span id="badge" class="busy">loading&hellip;</span>
 </header>
 
 <main>
   <section>
-    <h2>hello.tex (source)</h2>
+    <h2>source</h2>
+    <div class="row">
+      <label for="sample" class="sub">example:</label>
+      <select id="sample">
+        <option value="hello">Hello, WasmTeX &mdash; core only</option>
+        <option value="siunitx">siunitx units &mdash; pulls academic on demand</option>
+      </select>
+      <span class="sub" id="tierhint">core is preloaded; the academic tier mounts on demand when a doc needs it</span>
+    </div>
     <textarea id="tex" spellcheck="false">\documentclass[11pt]{article}
 \begin{document}
 Hello, WasmTeX! This PDF was typeset in your browser.
@@ -171,9 +187,11 @@ network after the initial asset load.
   import { createTypesetter, CancelledError } from '/runtime/dist/src/index.js';
 
   // ---- Runtime wiring (the four §5.1 options the demo needs). --------------
-  const ASSETS_BASE = '/dist/';                 // engine wasm + texlive-basic bundle
+  const ASSETS_BASE = '/dist/';                 // engine wasm + core (preload) + academic (on-demand)
   const WORKER_URL  = '/runtime/dist/worker.js';// our classic worker (replaces the glue)
-  const BUNDLES     = { preload: ['texlive-basic'], onDemand: [] };
+  // Tiered assets (DESIGN §5.4): `core` is preloaded at init; `academic` mounts
+  // LAZILY at compile time only when a document needs it (the siunitx example).
+  const BUNDLES     = { preload: ['core'], onDemand: ['academic'] };
 
   // The default document's body sentence — the literal the content-level PDF
   // proof reconstructs (smoke.spec.mjs). Kept in sync with the textarea above.
@@ -183,6 +201,20 @@ network after the initial asset load.
   // resolution. Don't add math to the default doc without updating that proof.
   const BODY_MARKER = 'Hello, WasmTeX! This PDF was typeset in your browser.';
 
+  // ---- Example documents (the tiering demonstration). ----------------------
+  // `hello` is core-only (the default; its content proof drives the smoke).
+  // `siunitx` uses an academic-only package, so compiling it mounts the academic
+  // tier ON DEMAND (§5.4 static \usepackage scan) — the stats row then shows
+  // bundles=[core, academic], demonstrating the preload/on-demand split live.
+  const SAMPLES = {
+    hello: null, // the textarea's default content (left as-authored)
+    siunitx:
+      '\\documentclass[11pt]{article}\n\\usepackage{siunitx}\n\\begin{document}\n' +
+      'This document uses \\textsf{siunitx}, which ships in the \\textbf{academic} tier.\n' +
+      'Compiling it mounts that tier on demand: the speed of light is\n' +
+      '\\SI{299792458}{\\meter\\per\\second}.\n\\end{document}\n',
+  };
+
   // ---- Test-observable state (the Playwright smoke reads these on window). --
   window.__wasmtexStatus = 'loading';
   window.__wasmtexResult = null;   // set once, when the default compile settles
@@ -191,7 +223,13 @@ network after the initial asset load.
   const $ = (id) => document.getElementById(id);
   const badge = $('badge'), logEl = $('log'), elapsedEl = $('elapsed');
   const previewEl = $('preview'), downloadEl = $('download'), compileBtn = $('compile');
-  const statsEl = $('stats'), diagEl = $('diagnostics'), texEl = $('tex');
+  const statsEl = $('stats'), diagEl = $('diagnostics'), texEl = $('tex'), sampleEl = $('sample');
+
+  // Remember the default (core-only) document so switching back to "hello" restores it.
+  const HELLO_SOURCE = texEl.value;
+  sampleEl.addEventListener('change', () => {
+    texEl.value = sampleEl.value === 'siunitx' ? SAMPLES.siunitx : HELLO_SOURCE;
+  });
 
   function setStatus(status, label, cls) {
     window.__wasmtexStatus = status;

@@ -5,6 +5,42 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M5 item 3: release docs (README + embedding guide)
+
+**Done.** Root README.md rewritten — the stale "pre-code bootstrap, no
+engine yet" status replaced with the truth (M0–M4 Done, M5 in progress,
+first release 0.1.0 imminent not published, a "what works today"
+section). New `docs/embedding.md` (~525 lines): the DESIGN §10 embedding
+profile end to end — the JS-package/hosted-assets split, install, the
+asset archive tree, `application/wasm` MIME, same-origin boot, the real
+createTypesetter option table, the `preload:['core']/onDemand:['academic']`
+model + both §5.4 paths ("on-demand = local bundle mount, no compile-time
+network"), the job API (typeset/onLog/diagnostics/cancel/dispose,
+stats.bundlesLoaded) + a copy-pasteable example, cold start with zero
+storage, HOST-side manifest integrity verification, the custom-scheme
+path (locateAsset + workerUrl, Electron protocol.handle), the error
+taxonomy. runtime/README flipped ("assets ship as versioned GitHub
+Release archives assets-v<v>") + the quickstart bundles texlive-basic →
+core/academic.
+
+**Accuracy** (every API grep-verified vs client.ts/index.ts/protocol.ts):
+corrected first-draft errors — fontspec is in academic not core (a plain
+XeTeX doc is core-only; explicit font selection pulls academic); `tikz`
+isn't a provides key (ships via pgf → resolves by the retry, not the
+scan); locateAsset does NOT relocate the worker (workerUrl/workerFactory
+required under a custom scheme). **Node floor corrected to 18** (the
+README's "Requires Node 24" was an overclaim — vitest/esbuild floor is
+18, source is ES2022; Node 24 is the single TESTED major in CI, not the
+minimum; consuming wasmtex needs no Node — it's browser-targeted).
+Integrity is documented as a HOST-side step (the runtime validates the
+manifest shape + loads by role but does NOT re-hash — matches §10 "an
+integrity manifest the host CAN verify").
+
+**Item-8 spec surfaced:** manifest.json needs a lockstep package
+`version` field (0.1.0) for the documented `ASSETS_VERSION` soft-verify
+to check against — it carries schemaVersion + texliveSnapshot but no
+package-lockstep version. Recorded in M5.md item 8. Docs-only; no code.
+
 ## 2026-07-24 — M5 item 2: shipped-aggregate license enumeration + fail-closed audit
 
 **Done, reviewer-approved.** The released bundles now have a machine-

@@ -8,8 +8,8 @@ bundles, and a typed, job-oriented ESM API.
 
 ## Why
 
-- **Current TeX Live.** Tracks a pinned *current* TeX Live snapshot (starting
-  with TL 2026) and treats the rebase to the next year's release as a
+- **Current TeX Live.** Tracks a pinned *current* TeX Live snapshot (the first
+  release pins TL 2026) and treats the rebase to the next year's release as a
   first-class, scripted operation rather than an archaeology project.
 - **License clarity for proprietary hosts.** The repository's own code is MIT;
   the compiled artifacts are an *aggregate distribution of TeX Live programs*
@@ -22,8 +22,13 @@ bundles, and a typed, job-oriented ESM API.
 
 ## Status
 
-Pre-code bootstrap: scaffolding the repository, licensing, and CI skeletons;
-no engine or runtime code yet.
+Pre-1.0 and honest about it: the API may still change, and the design targets
+**one embedder** (a desktop app embedding WasmTeX in a hidden Electron view
+behind a custom scheme; see DESIGN.md §10). The engine, runtime, bundle
+system, and CI are built and accepted; **M5 — release engineering — is
+underway**, turning the accepted artifacts into versioned, verifiable release
+archives. **The first release is `0.1.0`** (npm `wasmtex@0.1.0`, asset tag
+`assets-v0.1.0`); it is imminent, not yet published.
 
 | Milestone | Goal | Status |
 | --- | --- | --- |
@@ -31,12 +36,57 @@ no engine or runtime code yet.
 | M0 | Faithful baseline — reproduce upstream busytex's build natively on the dev host | Done |
 | M1 | Runtime v1 — typed ESM API, XeTeX-first (LuaTeX dropped from v1) (MVP core) | Done |
 | M2 | Rebase to TeX Live 2026 — port patches, dump formats; LuaTeX exits the build | Done |
-| M3 | Build logistics & CI — pinned arm64 container as canonical builder, repro gate | In progress |
-| M4 | Bundles + manifests — tlpdb-driven tiering and on-demand resolution | Not started |
-| M5 | Release engineering + hardening — archives, audit, npm dry-run, corpus, budgets | Not started |
+| M3 | Build logistics & CI — pinned arm64 container as canonical builder, repro gate | Done |
+| M4 | Bundles + manifests — tlpdb-driven tiering and on-demand resolution | Done |
+| M5 | Release engineering — versioned archives, license audit, docs, hardening | In progress |
+| M5 | Release engineering + hardening — archives, audit, npm dry-run, corpus, budgets | In progress |
 
 (Milestone order revised 2026-07-22 — native-first bootstrap pivot; see
 DESIGN.md §9.)
+
+## What works today
+
+Against the pinned TeX Live 2026 snapshot, proven end to end by the runtime
+test suite, the Node conformance corpus, and a real-browser Playwright smoke:
+
+- **XeTeX** (primary; engine pass → `xdvipdfmx` → PDF) and **pdfTeX**, driven
+  through the typed `createTypesetter` API.
+- **Automatic multi-pass sequencing**: `bibtex8` when the `.aux` requests a
+  bibliography, `makeindex` on a non-empty `.idx`, and engine reruns until
+  references/TOC quiesce (bounded).
+- **Two data tiers**: `core` (~55 MB, always preloaded — the LaTeX base,
+  `amsmath`/`hyperref`/`geometry`/`babel`, `natbib`/`bibtex`, `makeindex`, the
+  `lm`/`cm` fonts, and the XeTeX/pdfTeX formats) and `academic` (~506 MB,
+  on-demand — `fontspec`, TikZ/PGF, `beamer`, `biblatex`, `unicode-math`,
+  `siunitx`, `tcolorbox`, CJK via `xeCJK`/`ctex`/`fandol`, …).
+- **On-demand resolution** (DESIGN.md §5.4): an up-front `\usepackage` scan
+  plus a missing-file retry mount the `academic` tier automatically and *only*
+  when a document needs it — loading another **local** bundle, never touching
+  the network at compile time.
+- **Structured diagnostics** parsed from the transcript (errors/warnings with
+  file/line), streaming `onLog`, real `cancel()` (worker termination), and
+  cold-start correctness with **zero browser storage**.
+
+Host-supplied fonts and CJK work by passing font bytes in the job's `files`
+map (DESIGN.md §6.3). `'luatex'` is reserved in the engine union but **not**
+implemented in v1 (a job requesting it is rejected with a clear error).
+
+## Using it / embedding
+
+- **[`docs/embedding.md`](docs/embedding.md)** — the embedding guide: install
+  the package, host the separately-published asset archives, point the runtime
+  at them (`assetsBaseUrl`, or a custom scheme via `locateAsset` + `workerUrl`),
+  verify the download against the integrity manifest, and drive the job API.
+  Written for the DESIGN.md §10 hard-constraint profile (same-origin host,
+  custom scheme, cold start, no network after load).
+- **[`runtime/README.md`](runtime/README.md)** — the npm-package-facing README
+  (`wasmtex`): quickstart, layout, dev commands, and test philosophy.
+
+The npm package ships **JavaScript only** (no engine, no bundles). The engine
+`wasm`, formats, and data bundles are published **separately** as versioned
+GitHub Release archives (`assets-v<version>`) that a host serves same-origin;
+`wasmtex@X.Y.Z` is designed to pair with `wasmtex-assets-X.Y.Z`. See the
+embedding guide for the version contract.
 
 ## Design
 

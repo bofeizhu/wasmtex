@@ -8,35 +8,40 @@ and automatic bibliography / index / rerun passes over a **correlated worker
 protocol** (every message carries a `jobId`). No DOM, no network after asset
 load, no required browser storage (§5.2).
 
-## Status: 0.0.x — early, real, but assets not yet released
+## Status: 0.0.x today — the first tagged release is `0.1.0`
 
-The runtime itself is **fully implemented and tested** (186 node tests + a
-real-browser Playwright suite; XeTeX and pdfTeX proven end to end against
-TeX Live 2026 engines, including bibliography via bibtex8 and makeindex).
-This 0.0.x release exists primarily to claim the package name while release
-engineering completes.
+The runtime is **fully implemented and tested** — a node unit suite over the
+correlated protocol, engine sequencing, bundle resolution, and diagnostics,
+plus a Node-driven typeset integration test and a real-browser Playwright
+smoke. XeTeX and pdfTeX are proven end to end against TeX Live 2026 engines,
+including bibliography via bibtex8, makeindex, and automatic on-demand mounting
+of the `academic` tier. The current `0.0.x` line claims the package name while
+release engineering (M5) finishes; **`0.1.0` is the first real, versioned
+release** — imminent, not yet published.
 
-**What is NOT yet available:** the engine assets (`busytex.wasm`, formats,
-the `texlive-basic` data bundle) that this library loads at runtime have **no
-official release channel yet** — versioned, integrity-manifested asset
-archives arrive with the project's release-engineering milestone. Until then,
-using this package requires building the assets from source (see the
-repository's `docs/rebase.md` Phase 0 + `make artifacts`; the native dev
-build is documented but development-only).
+**The assets ship separately, and now have a release channel.** The engine
+(`busytex.wasm`), preloaded formats, and the `core`/`academic` data bundles
+this library loads at runtime are published as **versioned GitHub Release
+archives** tagged `assets-v<version>` (the first is `assets-v0.1.0`). Host the
+archive that matches your installed `wasmtex` version and point the runtime at
+it via `assetsBaseUrl` — or, for a custom URL scheme, `locateAsset` +
+`workerUrl`. The full walkthrough (hosting, the `application/wasm` MIME
+requirement, integrity verification, custom scheme, cold start, the bundle
+model) is the **[embedding guide](../docs/embedding.md)**.
 
 Expect breaking changes before 1.0. `'luatex'` in the `EngineName` union is
 **reserved** — LuaTeX is not implemented in v1 (a job requesting it is
 rejected with a clear error).
 
-## Quickstart (once you have assets)
+## Quickstart
 
 ```js
 import { createTypesetter } from 'wasmtex';
 
 const tex = await createTypesetter({
-  assetsBaseUrl: '/dist/',                      // where your assets live
+  assetsBaseUrl: '/wasmtex-assets/',            // where you serve the unpacked asset archive
   workerUrl: '/node_modules/wasmtex/dist/worker.js',
-  bundles: { preload: ['texlive-basic'], onDemand: [] },
+  bundles: { preload: ['core'], onDemand: ['academic'] },
 });
 
 const job = tex.typeset({
@@ -60,7 +65,12 @@ const result = await job.done;   // { ok, exitCode, pdf, log, diagnostics, stats
 
 ## Dev commands
 
-Requires Node 24 (`engines`); CI runs the same major.
+Consuming `wasmtex` needs no particular Node — the package is browser-targeted
+(it runs in a Worker via `fetch` + `WebAssembly`). These **dev** commands have a
+toolchain floor of **Node ≥18** — the `engines` field, and the real minimum:
+vitest 3 and esbuild both support Node 18, and the runtime source uses only
+ES2022 features. CI and the pinned dev toolchain run **Node 24** (the single
+tested major), so use Node 24 if you want to match CI exactly.
 
 ```sh
 npm ci            # install from the committed lockfile (as CI does)

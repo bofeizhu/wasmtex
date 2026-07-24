@@ -148,3 +148,126 @@ The 22 gap packages are the key output the user should be aware of — all resol
 (`ltxmisc`, `frankenstein`, `preprint`, `was`, `fragments`) are the most worth a
 second look (old CTAN grab-bags); dropping any from `academic` is a valid
 alternative resolution (edit `tiers.mjs`). No shipped package is non-free.
+
+---
+
+## Item 3 — Docs: README + embedding guide + runtime README flip
+
+Dated 2026-07-24. Goal: make the shipped docs tell the truth for the imminent
+`0.1.0` release. Rewrite the stale root README status; write a real embedding
+guide for the DESIGN §10 profile; flip runtime/README's "no release channel
+yet" language; reconcile the Node-version claim; and document (as prose) the
+npm↔assets version convention that item 8 will code. Docs-only — no runtime or
+build code touched. Accuracy bar: every API/option documented is grep-verified
+present in `runtime/src/client.ts` / `index.ts` / `protocol.ts`; nothing
+aspirational is presented as shipped.
+
+### What was written
+
+- **`README.md` (root)** — rewritten. The old status table claimed "pre-code
+  bootstrap … no engine or runtime code yet" and marked M3 in-progress /
+  M4–M5 not started — all false. Now: M0–M4 **Done**, M5 **In progress**; the
+  first release is `0.1.0` (imminent, not published); a new "What works today"
+  section (XeTeX + pdfTeX end to end, bibtex8/makeindex auto passes, the
+  `core`/`academic` tiers, §5.4 on-demand resolution, diagnostics, real
+  cancel, cold start); an npm-JS-only + separately-hosted-assets note; links to
+  the embedding guide and runtime README. Kept the (accurate) Why / License /
+  Acknowledgments sections.
+- **`docs/embedding.md`** — new, ~525 lines. The §10 hard-constraint profile end
+  to end: the JS-package/hosted-assets split; install; where assets live
+  (GitHub Release `assets-v<v>` archives, NOT the npm tarball) + the tree; the
+  `application/wasm` MIME requirement; same-origin boot via `assetsBaseUrl`; the
+  full real `createTypesetter` option table; the `preload:['core'] /
+  onDemand:['academic']` model with the crucial "on-demand = a LOCAL bundle
+  mount, no compile-time network" clarification and both §5.4 resolution paths;
+  the job API (`typeset`/`onLog`/`diagnostics`/`cancel`/`dispose`,
+  `stats.bundlesLoaded`) + a copy-pasteable minimal example mirroring the demo;
+  cold start with zero browser storage; **host-side** integrity verification
+  against `manifest.json` (with a Node/crypto sketch); the custom-scheme path
+  (`locateAsset` + `workerUrl`, Electron `protocol.handle`); the version
+  convention; the error taxonomy; guarantees/non-goals.
+- **`runtime/README.md`** — three edits: Status section flipped ("assets ship as
+  versioned GitHub Release archives `assets-v<v>`; host them, pass
+  `assetsBaseUrl`" + embedding-guide link, replacing "no official release
+  channel yet / build from source"); quickstart bundles `texlive-basic` →
+  `core`/`academic`; the Node-version line reconciled (below).
+- **`docs/plans/M5-journal.md`** — this entry.
+
+### Node-version reconciliation (the decision)
+
+Tension: `package.json` `engines.node` said `>=18`; runtime/README said
+"Requires Node 24 (`engines`); CI runs the same major" — internally
+contradictory and wrong about `engines`. **Determined the actual minimum and
+kept `engines: ">=18"`; fixed the README to match.** Rationale:
+
+- The published package is **browser-targeted** — consuming `wasmtex` runs it in
+  a Worker via `fetch`+`WebAssembly` and needs no Node at all. `engines.node`
+  only gates npm-install warnings, so inflating it to 24 would spuriously warn
+  browser consumers whose Node only runs their bundler.
+- The real **toolchain** floor is Node 18: `runtime/node_modules/vitest`
+  (3.2.7) declares `engines.node ^18 || ^20 || >=22`, `esbuild` (0.28.1)
+  declares `>=18`, TypeScript 5.9 needs ≥14.17. The runtime source uses only
+  ES2022 (`Object.hasOwn` = Node 16.9+, `globalThis.crypto` with a
+  `Math.random` fallback so no hard Node-19 dep) and tests use `structuredClone`
+  (Node 17+) — all ≤18. Grepped `runtime/{src,worker,node,test}` for
+  Node-20/22/24-only APIs (`Array.fromAsync`, `findLast`, `toSorted`, …): none.
+- CI **does** pin Node 24 (`build.yml`, `runtime-tests.yml`,
+  `artifacts-build.yml` all `node-version: 24`; no `.nvmrc`). So 24 is the
+  single *tested* major, not the *minimum*. The README now says exactly that:
+  consuming needs no particular Node; the dev floor is ≥18 (the true minimum);
+  CI/the pinned toolchain run Node 24, use it to match CI.
+
+Did NOT change `package.json` — `>=18` was already correct; the bug was the
+README overclaim. (No code changes at all this item, per scope.)
+
+### The version convention (documented; coded at item 8)
+
+Documented as the **intended** `0.1.0` contract, explicitly flagged not-yet-
+shipped: `wasmtex@X.Y.Z` will export an **`ASSETS_VERSION`** constant and
+`createTypesetter` will **soft-verify** the fetched `manifest.json`'s declared
+version matches (clear error on mismatch, overridable), so a consumer hosts the
+matching `wasmtex-assets-X.Y.Z` archive. Today the pairing is a convention the
+host upholds by hosting the right archive. **Item 8 implements the constant +
+the soft verify** (and must add a lockstep `version` field to the manifest —
+the current `manifest.json` carries `schemaVersion` and `texliveSnapshot` but
+no package-lockstep version for `ASSETS_VERSION` to check against). Recorded in
+both the embedding guide (§10) and this journal so item 8 has the spec.
+
+### API details the code clarified (worth knowing)
+
+- **No runtime integrity check.** The manifest carries per-asset `sha256`/`bytes`
+  and a `SHA256SUMS` list, but the runtime does **not** re-hash assets at load —
+  it validates the manifest's *shape* and loads by role. Grepped
+  `runtime/{worker,src}`: no `crypto.subtle`/`digest`/hash-verify. This matches
+  DESIGN §10 exactly ("an integrity manifest the host **can** verify after
+  download") — so the guide documents integrity as a **host-side** step (with a
+  Node sketch), not a runtime feature. Avoided the easy overclaim.
+- **`locateAsset` does not relocate the worker script.** It is consulted for
+  inventory entries and the manifest filename (`manifest.json`, fallback
+  `assets.json`), but the default worker URL derives from `assetsBaseUrl` only
+  (documented inline in `client.ts`). So the custom-scheme section stresses that
+  `workerUrl` (or `workerFactory`) is **required** under a custom scheme —
+  otherwise the worker would be fetched from the wrong origin.
+- **`fontspec` is in `academic`, not `core`.** Verified every package-to-tier
+  claim against `dist/manifest.json` `provides` (a Node one-liner). First draft
+  put `fontspec` in core (intuitive — it's XeTeX's font front door); the
+  manifest puts it in `academic`. Corrected both README and the guide, and added
+  the note that a plain XeTeX doc typesets from `core` alone but explicit font
+  selection pulls `academic`.
+- **`provides` lists tlpdb package names, so `tikz` ≠ a provides key.** TikZ is
+  shipped by the `pgf` package; `provides` lists `pgf`, not `tikz`. Fixed the
+  manifest example (`"tikz"` → `"pgf"`) and kept the tier descriptions at the
+  feature level ("TikZ/PGF"). `\usepackage{tikz}` resolves via the §5.4
+  missing-file retry (`tikz.sty` not found → mount `academic`), not the static
+  `\usepackage` name scan — the guide describes both paths without pinning a
+  broken static-scan example.
+- **Test count left unpinned.** The old README's "186 node tests" is stale (M4
+  log cites 267); a grep-count undercounts parametrized cases. Per the repo's
+  rebase-proofing philosophy (drifting numbers aren't hardcoded), described the
+  coverage instead of pinning a number.
+
+### Provenance
+
+Original prose, MIT; per-file SPDX header on `docs/embedding.md`. No third-party
+docs or other WASM-TeX wrapper consulted; every API shape traced to this repo's
+own `runtime/src/*`. No GPL/AGPL source opened (none encountered).

@@ -5,6 +5,34 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M5 item 9: version bump 0.0.1 → 0.1.0 (release prep) + cut assets-v0.1.0
+
+**Done (user asked to cut the release via gh).** Bumped `wasmtex` to **0.1.0**
+in lockstep across the three sources: `runtime/package.json`,
+`runtime/src/version.ts` (`version`, and `ASSETS_VERSION = version`), and
+`runtime/package-lock.json` (synced via `npm install --package-lock-only`;
+minimal diff). Verified: the lockstep unit test (ASSETS_VERSION === version ===
+package.json === 0.1.0) 13/13 green; `tsc` build green; `npm pack --dry-run` →
+`wasmtex-0.1.0.tgz`, 162.6 kB, 45 files (runtime dist + `.d.ts` + README +
+LICENSE; assets are NOT in the npm tarball — they ship as the separate GitHub
+release archives).
+
+Coupling handled: bumping `ASSETS_VERSION` to 0.1.0 makes the runtime soft-verify
+reject the stale LOCAL 0.0.1 dist (integration tests would fail locally until a
+rebuild) — but runtime-tests CI has NO dist (`npm test` with the real-wasm tests
+green-skipping), so main CI stays green, and release.yml rebuilds the dist at
+0.1.0 in-container so the shipped set is internally consistent.
+
+Pre-cut fix: release.yml's demo-smoke installed chromium-only while the spec runs
+the 3-browser matrix (the pre-ef287a9 drift) — a tag push would have failed the
+release build's demo-smoke on firefox/webkit. Fixed to install all three.
+
+**Release cut:** tag `assets-v0.1.0` pushed → release.yml (tag-triggered) runs the
+lockstep gates + pinned-container build + conformance + demo-smoke + pack +
+rendered notes, then creates a **DRAFT** GitHub Release with the 3 archives +
+manifest/SHA256SUMS/licenses. Publishing the draft and `npm publish` remain
+USER-ONLY (the workflow stops at a draft by design; no npm publish in CI).
+
 ## 2026-07-24 — Fix: demo importmap drift broke the browser demo-smoke (item-8 regression)
 
 **Done.** The M5 item-8 artifacts-build (commit 8e303c9) went red: `build` and

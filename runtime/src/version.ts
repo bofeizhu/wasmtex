@@ -18,7 +18,7 @@
  * runtime read of `package.json`) so the value survives bundling and needs no
  * filesystem or JSON-import support in the consumer.
  */
-export const version = '0.0.1';
+export const version = '0.1.0';
 
 /**
  * The version of the WasmTeX **asset archives** (`wasmtex-assets-<v>.tar.gz`,

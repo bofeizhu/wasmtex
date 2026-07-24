@@ -1,7 +1,8 @@
 # runtime/ — the `wasmtex` package
 
-`wasmtex` is a typed, framework-free ESM library that typesets TeX to PDF inside
-a Worker. It implements the original API defined in **DESIGN.md §5**:
+**WasmTeX** is a typed, framework-free ESM library that typesets TeX to PDF inside
+a Worker (published to npm as `wasmtex`). It implements the original API defined
+in **DESIGN.md §5**:
 `createTypesetter`, `Typesetter.typeset()` job objects (`done` / `onLog` /
 `cancel()`), streaming line-buffered logs, parsed diagnostics, engine choice,
 and automatic bibliography / index / rerun passes over a **correlated worker

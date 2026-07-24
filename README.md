@@ -13,7 +13,7 @@
   <img alt="types" src="https://img.shields.io/npm/types/wasmtex.svg">
 </p>
 
-wasmtex packages the genuine **XeTeX** and **pdfTeX** engines from **TeX Live 2026** — plus `bibtex8`, `makeindex`, and automatic engine reruns — behind one small, friendly JavaScript API. Point it at your `.tex` sources, get back a `Uint8Array` PDF, entirely client-side: no server, and no network at compile time. The same code that runs on your laptop runs offline in your users' tabs.
+WasmTeX packages the genuine **XeTeX** and **pdfTeX** engines from **TeX Live 2026** — plus `bibtex8`, `makeindex`, and automatic engine reruns — behind one small, friendly JavaScript API. Point it at your `.tex` sources, get back a `Uint8Array` PDF, entirely client-side: no server, and no network at compile time. The same code that runs on your laptop runs offline in your users' tabs.
 
 > Pre-1.0: published on npm and usable today; the API may still change before 1.0.
 
@@ -72,7 +72,7 @@ The academic tier mounts **automatically, only when a document requires it**, by
 
 ## Assets
 
-wasmtex splits the tiny driver from the large payload:
+WasmTeX splits the tiny driver from the large payload:
 
 - The **npm package** is JavaScript only (~160 KB) — it does not bundle the hundreds of MB of engine and data.
 - The **engine wasm, preloaded formats, and data bundles** ship as GitHub Release archives tagged `assets-v<version>`, kept in **lockstep** with the npm version: `wasmtex@X.Y.Z` ↔ `assets-vX.Y.Z`.
@@ -86,7 +86,7 @@ You host the unpacked archive yourself and point `assetsBaseUrl` at it, so you c
 
 ## License
 
-wasmtex's own code is **MIT** — see [LICENSE](LICENSE). The compiled artifacts are an **aggregate distribution of TeX Live programs** under their own free licenses, driven as separate programs (argv in, files out) with no copyleft wrapper layer around your code — proprietary hosts included. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full picture.
+WasmTeX's own code is **MIT** — see [LICENSE](LICENSE). The compiled artifacts are an **aggregate distribution of TeX Live programs** under their own free licenses, driven as separate programs (argv in, files out) with no copyleft wrapper layer around your code — proprietary hosts included. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full picture.
 
 ## Acknowledgment
 

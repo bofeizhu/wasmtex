@@ -1,0 +1,33 @@
+{
+  "_comment": "WasmTeX per-asset size budgets (M5 item 5, DESIGN.md §8). Checked by build/audit/check-sizes.mjs against dist/manifest.json's per-file `bytes` in the dist stage of BOTH build drivers (build-native.sh / run-in-container.sh); an over-budget asset FAILS the build, mirroring the fail-closed license audit (M5 item 2). Keyed by manifest asset path. This file is human-editable: tuning a maxBytes is a deliberate, reviewed act — record WHY (a real payload change, a rebase) in the same commit. JSON has no comments, so the `_`-prefixed keys carry the prose.",
+  "_rationale": "The PRELOAD path (engine wasm + core bundle: busytex.wasm, core.js, core.data) is budgeted STRICTLY because it is the cold-start cost every embed pays before the first typeset — unnoticed growth there regresses every user on every page load, so its budgets sit close above the current sizes and fail loud on real growth. The ON-DEMAND academic tier (academic.js, academic.data) is budgeted LOOSELY: it mounts only when a document scan needs a package it provides, so its size trades against corpus completeness, not cold-start latency. Its budget is a drift tripwire (catch a runaway ~2400-package tier), not a tight ceiling.",
+  "_units": "maxBytes is an EXACT byte ceiling (an asset FAILS when its manifest `bytes` strictly exceeds it). The notes read sizes in decimal megabytes: 1 MB = 1,000,000 bytes. `tier` (preload | on-demand) is informational — it drives the strict-vs-loose framing above and the size table, not the check. Assets NOT listed here are ALLOWED (only listed ones are enforced); but a manifest asset larger than `unbudgetedWarnBytes` with no entry (and not a byte-identical duplicate of a budgeted asset — e.g. the texlive-basic.* back-compat aliases of core.*) is WARNED (not failed), so a new large artifact cannot ship unbudgeted unnoticed.",
+  "unbudgetedWarnBytes": 5000000,
+  "budgets": {
+    "busytex.wasm": {
+      "maxBytes": 30000000,
+      "tier": "preload",
+      "note": "Engine multicall wasm (xetex/pdftex/bibtex8/... in one binary). PRELOAD cold-start cost. Now ~27.5 MB (~92% of budget). Strict: engine growth is paid on every cold start."
+    },
+    "core.js": {
+      "maxBytes": 2000000,
+      "tier": "preload",
+      "note": "core bundle loader (Emscripten file_packager JS + metadata). PRELOAD. Now ~1.47 MB (~73%)."
+    },
+    "core.data": {
+      "maxBytes": 60000000,
+      "tier": "preload",
+      "note": "core bundle payload (the default preload tier: LaTeX + XeTeX base + hyphenation + fonts). PRELOAD cold-start cost. Now ~53.9 MB (~90%). Strict."
+    },
+    "academic.js": {
+      "maxBytes": 12000000,
+      "tier": "on-demand",
+      "note": "academic bundle loader. ON-DEMAND (mounted only when a scan needs it). Now ~9.3 MB (~78%). Loose."
+    },
+    "academic.data": {
+      "maxBytes": 550000000,
+      "tier": "on-demand",
+      "note": "academic bundle payload (~2400 packages). ON-DEMAND, not cold-start. Now ~496 MB (~90%). Loose: trades against corpus completeness; a drift tripwire, not a tight ceiling."
+    }
+  }
+}

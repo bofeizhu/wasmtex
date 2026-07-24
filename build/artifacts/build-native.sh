@@ -355,6 +355,15 @@ do_dist() {
   banner "dist: generate manifest.json + assets.json (integrity manifest)"
   node "$here/../manifest/gen-assets.mjs" "$dist" --tiers "$work/build/stage/tiers.json"
 
+  # Asset size-budget check (M5 item 5, DESIGN §8). Reads the per-file `bytes`
+  # gen-assets just wrote into dist/manifest.json (NOT re-stat'd) and compares each
+  # budgeted asset against build/budgets.json's ceiling. FAIL-CLOSED, mirroring the
+  # license audit above: an over-budget artifact aborts the build here (set -e), so
+  # the strictly-budgeted PRELOAD cold-start path never grows unnoticed into a
+  # release. Runs after gen-assets (needs the manifest) and before the verify gate.
+  banner "dist: asset size-budget check (check-sizes.mjs vs build/budgets.json)"
+  node "$here/../audit/check-sizes.mjs" --manifest "$dist/manifest.json" --budgets "$repo/build/budgets.json"
+
   banner "dist inventory"
   ( cd "$dist" && ls -la . formats && echo && cat SHA256SUMS )
 

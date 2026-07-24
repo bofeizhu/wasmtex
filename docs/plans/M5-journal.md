@@ -400,3 +400,124 @@ both the embedding guide (§10) and this journal so item 8 has the spec.
 Original prose, MIT; per-file SPDX header on `docs/embedding.md`. No third-party
 docs or other WASM-TeX wrapper consulted; every API shape traced to this repo's
 own `runtime/src/*`. No GPL/AGPL source opened (none encountered).
+
+---
+
+## Item 5 — Size budgets (DESIGN §8)
+
+DESIGN §8 requires the engine wasm and core-bundle sizes to be "tracked with an
+explicit budget file; CI flags growth". Built that as a fail-closed gate in the
+dist stage of both build drivers, mirroring the M5 item-2 license-audit wiring.
+
+### What was built
+
+- **`build/budgets.json`** — checked-in, human-editable per-asset byte ceilings,
+  keyed by manifest asset path. Prose lives in `_comment` / `_rationale` /
+  `_units` (JSON has no comments). Structure: a top-level `budgets` map
+  (`path -> { maxBytes, tier, note }`) plus `unbudgetedWarnBytes`. Five entries,
+  the proposed defaults from `docs/plans/M5.md` item 5:
+
+  | asset          | tier      | budget | now (native dist) | used  | headroom |
+  | -------------- | --------- | -----: | ----------------: | ----: | -------: |
+  | busytex.wasm   | preload   |  30 MB |          27.51 MB | 91.7% |  2.49 MB |
+  | core.js        | preload   |   2 MB |           1.47 MB | 73.4% |  0.53 MB |
+  | core.data      | preload   |  60 MB |          53.87 MB | 89.8% |  6.13 MB |
+  | academic.js    | on-demand |  12 MB |           9.30 MB | 77.5% |  2.70 MB |
+  | academic.data  | on-demand | 550 MB |         496.59 MB | 90.3% | 53.41 MB |
+
+  (MB = decimal 1e6 bytes — the manifest/prompt convention; `maxBytes` in the
+  file is exact bytes.) The PRELOAD path is strict (cold-start cost paid on every
+  embed load); the on-demand academic tier loose (mounts only when a scan needs
+  it — trades against corpus completeness, not latency; the budget is a drift
+  tripwire on the ~2400-package tier, not a tight ceiling).
+
+- **`build/audit/check-sizes.mjs`** — zero-dep node ESM, SPDX-MIT, original. Reads
+  the per-file `bytes` from `dist/manifest.json` (the gen-assets integrity
+  manifest — **not re-stat'd**, so the budget is measured against exactly what
+  ships) and `build/budgets.json`. Pure `checkSizes(manifest, parsedBudgets)` core
+  + a thin CLI (readable table, documented `--json`, `--quiet`, `--manifest` /
+  `--budgets` overrides). FAILS (exit 1) naming each over-budget asset with
+  actual-vs-budget; prints a clean aligned size table on success.
+
+- **`build/audit/check-sizes.test.mjs`** — 24 tests, `node:test`, style-matched to
+  `build/bundles/licenses.test.mjs`: under/over budget, the strict-`>` boundary,
+  the absent-asset note, the unbudgeted-large warning incl. duplicate suppression,
+  budget-doc shape validation, missing-file handling, `--json` shape + determinism,
+  and a real-dist group (skips cleanly without a built dist/). Wired into
+  `build.yml`'s `node --test` line (now 114 tests across 28 suites, all green).
+
+### Key design decisions
+
+- **Wiring: a separate dist-stage step, NOT folded into `license-audit.sh`.** The
+  prompt offered either. Chose a standalone step in both drivers' `do_dist`
+  (after gen-assets writes the manifest, before the verify gate), because (1)
+  `license-audit.sh` is provenance/copyleft-scoped and size budgets are an
+  orthogonal concern — mixing them muddies the script's identity; (2) the
+  dist-stage step is the real enforcement point and, living there, is enforced by
+  `artifacts-build.yml` (the container build via `make artifacts-container`) with
+  **no workflow edit** — exactly the item-3 requirement; (3) the unit tests cover
+  the logic in fast CI. Same manifest-dependency constraint as the aggregate
+  license audit: it needs a built dist/, so it can't run in a stock-checkout CI
+  job without a build — hence the dist stage, not `build.yml`.
+
+- **Unbudgeted-large WARN with sha256-duplicate suppression.** Only listed assets
+  are enforced; a manifest asset over `unbudgetedWarnBytes` (5 MB) with no entry
+  is *warned* (never failed) so a new large artifact can't ship unbudgeted
+  unnoticed. But the `texlive-basic.*` back-compat aliases are byte-identical
+  copies of `core.*` — the checker recognises them by **equal sha256** (already in
+  the manifest, zero extra config) and suppresses the warning, since their bytes
+  are already budgeted via `core.*`. Robust to any future alias, and name-agnostic
+  (the `texlive-basic` alias's manifest bundle entry carries no `files`, so a
+  name-based link wasn't available anyway). Verified against the real dist: 5
+  checked (all OK), 2 duplicates noted, **zero** warnings.
+
+- **Budgeted-but-absent is a note, not a failure.** A budget for an asset missing
+  from the dist (a core-only build, or the `texlive-basic` alias when it's dropped
+  at item 6/8, or a future retiered academic) is vacuously satisfied — noted, never
+  a size breach. Keeps the budget file stable across tier changes.
+
+- **Strict `>`.** Equal-to-budget passes; one byte over fails. `maxBytes` is an
+  exact ceiling, validated as a positive integer at load (a malformed budget file
+  aborts fail-closed rather than degrading to "nothing budgeted").
+
+- **Container mounts.** `build/audit` → `/audit` (ro) and `build/budgets.json` →
+  `/budgets.json` (ro) added to `build/artifacts/build.sh`, with a preflight
+  existence check (a single-file bind mount of a missing host file would make
+  Docker create a *directory* at the mount point — fail loud instead, mirroring
+  the `$engines/Makefile` check). `run-in-container.sh` passes explicit
+  `--manifest /dist/manifest.json --budgets /budgets.json`; the native driver uses
+  repo-relative paths. Determinism preserved (no timestamps; sorted output).
+
+### Validation (local, against the on-disk native dist/)
+
+- `node build/audit/check-sizes.mjs` against the real native `dist/` → **PASS**,
+  exit 0, prints the table above; 2 alias duplicates noted, 0 warnings.
+- Forced breach (temp budget file, `busytex.wasm` ceiling lowered to 25 MB) →
+  **FAIL**, exit 1, row shows `OVER` / `110.0%` / `-2.51 MB` and the failure line
+  names `busytex.wasm: 27.51 MB exceeds budget 25.00 MB (over by 2.51 MB)`. The
+  checked-in `build/budgets.json` was not touched (breach tested via `--budgets`).
+- `--json` → deterministic (two runs byte-identical); carries
+  `checked/failures/absent/warnings/unbudgeted`.
+- `node --test build/audit/check-sizes.test.mjs` → 24/24. Full `build.yml` line →
+  114/114. `bash -n` on all three edited drivers → clean.
+  `build/audit/license-audit.sh` → all checks pass (the new `.mjs` files carry the
+  SPDX-MIT header check (e) requires; the aggregate audit (f) still PASS, 2545
+  packages).
+
+### Deferred / noted
+
+- **`academic.data` at 90.3% of its 550 MB budget** is the tightest on-demand
+  headroom in percentage terms (53 MB absolute). Left at the proposed default; if
+  the next rebase grows academic, this is the entry to revisit (it's on-demand, so
+  a breach degrades corpus completeness, not cold-start — but it should be a
+  conscious bump, which is exactly what the gate forces).
+- **`M5.md` item 5 checkbox left unchecked** — flipped by the orchestrator on
+  review/acceptance, per the established item-2/3/4 pattern.
+
+### Provenance
+
+Original work, SPDX-MIT headers on `check-sizes.mjs` + its test; `build/budgets.json`
+is data (JSON, exempt from the header scan). Inputs read are our own
+`dist/manifest.json` and `build/budgets.json` only — no third-party code. No
+GPL/AGPL source and no other WASM-TeX wrapper opened or consulted (none
+encountered); the budget model is original.

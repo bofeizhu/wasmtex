@@ -49,12 +49,15 @@
 # false-positive that never fires on Linux). See build/patches/README.md.
 #
 # Mounts provided by build.sh:
-#   /cache     (ro)  ~/.cache/wasmtex/sources — verified pinned inputs
-#   /engines   (ro)  build/engines            — OUR engine build config
-#   /glue      (ro)  build/artifacts          — these scripts + verify-engine.mjs
-#   /manifest  (ro)  build/manifest           — gen-assets.mjs (asset inventory)
-#   /dist      (rw)  dist/                     — assembled artifacts land here
-#   /work      (vol) named docker volume       — the build tree (fast, VM-native)
+#   /cache        (ro)  ~/.cache/wasmtex/sources — verified pinned inputs
+#   /engines      (ro)  build/engines            — OUR engine build config
+#   /glue         (ro)  build/artifacts          — these scripts + verify-engine.mjs
+#   /manifest     (ro)  build/manifest           — gen-assets.mjs (asset inventory)
+#   /bundles      (ro)  build/bundles            — tier scripts + licenses.mjs (audit)
+#   /audit        (ro)  build/audit              — check-sizes.mjs (size-budget gate)
+#   /budgets.json (ro)  build/budgets.json       — per-asset size ceilings
+#   /dist         (rw)  dist/                     — assembled artifacts land here
+#   /work         (vol) named docker volume       — the build tree (fast, VM-native)
 #
 # Usage:  run-in-container.sh <stage>
 #   stage ∈ { prep native basic wasm bundle dist verify all }
@@ -88,6 +91,8 @@ ENGINES=/engines
 GLUE=/glue
 MANIFEST=/manifest
 BUNDLES=/bundles   # OUR tier scripts (build/bundles/: gen-profile / stage-tiers / resolver); mounted ro by build.sh
+AUDIT=/audit       # build/audit/ (check-sizes.mjs — the M5 item 5 size-budget gate); mounted ro by build.sh
+BUDGETS=/budgets.json  # build/budgets.json (per-asset size ceilings); mounted ro by build.sh
 DIST=/dist
 BUILD=/work
 
@@ -281,6 +286,16 @@ do_dist() {
   # so re-running this stage is byte-identical (and matches the native build's).
   banner "dist: generate manifest.json + assets.json (integrity manifest)"
   node "$MANIFEST/gen-assets.mjs" "$DIST" --tiers "$BUILD/build/stage/tiers.json"
+
+  # Asset size-budget check (M5 item 5, DESIGN §8). Reads the per-file `bytes`
+  # gen-assets just wrote into /dist/manifest.json (NOT re-stat'd) and compares each
+  # budgeted asset against build/budgets.json's ceiling. FAIL-CLOSED, mirroring the
+  # license audit above: an over-budget artifact aborts the CANONICAL build here
+  # (set -e), so the strictly-budgeted PRELOAD cold-start path never grows unnoticed
+  # into a release. Because it lives in the dist stage, artifacts-build.yml enforces
+  # it with NO workflow edit. build/audit + build/budgets.json are mounted by build.sh.
+  banner "dist: asset size-budget check (check-sizes.mjs vs budgets.json)"
+  node "$AUDIT/check-sizes.mjs" --manifest "$DIST/manifest.json" --budgets "$BUDGETS"
 
   banner "dist inventory"
   ( cd "$DIST" && ls -la . formats && echo && cat SHA256SUMS )

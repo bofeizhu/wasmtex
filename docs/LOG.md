@@ -5,6 +5,30 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M5 item 5: size budgets (preload-path tripwire)
+
+**Done, self-reviewed.** `build/budgets.json` (checked-in, human-
+editable, prose in `_`-keys) sets per-asset byte ceilings: the PRELOAD
+path strict (busytex.wasm ≤30 MB, core.js ≤2 MB, core.data ≤60 MB — the
+cold-start cost every embed pays), the ON-DEMAND academic tier loose
+(academic.js ≤12 MB, academic.data ≤550 MB — a drift tripwire, not a
+tight ceiling). `build/audit/check-sizes.mjs` reads the manifest `bytes`
+and FAILS (naming asset + actual vs budget) on any over-budget asset;
+warns on a NEW unbudgeted-large artifact (>5 MB) — but sha256-dedups so
+the byte-identical texlive-basic aliases of core.* don't false-warn.
+Wired fail-closed into the dist stage of both drivers after gen-assets
+(build.sh mounts build/audit + budgets.json), so the container build
+enforces it with no workflow edit — mirroring the item-2 license audit
+placement (a manifest is required, so it runs post-build, not in stock-
+checkout fast CI; 24 unit tests in build.yml cover the logic).
+
+Current headroom (used%): busytex.wasm 27.5 MB / 92%, core.js 1.47 MB /
+73%, core.data 53.9 MB / 90%, academic.js 9.3 MB / 78%, academic.data
+496 MB / 90%. Verified: real dist PASS; forced breach (core.data → 40 MB
+budget) FAILS naming core.data; determinism (--json byte-identical);
+24/24 tests. This commit touches the build drivers → triggers a
+container build that runs the check in the real dist stage.
+
 ## 2026-07-24 — M5 item 4: fuller conformance corpus + a stub CJK font fixture
 
 **Done, reviewer-approved.** 5 new corpus entries (12/12 corpus green,

@@ -66,6 +66,8 @@ source_date_epoch="${SOURCE_DATE_EPOCH:-1772323200}"
 engines="$repo/build/engines"
 manifest="$repo/build/manifest"
 bundles="$repo/build/bundles"   # OUR tier scripts (gen-profile / stage-tiers / resolver); M4 item 3
+audit="$repo/build/audit"       # check-sizes.mjs — the M5 item 5 size-budget gate
+budgets="$repo/build/budgets.json"  # per-asset size ceilings (checked in the dist stage)
 dist="$repo/dist"
 
 # --- Preflight: pinned inputs + config + image identity ----------------------
@@ -92,6 +94,19 @@ fi
 
 if [ ! -f "$engines/Makefile" ]; then
   echo "!! engine build config not found at $engines/Makefile" >&2
+  exit 1
+fi
+
+# The size-budget gate runs in the dist stage (run-in-container.sh -> check-sizes.mjs).
+# Its script + the budget file are bind-mounted below; a single-file mount of a
+# MISSING host file would make Docker create a directory at the mount point, so
+# fail loud here instead (mirrors the $engines/Makefile check above).
+if [ ! -f "$audit/check-sizes.mjs" ]; then
+  echo "!! size-budget checker not found at $audit/check-sizes.mjs" >&2
+  exit 1
+fi
+if [ ! -f "$budgets" ]; then
+  echo "!! size budget file not found at $budgets" >&2
   exit 1
 fi
 
@@ -156,6 +171,7 @@ echo "   container:   $container_name  (kept on exit for post-mortem)"
 echo "   cache:       $cache_dir  (mounted ro, --network none)"
 echo "   config:      $engines  (build/engines, mounted ro)"
 echo "   bundles:     $bundles  (build/bundles tier scripts, mounted ro)"
+echo "   audit:       $audit  (check-sizes.mjs size-budget gate) + budgets.json, mounted ro"
 echo "   work volume: $volume  ($([ "$stage" = all ] || [ "$stage" = prep ] && echo 'fresh (clean per build)' || echo 'reused (resume)'))"
 echo "   dist:        $dist"
 echo "   jobs:        MAKEFLAGS=-j${jobs:-<nproc>}   SOURCE_DATE_EPOCH=$source_date_epoch"
@@ -178,6 +194,8 @@ docker run \
   -v "$here":/glue:ro \
   -v "$manifest":/manifest:ro \
   -v "$bundles":/bundles:ro \
+  -v "$audit":/audit:ro \
+  -v "$budgets":/budgets.json:ro \
   -v "$dist":/dist \
   -v "$volume":/work \
   "$image_tag" \

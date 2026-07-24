@@ -5,6 +5,43 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — Conformance: supplied-class top-journal templates (test-only)
+
+**Done, reviewer-approved (request-changes → 3 should-fixes + 2 nits applied →
+approve).** Two new conformance entries prove WasmTeX typesets against a
+caller-SUPPLIED top-journal class it does NOT bundle: `journal-ieee`
+(IEEEtran.cls, IEEE) and `journal-elsevier` (elsarticle.cls, Elsevier). The
+`.cls` is placed in the entry dir → the runner sweeps it into the job `files`
+map (`run.mjs` reads every non-expectations file), exactly as a host would pass
+its own class. Both mount `academic` via the §5.4(a) scan — IEEEtran typesets in
+Times (metrics in academic) and the paper loads `cite` (also academic);
+elsarticle's `\RequirePackage`s pull an academic package. IEEE's inline
+`thebibliography` + `\cite` forces the §5.3 auto-rerun (phases engine,engine).
+All 14 corpus entries green; license audit green (2545 shipped pkgs free).
+
+**Scope decision (user, 2026-07-24): TEST-ONLY, do not ship.** The classes are
+NOT added to any tier/bundle or the npm package — first-class journal support is
+deferred to a future milestone as a SEPARATE package, never folded into
+`academic` (the whole `collection-publishers` would ~4× the academic payload:
++2.2 GB / +109 k files vs a curated 5-class set's +2.2 MB — measured, both
+rejected in favor of supply-at-runtime). Recorded in DESIGN §9 Post-v1.
+
+**Provenance (DESIGN §2 clause 2 — TL upstream files under their own license,
+inventoried).** IEEEtran.cls (LPPL-1.3, pkg ieeetran r59672) and elsarticle.cls
+(LPPL-1.3, pkg elsarticle r77318) extracted byte-verbatim from the pinned TL2026
+archive (sha256-checked vs source; no SPDX header injected — LPPL rename
+sensitivity). Both inventoried in a new THIRD_PARTY_NOTICES.md "Conformance test
+fixtures" section; the `paper.tex` files are ORIGINAL work (not IEEE/Elsevier
+sample templates). The license-audit MIT-header + copyleft scans filter by
+extension and exempt `.cls`/`.tex`, so the fixtures don't trip CI. Both `.cls`
+are LPPL (not GPL/AGPL) → §2 clause 3 satisfied.
+
+**Gotcha recorded:** IEEEtran defaults to Times, whose TFMs are academic-only,
+and it pulls the font via low-level font selection (not `\usepackage`), so the
+§5.4(a) scan can't see it AND the missing-TFM fatal abort did NOT trigger the
+§5.4(b) missing-file retry (bundles stayed [core], fast fail). Fix: load `cite`
+(academic, idiomatic for IEEE) so the scan mounts academic first, bringing Times.
+
 ## 2026-07-24 — M5 item 8: release workflow + npm↔assets version lockstep
 
 **Done, reviewer-approved (request-changes → all fixes applied → approve).**

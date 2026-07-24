@@ -10,8 +10,11 @@ source-availability obligations of the GPL-licensed members of that aggregate
 and preserves the separate-program boundary for host applications.
 
 This inventory is populated as components are vendored. **As of the TL-2026
-rebase (M2 item 3), NO third-party code is vendored verbatim into this
-repository: the busytex build machinery was dissolved from its M0 staging area
+rebase (M2 item 3), no third-party code is vendored verbatim into any SHIPPED
+path of this repository (the two verbatim LPPL class files described under
+"Conformance test fixtures" below live only under `conformance/` — they are
+test input, never shipped in the npm package or the release asset archives):
+the busytex build machinery was dissolved from its M0 staging area
 into `build/engines/` as our own maintained, MIT-licensed build config, each
 file carrying a derived-work or original-work provenance header (below). The
 TeX Live programs and packages and the fetched build dependencies are pinned by
@@ -201,3 +204,27 @@ single self-contained classic-worker script `runtime/dist/worker.js`
 100% WasmTeX-authored MIT code and the tool itself ships in nothing WasmTeX
 distributes. Like the engine build toolchain, these carry no third-party-notice
 obligation and are recorded here only as a stated posture.
+
+## Conformance test fixtures (not distributed)
+
+Two verbatim third-party LaTeX document classes are vendored under
+`conformance/corpus/` as **test input only** (DESIGN.md §2 clause 2 — TeX Live
+upstream files under their own licenses, inventoried here). They exercise the
+runtime's ability to typeset against a caller-supplied journal class that
+WasmTeX does not bundle. They are **not** part of any shipped bundle, the
+published npm package, or the release asset archives, and the license/provenance
+audit's SPDX-header scan does not cover them (they must stay byte-verbatim).
+
+| File | Package / TL revision | Copyright | License |
+|------|-----------------------|-----------|---------|
+| `conformance/corpus/journal-ieee/IEEEtran.cls` | `ieeetran` r59672 (v1.8b) | © 1993–2000 Gerry Murray, Silvano Balemi, Jon Dixon, Peter Nüchter, Juergen von Hagen (and others; see the file header); © 2001–2015 Michael Shell | LPPL-1.3 |
+| `conformance/corpus/journal-elsevier/elsarticle.cls` | `elsarticle` r77318 (v3.5) | © 2007–2026 Elsevier Ltd | LPPL-1.3 |
+
+Both are copied byte-for-byte from the pinned TeX Live 2026 source archive and
+kept verbatim (LPPL permits modified redistribution only under rename/notice
+conditions, so an unmodified copy is the clean path and avoids those obligations). The accompanying `paper.tex` in each directory is
+original WasmTeX work (MIT), written from scratch — it is **not** derived from
+any IEEE- or Elsevier-supplied template or sample document. Shipping journal
+document classes as a first-class, supported feature is deferred to a future
+milestone and will be delivered as a **separate on-demand package/tier**, never
+folded into the `academic` bundle.

@@ -1,0 +1,18 @@
+{
+  "title": "journal-ieee",
+  "description": "Proves WasmTeX typesets a paper against a caller-SUPPLIED top-journal class (IEEE's IEEEtran) that WasmTeX does NOT bundle: IEEEtran.cls is a verbatim TeX Live file placed in the job's file set (like any user-provided .cls), not shipped in a tier. IEEEtran typesets in Times, whose font metrics live in the on-demand `academic` tier, and the standard IEEE `cite` package is there too — so loading `cite` (as real IEEE papers do) makes the §5.4(a) static-scan mount `academic` before pass 1, bringing Times with it (resolution:scan, no 'file not found'). The inline thebibliography + \\cite forces a second engine pass (phases: engine, engine) with no external .bib. TEST-ONLY capability check (compile-against-supplied-class); journal-class SHIPPING is deferred to a future milestone as a SEPARATE package, never folded into academic. The .tex is ORIGINAL work (not an IEEE-supplied sample); the .cls is third-party LPPL-1.3 (see conformance/README.md + THIRD_PARTY_NOTICES.md).",
+  "engine": "pdftex",
+  "entry": "paper.tex",
+  "bibliography": "off",
+  "index": "off",
+  "expect": {
+    "ok": true,
+    "exitCode": 0,
+    "minPages": 1,
+    "textSnippets": ["Conformance", "Testwright", "WebAssembly", "Gaussian", "typesets"],
+    "absentSnippets": ["Wittgenstein"],
+    "bundlesLoaded": ["core", "academic"]
+  },
+  "resolution": "scan",
+  "phases": ["engine", "engine"]
+}

@@ -1,0 +1,69 @@
+% SPDX-License-Identifier: MIT
+% SPDX-FileCopyrightText: 2026 WasmTeX contributors
+%
+% Provenance: ORIGINAL work authored in the WasmTeX repository (see LICENSE).
+%   This document is not copied or adapted from any IEEE-supplied template or
+%   sample (bare_conf.tex / bare_jrnl.tex etc.); it is a minimal original paper
+%   written to exercise the IEEEtran document class. The class file it loads,
+%   IEEEtran.cls, is a verbatim third-party TeX Live file supplied as a per-job
+%   input, NOT authored here — see the repo THIRD_PARTY_NOTICES.md and
+%   conformance/README.md.
+%
+% Purpose: prove WasmTeX can typeset a document against a caller-SUPPLIED journal
+% class (IEEEtran) that WasmTeX does not bundle. IEEEtran itself declares no
+% package dependencies, but it typesets in Times, whose font metrics live in the
+% on-demand `academic` tier — and the standard IEEE citation package `cite` is
+% also there. Loading `cite` (as real IEEE papers do) makes the §5.4(a) scan
+% mount `academic` before pass 1, which brings the Times metrics with it, so the
+% paper typesets end to end. The reference list is an inline `thebibliography`
+% (no external .bib / bibtex needed).
+\documentclass[conference]{IEEEtran}
+\usepackage{cite}
+
+\begin{document}
+
+\title{A Minimal Conformance Paper for the WasmTeX Engine}
+
+\author{\IEEEauthorblockN{Ada Testwright}
+\IEEEauthorblockA{WasmTeX Conformance Corpus\\
+Email: corpus@example.invalid}}
+
+\maketitle
+
+\begin{abstract}
+This original document verifies that WasmTeX compiles a paper written for the
+IEEEtran class when that class is supplied to the compiler as an input file
+rather than shipped in a bundle. It exercises the abstract, keyword block,
+sectioning, and inline and display mathematics.
+\end{abstract}
+
+\begin{IEEEkeywords}
+WebAssembly, TeX, conformance, typesetting
+\end{IEEEkeywords}
+
+\section{Introduction}
+The WasmTeX engine loads the IEEEtran class from the job's file set. IEEEtran
+typesets in Times and this paper loads the \texttt{cite} package, both of which
+live in the on-demand academic tier; the engine mounts that tier automatically
+before the first pass, so the supplied class typesets without any tier having to
+be preloaded for it.
+
+\section{A Displayed Equation}
+The Gaussian integral provides a compact rendering check:
+\begin{equation}
+\int_{-\infty}^{\infty} e^{-x^{2}}\, dx = \sqrt{\pi}.
+\end{equation}
+An inline fragment, $E = mc^{2}$, confirms math-mode kerning as well.
+
+\section{Conclusion}
+A supplied IEEEtran class typesets end to end under WasmTeX~\cite{wasmtex},
+demonstrating the ability to compile top-journal templates without bundling
+their classes.
+
+\begin{thebibliography}{1}
+\bibitem{wasmtex}
+A.~Testwright, ``WasmTeX: an embeddable WebAssembly TeX typesetter,''
+\emph{Journal of Conformance Studies}, vol.~1, no.~1, pp.~1--2, 2026.
+\end{thebibliography}
+
+\end{document}

@@ -401,6 +401,20 @@ using a small open font checked into `conformance/fixtures`.
   archives, license audit, README/docs, npm publish dry-run; full
   conformance corpus, browser matrix, size budgets, soak tests.
 
+### Post-v1 (deferred, not scheduled)
+
+- **Journal-template support (separate package).** *Decision 2026-07-24.*
+  The `core`/`academic` tiers stay focused on the general scientific-journal +
+  CJK working set; first-class support for specific publisher document classes
+  (IEEEtran, acmart, elsarticle, revtex, Springer, …) ships in a **future
+  milestone as its own separate on-demand package/tier — never folded into
+  `academic`** (adding the whole `collection-publishers` would ~4× the academic
+  payload for a long tail of niche classes). Until then the runtime *already*
+  compiles such a class when the host supplies the `.cls` in the job's `files`
+  map; this capability is locked by the **test-only** `journal-ieee` /
+  `journal-elsevier` conformance entries (verbatim LPPL fixtures under
+  `conformance/`, inventoried in `THIRD_PARTY_NOTICES.md`, shipped in nothing).
+
 ## 10. Embedding profile (design target)
 
 The first consumer is a desktop app embedding WasmTeX in a hidden Electron

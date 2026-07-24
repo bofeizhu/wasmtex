@@ -49,6 +49,20 @@ targeting the scientific-journal + CJK working set:
   font is embedded and — the load-bearing control — **`absentFonts`** proves NO
   fandol is embedded. The `WasmTeXStubCJK-Regular.ttf` fixture is ORIGINAL work (see
   `fixtures/`), not a vendored third-party font.
+- **`journal-ieee`** / **`journal-elsevier`** — the **supplied-class** capability
+  proof: a real top-journal class (IEEE's `IEEEtran.cls`, Elsevier's
+  `elsarticle.cls`) is placed in the job's `files` map — exactly as a host would
+  pass a class WasmTeX does not bundle — and an ORIGINAL minimal paper compiles
+  against it. Both mount `academic` via the **§5.4(a) scan** (IEEEtran typesets in
+  Times, whose metrics live in `academic`, and the IEEE paper loads the `cite`
+  package, which is there too; elsarticle's own `\RequirePackage`s pull an
+  `academic` package). The
+  IEEE paper's inline `thebibliography` + `\cite` forces the §5.3 auto-rerun
+  (`phases=['engine','engine']`). These are **test-only**: the `.cls` files are
+  verbatim third-party LPPL-1.3 fixtures (see the repo `THIRD_PARTY_NOTICES.md`),
+  are **not** shipped in any bundle or the npm package, and first-class journal
+  support is deferred to a future milestone as a **separate package**, never
+  folded into `academic`.
 
 Assertions cover **exit code, PDF page count, extracted text snippets, diagnostics
 shape, which bundle tiers mounted, and the §5.4 resolution path — no pixel
@@ -65,6 +79,7 @@ conformance/
   fixtures/           # generators + provenance for binary fixtures (the CJK stub font)
   corpus/<name>/
     <entry>.tex ...   # the project sources (the dir IS the project)
+    <class>.cls       # a supplied third-party class (e.g. journal-ieee's IEEEtran.cls) loads as text
     <font>.ttf        # binary project inputs (e.g. cjk-hostfont's host font) load as bytes
     expectations.json
 ```

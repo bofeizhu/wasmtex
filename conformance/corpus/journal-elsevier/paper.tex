@@ -1,0 +1,59 @@
+% SPDX-License-Identifier: MIT
+% SPDX-FileCopyrightText: 2026 WasmTeX contributors
+%
+% Provenance: ORIGINAL work authored in the WasmTeX repository (see LICENSE).
+%   Not copied or adapted from any Elsevier-supplied template or sample
+%   (elsarticle-template-*.tex etc.); it is a minimal original article written
+%   to exercise the elsarticle document class. The class file it loads,
+%   elsarticle.cls, is a verbatim third-party TeX Live file supplied as a
+%   per-job input, NOT authored here — see the repo THIRD_PARTY_NOTICES.md and
+%   conformance/README.md.
+%
+% Purpose: prove WasmTeX can typeset a document against a caller-SUPPLIED journal
+% class (elsarticle) that WasmTeX does not bundle. elsarticle's own
+% \RequirePackages pull in recommended LaTeX packages that live in the on-demand
+% academic tier, so the §5.4(a) static scan mounts academic before pass 1; the
+% article then typesets in a single pass.
+\documentclass[preprint,12pt]{elsarticle}
+
+\journal{Journal of Conformance Studies}
+
+\begin{document}
+
+\begin{frontmatter}
+
+\title{A Minimal Conformance Article for the WasmTeX Engine}
+
+\author{Ada Testwright}
+\address{WasmTeX Conformance Corpus}
+
+\begin{abstract}
+This original document verifies that WasmTeX compiles an article written for the
+elsarticle class when that class is supplied to the compiler as an input file
+rather than shipped in a bundle. It exercises the elsarticle front matter,
+sectioning, and display mathematics.
+\end{abstract}
+
+\begin{keyword}
+WebAssembly \sep TeX \sep conformance \sep typesetting
+\end{keyword}
+
+\end{frontmatter}
+
+\section{Introduction}
+The WasmTeX engine loads the elsarticle class from the job's file set. The
+class requests packages that live in the on-demand academic tier, which the
+engine mounts automatically before the first pass, so the supplied class
+typesets without that tier having to be preloaded for it.
+
+\section{A Displayed Equation}
+A displayed identity provides a rendering check:
+\begin{equation}
+\sum_{n=1}^{\infty} \frac{1}{n^{2}} = \frac{\pi^{2}}{6}.
+\end{equation}
+
+\section{Conclusion}
+A supplied elsarticle class typesets end to end under WasmTeX, demonstrating the
+ability to compile top-journal templates without bundling their classes.
+
+\end{document}

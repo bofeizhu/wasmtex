@@ -30,11 +30,12 @@ byte-alias of `core`, which was dropped from the build at M5 item 6.
 
 `serve.mjs` serves the **repo root** on one origin, so `/dist/…` (engine
 artifacts) and `/runtime/dist/…` (built runtime) resolve same-origin — the
-no-network, custom-scheme embedding profile from DESIGN.md §10. The runtime is
-authored as ESM for bundler consumption (tsc emits extensionless specifiers), so
-`index.html` carries a small **import map** that bridges those specifiers to
-their `.js` files; if the runtime's internal module graph changes, module
-loading fails loudly in the smoke.
+no-network, custom-scheme embedding profile from DESIGN.md §10. The runtime's
+compiled ESM carries explicit `.js` specifiers on its relative imports, so
+`index.html` loads `/runtime/dist/src/index.js` directly as **native browser
+ESM — no import map, no bundler**. A native-ESM guard test
+(`runtime/test/esm-extensions.test.ts`) keeps those specifiers extensioned, so a
+future extensionless import can't silently break this page's module loading.
 
 The vendored `busytex_worker.js` / `busytex_pipeline.js` glue is **no longer
 shipped** — it was dropped from `/dist` at M2 item 3 (the runtime replaced its

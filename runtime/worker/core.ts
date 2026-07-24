@@ -76,7 +76,7 @@ import {
   type ProjectFiles,
   type ResultFields,
   type WorkerMessage,
-} from '../src/protocol';
+} from '../src/protocol.js';
 import {
   advanceSequence,
   beginSequence,
@@ -86,13 +86,13 @@ import {
   type SequencingStep,
   type StepFsFacts,
   type StepObservation,
-} from './sequencing';
-import { extractMissingFiles } from '../src/diagnostics';
+} from './sequencing.js';
+import { extractMissingFiles } from '../src/diagnostics.js';
 import {
   scanRequiredPackages,
   selectBundlesForMissingFiles,
   selectBundlesForPackages,
-} from './bundle-resolution';
+} from './bundle-resolution.js';
 
 // ---------------------------------------------------------------------------
 // The injected engine host contract

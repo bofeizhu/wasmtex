@@ -43,8 +43,8 @@ import {
   type EngineRunResult,
   type EngineRunStep,
   type EngineStageInfo,
-} from './core';
-import type { AssetEntry, AssetsConfig, AssetsInventory, LogStream } from '../src/protocol';
+} from './core.js';
+import type { AssetEntry, AssetsConfig, AssetsInventory, LogStream } from '../src/protocol.js';
 
 // ---------------------------------------------------------------------------
 // The Emscripten module surface we touch (structural — no @types/emscripten;

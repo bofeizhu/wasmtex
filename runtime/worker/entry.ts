@@ -34,9 +34,9 @@ import {
   transferablesOf,
   type JobId,
   type WorkerMessage,
-} from '../src/protocol';
-import { createWorkerCore } from './core';
-import { EmscriptenEngineHost, createWorkerModuleLoader } from './engine-host';
+} from '../src/protocol.js';
+import { createWorkerCore } from './core.js';
+import { EmscriptenEngineHost, createWorkerModuleLoader } from './engine-host.js';
 
 /** The subset of the (classic) Worker global scope this entry uses. */
 interface WorkerScope {

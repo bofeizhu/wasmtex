@@ -229,8 +229,9 @@ the engine + `core` tier; the academic tier is per-entry-guarded (above).
 
 `run.mjs` drives the **public** API — `createTypesetter` (§5.1) — over the real
 busytex wasm, in-process, under Node. The compiled `runtime/dist/**` is
-bundler-targeted (extensionless imports) and not Node-native, so the runner
-imports the esbuild-bundled Node harness **`runtime/dist/node-harness.mjs`**: a
+Node-loadable (its relative specifiers carry `.js`, 0.1.1), but the §5.1 client
+spawns a classic browser `Worker` that Node lacks — so the runner imports the
+esbuild-bundled Node harness **`runtime/dist/node-harness.mjs`**: a
 single self-contained ESM file (the Node-delivery twin of the browser
 `dist/worker.js`) that re-exports `createTypesetter` plus a Node `WorkerFactory`
 (in-process adapter + Node engine loader + real `EmscriptenEngineHost`). This is

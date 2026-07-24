@@ -27,7 +27,7 @@
 //   would FAIL on a PDF that lacked the text.
 
 import { test, expect } from '@playwright/test';
-import { mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 // The PDF text-extraction technique documented above is factored into the shared
@@ -45,44 +45,6 @@ const WRONG_SENTENCE = 'Goodbye, cruel LibreOffice, farewell!';
 // The `stripSpaces` / `reconstructXetexText` / `extractPdftexText` helpers now
 // live in ../../conformance/pdf-probe.mjs (imported above) — the single shared
 // implementation of the technique the file header documents.
-
-// ---------------------------------------------------------------------------
-// Importmap drift guard (fast, no browser).
-// ---------------------------------------------------------------------------
-// The demo page loads the runtime as native ESM; tsc emits EXTENSIONLESS
-// relative specifiers (`./client`, `./version`, …), so index.html's <importmap>
-// must map every internal module the imported client reaches to its `.js` file.
-// A missing entry (a new runtime module added but not mapped) makes the whole
-// module graph fail to evaluate in the browser — and, because the page-load
-// tests only notice via a wait-timeout, it surfaced once as a 20-minute job
-// CANCEL instead of a clear failure. This guard turns that into a ~1 ms, precise
-// error: read every relative import in the built runtime and assert the importmap
-// covers it. It runs before any browser work (pretest builds runtime/dist).
-test('importmap covers every runtime module (drift guard)', () => {
-  const DEMO = resolve(HERE, '..');
-  const html = readFileSync(join(DEMO, 'index.html'), 'utf8');
-  const m = html.match(/<script type="importmap">([\s\S]*?)<\/script>/);
-  expect(m, 'index.html must contain an <script type="importmap"> block').toBeTruthy();
-  const mapped = new Set(Object.keys(JSON.parse(m[1]).imports ?? {}));
-
-  const distSrc = resolve(DEMO, '..', 'runtime', 'dist', 'src');
-  const jsFiles = readdirSync(distSrc).filter((f) => f.endsWith('.js'));
-  expect(jsFiles.length, `built runtime modules missing under ${distSrc} (did tsc run?)`).toBeGreaterThan(0);
-
-  const required = new Set();
-  for (const f of jsFiles) {
-    const src = readFileSync(join(distSrc, f), 'utf8');
-    for (const mm of src.matchAll(/\bfrom\s+'\.\/([A-Za-z0-9_-]+)'/g)) {
-      required.add(`/runtime/dist/src/${mm[1]}`);
-    }
-  }
-  const missing = [...required].filter((spec) => !mapped.has(spec)).sort();
-  expect(
-    missing,
-    `demo/index.html importmap is missing ${missing.length} runtime module(s) the browser will request ` +
-      `(add "<spec>": "<spec>.js" for each): ${missing.join(', ')}`,
-  ).toEqual([]);
-});
 
 // ---------------------------------------------------------------------------
 // Documents.
@@ -290,7 +252,7 @@ test('on-demand academic tier mounts IN THE BROWSER: a siunitx doc compiles via 
   // and memory-heavy on headless WebKit in CI (57 s at best, >180 s under load →
   // the page is torn down at the test timeout). The on-demand mount CAPABILITY is
   // proven on chromium + firefox; webkit still smoke-tests the whole core-tier path
-  // (hello-world, pdfTeX, diagnostics, cancel, importmap). Re-enable if the academic
+  // (hello-world, pdfTeX, diagnostics, cancel). Re-enable if the academic
   // tier is split into smaller mountable units, or when a real-Safari lane exists.
   test.skip(browserName === 'webkit', 'webkit headless mount of the 496 MB academic tier is too slow/flaky for a CI gate; capability covered by chromium + firefox');
   const { consoleErrors, pageErrors } = watchErrors(page);

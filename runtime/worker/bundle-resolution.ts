@@ -34,8 +34,8 @@
 // through to the (b) retry, which — with ONE on-demand tier — needs no index.
 // ---------------------------------------------------------------------------
 
-import { bundleProvidingPackage } from '../src/protocol';
-import type { AssetsInventory, ProjectFile, ProjectFiles } from '../src/protocol';
+import { bundleProvidingPackage } from '../src/protocol.js';
+import type { AssetsInventory, ProjectFile, ProjectFiles } from '../src/protocol.js';
 
 /**
  * File extensions the static scan reads as TeX SOURCE. Best-effort: a package

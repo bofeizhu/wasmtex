@@ -17,17 +17,17 @@
 // live in the leaf `./version` module so the client can read `ASSETS_VERSION`
 // without an import cycle; re-exported here as the public value surface. `version`
 // is kept in lockstep with package.json (enforced by test/index.test.ts).
-export { version, ASSETS_VERSION } from './version';
+export { version, ASSETS_VERSION } from './version.js';
 
 // Protocol version is a value; re-exported explicitly (a `export type *` would
 // not carry it).
-export { PROTOCOL_VERSION } from './protocol';
+export { PROTOCOL_VERSION } from './protocol.js';
 
 // The protocol TYPE surface — `EngineName`, the client/worker envelopes, and
 // their payload types (`Diagnostic`, `CompileStats`, `AssetEntry`, …) — is the
 // public subset hosts type against. `export type *` re-exports exactly
 // protocol.ts's exported types (its value exports, the guards, are excluded).
-export type * from './protocol';
+export type * from './protocol.js';
 
 // The §5.1 client: the value surface (createTypesetter + the error taxonomy +
 // the debug accessor) and its API types. This is what a host actually imports.
@@ -39,7 +39,7 @@ export {
   FatalError,
   TypesetInputError,
   AssetVersionMismatchError,
-} from './client';
+} from './client.js';
 export type {
   Typesetter,
   Job,
@@ -53,4 +53,4 @@ export type {
   WorkerFactory,
   FetchLike,
   FetchResponseLike,
-} from './client';
+} from './client.js';

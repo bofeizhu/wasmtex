@@ -9,12 +9,14 @@
   //
   // moduleResolution "bundler": wasmtex is authored as ESM and consumed through
   // its package.json `exports` map by bundlers and, in tests, by vitest/esbuild.
-  // "bundler" models that resolution and lets source use extensionless relative
-  // imports (no ".js" specifiers pointing at not-yet-emitted files). We do not
-  // commit to Node-native execution of the emitted files — the runtime targets
-  // Worker + fetch + WebAssembly (DESIGN.md §5.2). If Node-native ESM execution
-  // of dist/ ever becomes a requirement, switch to "nodenext" and add explicit
-  // ".js" import specifiers.
+  // "bundler" models that resolution. Source relative specifiers carry explicit
+  // ".js" extensions (`./protocol.js`, `./client.js`, …) even though the files on
+  // disk are ".ts": "bundler" resolution maps a ".js" specifier onto its sibling
+  // ".ts" source, so tsc compiles unchanged — while the EMITTED dist/ keeps those
+  // same ".js" specifiers, which lets the published package load as-is under
+  // native Node ESM AND native-browser ESM (no bundler, no import map needed). So
+  // we do NOT need "nodenext": "bundler" + explicit ".js" specifiers already
+  // yields portable output. (DESIGN.md §5.2: runtime targets Worker + fetch + WASM.)
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",

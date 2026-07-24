@@ -40,7 +40,7 @@
 // once but its `.bbl`/`.ind` is not re-read — the caller's explicit choice.
 // ---------------------------------------------------------------------------
 
-import type { AutoOff, PassPolicy } from '../src/protocol';
+import type { AutoOff, PassPolicy } from '../src/protocol.js';
 
 // ---------------------------------------------------------------------------
 // Public inputs/outputs

@@ -88,7 +88,7 @@
 // re-derived in the worker — a rebase that reworded it touches only this file.
 // ---------------------------------------------------------------------------
 
-import type { Diagnostic } from './protocol';
+import type { Diagnostic } from './protocol.js';
 
 /**
  * Hard cap on the number of diagnostics returned (DESIGN.md §5.1). A

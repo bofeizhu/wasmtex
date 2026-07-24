@@ -38,15 +38,15 @@
 // (not in ES2022) — scheduling is done with promises.
 // ---------------------------------------------------------------------------
 
-import { parseDiagnostics } from './diagnostics';
+import { parseDiagnostics } from './diagnostics.js';
 import {
   PROTOCOL_VERSION,
   isForJob,
   newJobId,
   parseClientMessage,
   parseWorkerMessage,
-} from './protocol';
-import { ASSETS_VERSION } from './version';
+} from './protocol.js';
+import { ASSETS_VERSION } from './version.js';
 import type {
   AssetEntry,
   AssetsConfig,
@@ -64,7 +64,7 @@ import type {
   ProjectFiles,
   ResultMessage,
   WorkerMessage,
-} from './protocol';
+} from './protocol.js';
 
 // ---------------------------------------------------------------------------
 // Injectable environment surfaces (structural — no DOM/Node lib).

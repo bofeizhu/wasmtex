@@ -12,9 +12,10 @@
 // diagnostics shape. NO pixel comparisons (§8).
 //
 // How it reaches the runtime (the import mechanism — see docs/plans/M2-journal.md
-// item 7): the compiled `runtime/dist/**` is bundler-targeted (extensionless
-// imports) and NOT Node-native, so this runner cannot import it directly.
-// Instead it imports the esbuild-bundled Node harness `runtime/dist/node-harness.mjs`
+// item 7): the compiled `runtime/dist/**` is now Node-loadable (its relative
+// specifiers carry `.js`, 0.1.1), but the runner still needs a NODE `WorkerFactory`
+// — the §5.1 client spawns a classic browser `Worker`, which Node lacks. So it
+// imports the esbuild-bundled Node harness `runtime/dist/node-harness.mjs`
 // — a single self-contained ESM file, the Node-delivery twin of the browser
 // `dist/worker.js` — which re-exports the PUBLIC `createTypesetter` plus a Node
 // `WorkerFactory` (in-process adapter + Node engine loader + real

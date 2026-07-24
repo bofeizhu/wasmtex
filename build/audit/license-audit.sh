@@ -31,6 +31,14 @@
 #       (e.g. a design doc) does not trip it.
 #   (e) Every original source under build/ and demo/ (sh / mjs / py / Dockerfile
 #       / html) carries an SPDX MIT header. Exemptions are enumerated inline.
+#   (f) SHIPPED-AGGREGATE license audit (M5 item 2): every TeX Live package that
+#       actually ships a file in `core`/`academic` carries a FREE, allowlisted
+#       `catalogue-license` (or a cited build/bundles/license-exceptions.mjs
+#       resolution). This is the DESIGN §1/§7 "aggregate of free programs"
+#       statement, made fail-closed. It needs the pinned texlive.tlpdb: when that
+#       is present (maintainer native build / any run with $WASMTEX_TLPDB) it runs
+#       here; when absent (stock CI checkout) it is enforced in the container
+#       build's dist stage (build/artifacts/*.sh -> build/bundles/licenses.mjs).
 
 set -euo pipefail
 
@@ -211,6 +219,24 @@ for f in $req; do
 done
 if [ "$missing_e" -eq 0 ]; then
   ok "$(printf '%s\n' "$req" | grep -c . | tr -d ' ') original build/demo sources carry an SPDX MIT header"
+fi
+
+# ---------------------------------------------------------------------------
+# (f) Shipped-aggregate TeX Live license audit (fail-closed). Needs the pinned
+# texlive.tlpdb; runs here when present, else deferred to the container dist stage.
+# ---------------------------------------------------------------------------
+echo "== (f) shipped-aggregate TeX Live license audit =="
+TLPDB="${WASMTEX_TLPDB:-$HOME/.cache/wasmtex/build/native/busytex-2026/source/texmfrepo/tlpkg/texlive.tlpdb}"
+if [ -f "$TLPDB" ]; then
+  # `if node …` captures the exit code WITHOUT tripping `set -e` (an `if` condition
+  # is exempt); the audit prints its own per-tier breakdown + any named failures.
+  if node "$repo/build/bundles/licenses.mjs" --tlpdb "$TLPDB"; then
+    ok "shipped-aggregate license audit passed (every shipped package free; tlpdb: $TLPDB)"
+  else
+    err "shipped-aggregate license audit FAILED — a shipped package has an unresolved/non-free license (see above); resolve via build/bundles/license-exceptions.mjs or drop it from its tier"
+  fi
+else
+  ok "aggregate license audit deferred: pinned tlpdb not present ($TLPDB) — enforced in the container dist stage (build/artifacts/*.sh -> build/bundles/licenses.mjs)"
 fi
 
 # ---------------------------------------------------------------------------

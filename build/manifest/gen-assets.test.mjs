@@ -54,6 +54,7 @@ function writeDist() {
     'texlive-basic.data': 'CORE-DATA-BLOB', // byte-identical to core.data -> alias
     'texlive-basic.js': 'CORE-LOADER', // byte-identical to core.js
     'formats/xelatex.fmt': 'FMT-DUMP',
+    'licenses.json': '{"schemaVersion":1}', // M5 item 2 shipped-license inventory (role license-inventory)
   };
   for (const [rel, content] of Object.entries(files)) {
     writeFileSync(join(distDir, ...rel.split('/')), content);
@@ -129,7 +130,8 @@ describe('gen-assets — schemaVersion-2 manifest with side-channel', () => {
 
     // assets: the full per-file inventory is retained.
     assert.ok(m.assets.some((a) => a.path === 'busytex.wasm' && a.role === 'engine-wasm'));
-    assert.equal(m.assets.length, 10); // 9 payload files + SHA256SUMS
+    assert.ok(m.assets.some((a) => a.path === 'licenses.json' && a.role === 'license-inventory'));
+    assert.equal(m.assets.length, 11); // 10 payload files + SHA256SUMS
 
     // assets.json is the schemaVersion-1 SUBSET (no v2 keys), same inventory.
     const a = readAssets();

@@ -63,6 +63,25 @@ consulted.
   packaged-tier list the drivers read). `core`'s ls-R over-lists academic paths on
   purpose — the DESIGN §5.4(b) missing-file retry trigger items 5/7 consume.
 
+- **`licenses.mjs`** (M5 item 2) — the shipped-aggregate license **enumeration +
+  fail-closed audit**. Reuses `resolveTiers` and reads each SHIPPED package's
+  `catalogue-license` (a package is shipped iff it owns ≥ 1 runfile in its tier —
+  so Collections/Schemes and doc-/binary-only packages are excluded). `--json OUT`
+  writes the deterministic inventory (per-tier `package → {license, source}` +
+  aggregate `byLicense`/`byToken`) — the release carries it as `dist/licenses.json`.
+  The AUDIT is fail-closed: a shipped package whose license is missing / non-free /
+  not on the explicit free ALLOWLIST fails, unless a cited `license-exceptions.mjs`
+  entry resolves it. `catalogue-license` values are space-separated license *lists*
+  (`ofl lppl`); every token must be free. Legally load-bearing (DESIGN §1/§7) — it
+  never guesses; unresolvable → FAIL. `--no-exceptions` exposes the raw gaps.
+
+- **`license-exceptions.mjs`** (M5 item 2) — the cited, committed resolution table
+  for the 22 shipped packages the TeX Catalogue does not usefully license (TeX Live
+  infrastructure, encodings, hyphen data, Thai fonts; and 5 `collection`-token
+  bundles). Freeness established by TeX Live's own `LICENSE.TL` (all TL-proper
+  software is free per FSF/DFSG); each entry is `other-free` + a factual reason +
+  the citation. Fail-closed for any NEW gap a future pin introduces.
+
 ## CLI
 
 ```sh
@@ -73,6 +92,16 @@ Prints the per-tier summary (packages, files, estimated size, disjointness). Wit
 `--json OUT`, also writes the full resolution (`fileToTier` + per-tier indexes) as
 deterministic JSON. The tlpdb defaults to `$WASMTEX_TLPDB`, else the ISO-staged
 copy the native build unpacks under `~/.cache/wasmtex/.../tlpkg/texlive.tlpdb`.
+
+```sh
+node build/bundles/licenses.mjs [--tlpdb PATH] [--json OUT] [--no-exceptions]
+```
+
+Runs the fail-closed shipped-aggregate license audit (exits non-zero on any
+unresolved/non-free package) and, with `--json OUT`, writes the license inventory.
+Same tlpdb default. The container/native dist stage invokes it as
+`--json dist/licenses.json`; `build/audit/license-audit.sh` check (f) runs it when
+a tlpdb is present.
 
 Current pinned TL 2026 (tlpdb revision 78233) resolution:
 
@@ -90,7 +119,8 @@ measures the real packed sizes.
 
 ```sh
 node --test build/bundles/tlpdb.test.mjs build/bundles/resolve.test.mjs \
-             build/bundles/gen-profile.test.mjs build/bundles/stage-tiers.test.mjs
+             build/bundles/gen-profile.test.mjs build/bundles/stage-tiers.test.mjs \
+             build/bundles/licenses.test.mjs
 ```
 
 `tlpdb.test.mjs` checks the parser on crafted stanza fixtures (every field form).
@@ -102,5 +132,9 @@ baseline. The real-tlpdb group skips cleanly when the ISO-staged tlpdb is absent
 conformance runner. `gen-profile.test.mjs` checks the collection union (dedup +
 sort, no `collection-luatex`, `extraPackages` excluded). `stage-tiers.test.mjs`
 checks the disjoint split on a tmpdir fixture — academic-owned files diverted,
-everything else to `core`, hardlinked (same inode), symlinks skipped. All four
-suites run in `build.yml` CI (synthetic groups; real-tlpdb group skips green).
+everything else to `core`, hardlinked (same inode), symlinks skipped.
+`licenses.test.mjs` checks the allowlist + fail-closed audit on synthetic dbs (the
+three resolution cases, shipped-vs-not, exception precedence, inventory
+determinism) **and** against the real pinned tlpdb (PASS with the cited
+exceptions; FAIL naming the 22 gaps without them; stable baselines). All five
+suites run in `build.yml` CI (synthetic groups; real-tlpdb groups skip green).

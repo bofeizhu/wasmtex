@@ -15,11 +15,12 @@ repository: the busytex build machinery was dissolved from its M0 staging area
 into `build/engines/` as our own maintained, MIT-licensed build config, each
 file carrying a derived-work or original-work provenance header (below). The
 TeX Live programs and packages and the fetched build dependencies are pinned by
-hash but not vendored (see `build/sources/pins.lock`); their full per-package
-license enumeration is deferred to the TeX Live 2026 rebase (engines) and
-tiered-bundle generation (packages), per DESIGN.md §9. The license audit
-verifies the per-file provenance headers and this deferral, and is enforced in
-CI by `build/audit/license-audit.sh`.**
+hash but not vendored (see `build/sources/pins.lock`). The per-package license
+enumeration of the SHIPPED bundles is now complete (M5 item 2 — see "TeX Live
+programs, macro and font packages" below and the generated `dist/licenses.json`).
+The license audit verifies the per-file provenance headers AND, fail-closed, that
+every shipped TeX Live package is free; it is enforced in CI by
+`build/audit/license-audit.sh` (and the container dist-stage gate).**
 
 ## Upstream: busytex/busytex (MIT)
 
@@ -74,23 +75,81 @@ Upstream attribution is preserved here and in `LICENSE`/`NOTICE`.
 
 ## TeX Live programs, macro and font packages
 
-Status: to be inventoried when the engines build against the pinned TeX Live
-snapshot at the TeX Live 2026 rebase and the tiered bundles are generated
-(DESIGN.md §5.4, §7, §9) — no TeX Live program or package source is *vendored
-into this repository*, so nothing in this section falls under the M0 item-7
-audit's vendored-coverage requirement. The engine sources (`texlive-source`,
-tag `texlive-2026.0`, since the M2 rebase) and the texmf tree (the frozen
+**Enumerated (M5 item 2; the prior "to be inventoried" deferral is retired).**
+The tiered bundles now exist, so the license of every TeX Live package that
+actually ships a file in them is inventoried and audited, not deferred. The
+shipped aggregate is two disjoint bundles — `core` (always preloaded) and
+`academic` (on-demand) — carrying **2 545 shipped packages** (151 in `core`,
+2 394 in `academic`). A package is *shipped* iff it contributes ≥ 1 runtime file
+to a bundle; Collections/Schemes (pure dependency nodes) and doc-/binary-only
+packages ship nothing and carry no obligation here.
+
+`build/bundles/licenses.mjs` reads each shipped package's `catalogue-license`
+from the pinned `texlive.tlpdb`, emits the full machine-readable inventory to
+**`dist/licenses.json`** (per-tier `package → license`, and an aggregate
+`license → packages`; carried in the release archive and integrity-listed in
+`manifest.json` with role `license-inventory`), and runs a **fail-closed audit**:
+a shipped package whose license is missing / `noinfo` / `nonfree` / not on the
+free allowlist FAILS the build unless it is resolved by a cited entry in
+`build/bundles/license-exceptions.mjs`. The allowlist is the TeX Catalogue's
+*free* license vocabulary; `catalogue-license` values are space-separated
+license *lists* (a package aggregating parts under several licenses, e.g.
+`ofl lppl`), and **every** token must be free.
+
+**Distinct free licenses present** in `core` + `academic` (grouped by family; a
+package with a multi-license value is counted under each token, so family counts
+overlap — the exact per-package truth is `dist/licenses.json`). 36 distinct
+license tokens / 82 distinct raw values in total:
+
+| License family | Packages | Representative packages |
+| --- | --- | --- |
+| **LPPL** (LaTeX Project Public License, all versions) | ~2 020 | `latex`, `amsmath`, `hyperref`, `siunitx` |
+| **GPL / LGPL / AGPL / FDL** (GNU; incl. `agpl3` ×16, `fdl` ×6) | ~250 | `dvipdfmx`, `pgf`/`tikz` (fdl), `beamer` (fdl) |
+| **MIT / X11** | ~110 | `hyph-utf8`, `lua-alt-getopt` (mit); `xetex` (x11) |
+| **BSD** (bsd/bsd2/bsd3) | ~25 | `minted`, `graphicscache`, `mathfam256` |
+| **Apache-2.0** | ~12 | `xetexfontinfo`, `easy-todo`, `emo` |
+| **Artistic / ISC / Zlib** | ~4 | `uwmslide` (artistic), `lucide-icons` (isc) |
+| **OFL / GUST font (`gfl`,`gfsl`) / Knuth** | ~24 | `amsfonts`,`fontawesome5` (ofl); `lm`,`tex-gyre` (gfl); `cm`,`bibtex`,`knuth-lib` (knuth) |
+| **Public domain** (`pd`, `cc0`) | ~72 | `mfware`, `modes`, `graphics-cfg` |
+| **Creative Commons** (`cc-by-*`, `cc-by-sa-*`) | ~42 | `beamerdarkthemes`, `zbmath-review-template` |
+| **`other-free`** (Catalogue "free under some other license") | 85 | 63 catalogue-declared + 22 catalogue-gap resolutions (below) |
+
+No shipped package carries a non-free (`nonfree`/`nosource`/CC-NC/CC-ND) token —
+the audit's core invariant, enforced in CI (`build/audit/license-audit.sh` check
+(f), and the container dist-stage gate).
+
+**Catalogue-gap packages resolved via `LICENSE.TL` (22).** The TeX Catalogue
+only catalogues user-facing macro/font packages, so a handful of shipped
+TeX-Live-*proper* support packages carry no usable `catalogue-license` (17 have
+none; 5 carry the non-specific `collection` bundle-token). Their freeness is
+established authoritatively by TeX Live's own `LICENSE.TL` — *"all software in
+the TeX Live distribution is freely redistributable … within the FSF's
+definition and the DFSG"*, excepting only the separable CTAN snapshot we do not
+install — so each is recorded as `other-free` with that citation in
+`build/bundles/license-exceptions.mjs` (per-package rationale there):
+
+- **`core`** (TeX Live infrastructure / base support): `glyphlist`,
+  `hyphen-base`, `hyphen-english`, `latexconfig`, `texlive-msg-translations`,
+  `texlive-scripts`, `texlive-scripts-extra`, `texlive.infra`, `tlshell`,
+  `xetexconfig`; and the `collection`-token bundle `ltxmisc`.
+- **`academic`** (CJK/Thai encodings + fonts, Chinese hyphenation, TTF utils):
+  `c90`, `dnp`, `garuda-c90`, `hyphen-chinese`, `norasi-c90`, `pdfwin`,
+  `ttfutils`; and the `collection`-token bundles `frankenstein`, `preprint`,
+  `was`, `fragments`.
+
+These are the packages a human reviewed; the audit stays fail-closed for any
+*new* gap a future TeX Live pin introduces (until reviewed and added).
+
+**Sources pinned, not vendored.** No TeX Live program or package source is
+*vendored into this repository*. The engine sources (`texlive-source`, tag
+`texlive-2026.0`, since the M2 rebase) and the texmf tree (the frozen
 `texlive2026-20260301.iso`) are fetched into an out-of-tree cache by
 `build/sources/fetch.sh` and consumed by the build; they are pinned by hash in
 `build/sources/pins.lock` (the TL 2023 pins remain recorded there until
 retired). One narrow exception: the retired patch records under
 `build/patches/*/HEADER.md` quote small excerpts of the patched third-party
 sources (libpng and zlib, both permissively licensed — the defects were fixed
-upstream in TL 2026 and the patches retired) under those sources' own
-licenses. Expected license
-families include the Knuth license, LPPL, GPL (some engines and tools), and OFL
-(fonts); each is enumerated per package when the tiered bundles are generated
-(DESIGN.md §5.4, §7).
+upstream in TL 2026 and the patches retired) under those sources' own licenses.
 
 ## Build dependencies
 

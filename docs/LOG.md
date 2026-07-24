@@ -5,6 +5,43 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M5 item 2: shipped-aggregate license enumeration + fail-closed audit
+
+**Done, reviewer-approved.** The released bundles now have a machine-
+readable license inventory + an audit that fails closed. `build/bundles/
+licenses.mjs` walks each tier's package set (via resolveTiers), reads
+each `catalogue-license`, and FAILS if any SHIPPED package (core or
+academic) has a missing/`noinfo`/`nonfree`/unknown-to-allowlist license,
+NAMING it. The allowlist is the TeX Catalogue free-token set (46 tokens
+in this tlpdb vetted; nonfree/NC/ND absent); `collection` is treated as
+present-but-unspecified (needs a cited exception, not silently free).
+
+**Result: all 2545 shipped packages are FREE** (151 core + 2394
+academic; 36 distinct tokens — LPPL ~2020, GPL-family ~250 incl. 16
+agpl3, MIT ~110, PD ~72, CC-BY/BY-SA ~42, BSD ~25, OFL/GUST/Knuth ~24,
+Apache ~12). The AGPL/GPL packages are aggregate-distribution TL PROGRAMS
+the engine invokes — NOT source our code derives from (§2 governs our
+code; §1/§7 the aggregate). Raw (`--no-exceptions`) the audit flags 22
+(17 TL-infra with no metadata: glyphlist/hyphen-base/texlive.infra/
+tlshell/…; 5 CTAN grab-bags with a `collection` token: ltxmisc [core],
+frankenstein/preprint/was/fragments [academic]) — all TL-proper, so
+`license-exceptions.mjs` resolves each as `other-free` citing LICENSE.TL
+(FSF + DFSG blanket statement, quote verified verbatim). **Kept all 22**
+(sound; several grab-bags carry journal packages — authblk via preprint,
+gensymb/upgreek via was); dropping the 5 from academic is a one-line
+tiers.mjs option if max caution is preferred (flagged to user).
+
+**Wiring:** `dist/licenses.json` emitted before SHA256SUMS in the dist
+stage of both drivers (hashed + manifest-listed, new `license-inventory`
+role in gen-assets), so a failing audit aborts the build before
+SHA256SUMS. `build/audit/license-audit.sh` check (f) runs it when a
+tlpdb is present (green-defer otherwise); `licenses.test.mjs` (23) wired
+into build.yml. THIRD_PARTY_NOTICES.md's stale "to be inventoried"
+deferral replaced with the real grouped enumeration + the §7 aggregate
+statement. Review: approve, 2 cosmetic nits folded (gen-assets "seven
+rules", allowlist legal-basis comment). Deterministic (sorted, no
+wall-clock); 30/30 tests.
+
 ## 2026-07-24 — M4 COMPLETE (Bundles + manifests): independently accepted
 
 **Milestone accepted** (item 9). The tester independently verified all 7

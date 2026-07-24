@@ -84,16 +84,20 @@
 // classification logic. Structural (sibling-pairing) rules are preferred over
 // exact names where a stable structural signal exists.
 //
-//   #  role            match (on the dist-relative posix path)
-//   -  --------------  ---------------------------------------------------------
-//   1  checksums       basename == "SHA256SUMS"
-//   2  format          extension == ".fmt"        (engine .fmt format dumps)
-//   3  engine-wasm     extension == ".wasm"       (the single multicall engine)
-//   4  bundle-data     extension == ".data"       (Emscripten file_packager data)
-//   5  engine-js       ".js" AND a sibling "<stem>.wasm" exists  (engine loader)
-//   6  bundle-js       ".js" AND a sibling "<stem>.data" exists  (bundle loader)
+//   #  role              match (on the dist-relative posix path)
+//   -  ----------------  -------------------------------------------------------
+//   1  checksums         basename == "SHA256SUMS"
+//   2  license-inventory basename == "licenses.json"  (the M5-item-2 shipped-
+//                        aggregate license inventory, emitted by
+//                        build/bundles/licenses.mjs BEFORE SHA256SUMS so it is
+//                        hashed + cross-checked like any payload file)
+//   3  format            extension == ".fmt"        (engine .fmt format dumps)
+//   4  engine-wasm       extension == ".wasm"       (the single multicall engine)
+//   5  bundle-data       extension == ".data"       (Emscripten file_packager data)
+//   6  engine-js         ".js" AND a sibling "<stem>.wasm" exists  (engine loader)
+//   7  bundle-js         ".js" AND a sibling "<stem>.data" exists  (bundle loader)
 //
-// All six rules are STRUCTURAL (name/extension/sibling-pairing): the engine js
+// All seven rules are STRUCTURAL (name/extension/sibling-pairing): the engine js
 // loader always pairs with the engine wasm of the same stem, and a bundle js
 // loader always pairs with its <stem>.data — so an engine/bundle rename at
 // rebase reclassifies correctly with no code change, and M4's multi-bundle
@@ -154,6 +158,7 @@ const MANIFEST_NAME = 'manifest.json'; // DESIGN §7 name; the runtime prefers i
 const ASSETS_NAME = 'assets.json'; // schemaVersion-1 back-compat alias (dropped at M5).
 const OUTPUT_NAMES = new Set([MANIFEST_NAME, ASSETS_NAME]);
 const SUMS_NAME = 'SHA256SUMS';
+const LICENSES_NAME = 'licenses.json'; // M5 item 2 shipped-aggregate license inventory (build/bundles/licenses.mjs).
 
 // The named multicall program set (DESIGN §3, minus luatex — dropped from v1 at
 // the M2 rebase). STATIC on purpose: busytex dispatches these by argv[0] out of
@@ -273,6 +278,7 @@ function siblingWithExt(rel, ext) {
 
 const ROLE_RULES = [
   { role: 'checksums', test: (c) => c.base === SUMS_NAME },
+  { role: 'license-inventory', test: (c) => c.base === LICENSES_NAME },
   { role: 'format', test: (c) => c.ext === '.fmt' },
   { role: 'engine-wasm', test: (c) => c.ext === '.wasm' },
   { role: 'bundle-data', test: (c) => c.ext === '.data' },

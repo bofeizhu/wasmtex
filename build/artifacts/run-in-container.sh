@@ -256,11 +256,21 @@ do_dist() {
   # Standalone engine formats (also embedded in core; surfaced per spec).
   find "$fmtdir" -name '*.fmt' -exec cp {} "$DIST/formats/" \;
 
+  # Shipped-aggregate license INVENTORY + fail-closed AUDIT (M5 item 2). Emitted
+  # BEFORE SHA256SUMS so /dist/licenses.json is hashed + cross-checked like any
+  # payload file (gen-assets classifies it role "license-inventory"). The audit is
+  # FAIL-CLOSED: a shipped TeX Live package whose `catalogue-license` is missing /
+  # non-free / not on the free allowlist (and not resolved by the cited
+  # build/bundles/license-exceptions.mjs) aborts the build here (set -e). Reads the
+  # pinned tlpdb ISO-staged under source/.
+  banner "dist: shipped-aggregate license inventory + fail-closed audit (licenses.json)"
+  node "$BUNDLES/licenses.mjs" --tlpdb "$BUILD/source/texmfrepo/tlpkg/texlive.tlpdb" --json "$DIST/licenses.json"
+
   # Deterministic integrity list (sorted, relative paths). Linux: sha256sum —
   # byte-identical output format to the native driver's `shasum -a 256`, so the
   # SHA256SUMS file is comparable across the native and container builds. The two
-  # generator outputs (manifest.json, assets.json) are excluded (not payload; a
-  # self-reference fixpoint otherwise).
+  # gen-assets outputs (manifest.json, assets.json) are excluded (not payload; a
+  # self-reference fixpoint otherwise). licenses.json IS listed (payload, above).
   ( cd "$DIST" && find . -type f ! -name SHA256SUMS ! -name manifest.json ! -name assets.json | LC_ALL=C sort | xargs sha256sum > SHA256SUMS )
 
   # Integrity manifest: dist/manifest.json (schemaVersion 2, DESIGN §7) + the

@@ -538,9 +538,13 @@ jobs:
         working-directory: demo
         run: npm ci
 
-      - name: Install Chromium (with OS deps)
+      - name: Install the browser matrix (chromium + firefox + webkit, with OS deps)
         working-directory: demo
-        run: npx playwright install --with-deps chromium
+        # The demo Playwright config runs the full 3-browser matrix (M5 item 6:
+        # firefox + webkit added alongside chromium). Install ALL of them — a
+        # chromium-only install makes the firefox/webkit projects fail instantly
+        # ("Executable doesn't exist"). `--with-deps` pulls the OS libs each needs.
+        run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Run Playwright hello-world PDF smoke
         working-directory: demo

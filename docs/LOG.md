@@ -5,6 +5,42 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — 0.1.1: native-ESM portability (explicit .js specifiers)
+
+**Trigger: verifying the published 0.1.0 npm package end to end.** Installing
+`wasmtex@0.1.0` from the registry and importing it in bare Node FAILED with
+`ERR_MODULE_NOT_FOUND` on `./version`: the compiled ESM shipped EXTENSIONLESS
+relative specifiers (`from './version'`), which `moduleResolution: "bundler"`
+tolerates but native Node ESM and native-browser ESM reject. So 0.1.0 works only
+through a bundler or the demo's hand-maintained importmap — and that importmap is
+exactly what regressed earlier this session (the item-8 `version.js` miss →
+20-min demo-smoke timeout). Verified 0.1.0 otherwise: installs, resolves via
+esbuild, lockstep-consistent (pkg ASSETS_VERSION == published manifest.version ==
+0.1.0), published assets pass SHA256SUMS, and a real browser compile against the
+published package + published assets produced a valid, text-bearing PDF.
+
+**Fix (0.1.1).** Added explicit `.js` to all 22 relative import/export specifiers
+in `runtime/src/**` + `runtime/worker/**` (`from './version.js'`, etc.; includes
+`import type` / `export … from` / `export type *`). `moduleResolution: "bundler"`
+maps `.js`→sibling `.ts`, so tsc + esbuild compile unchanged and the EMITTED dist
+(and `.d.ts`) now carry `.js` → loads under bare Node, native-browser ESM, AND
+bundlers. `runtime/node/` stays extensionless by design (esbuild-bundled into the
+node-harness, excluded from the published `files`). Removed the now-unnecessary
+`<script type="importmap">` from `demo/index.html` (the page loads the runtime as
+native ESM directly) and the obsolete importmap drift-guard test.
+
+**New guard.** `runtime/test/esm-extensions.test.ts` scans `src/` + `worker/` and
+fails (naming the offender) if any relative specifier lacks `.js` — a fast,
+always-run replacement for the deleted demo-smoke importmap guard, closing the
+regression class at the source instead of via a slow browser timeout.
+
+**Verified:** `npm run build` + typecheck; 281 runtime unit+integration tests +
+the new guard (2) green against a 0.1.0 dist; conformance corpus green; demo
+hello-world + on-demand compile on chromium/firefox/webkit with NO importmap;
+bare-Node `import('…/dist/src/index.js')` now returns the exports. Reviewer:
+request-changes → the guard test, the demo/README + conformance wording, and this
+LOG entry landed. Bumped to **0.1.1** (lockstep) and cut `assets-v0.1.1`.
+
 ## 2026-07-24 — 🎉 WasmTeX v1 (0.1.0) SHIPPED — M5 complete
 
 The release cut of `assets-v0.1.0` went fully green (release.yml run

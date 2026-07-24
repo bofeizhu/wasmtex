@@ -1,0 +1,21 @@
+\documentclass[11pt]{report}
+% A multi-file project: the root pulls two chapters via \include and prints a
+% table of contents. Everything here is BASE LaTeX (report.cls + \tableofcontents
+% + \include + \label/\ref), all served by the `core` tier — no \usepackage of an
+% academic package — so this stays a clean core case (bundlesLoaded=['core'],
+% resolution=none). The forward \ref from chapter 1 to chapter 2 is undefined on
+% pass 1, so LaTeX prints "Rerun to get cross-references right" and the §5.3 auto
+% rerun loop runs a second pass that resolves it — exercising BOTH the multi-file
+% \include machinery and the .aux/.toc rerun.
+\title{A Multi-Chapter Report}
+\author{WasmTeX Conformance Suite}
+\date{}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+\include{chap1}
+\include{chap2}
+
+\end{document}

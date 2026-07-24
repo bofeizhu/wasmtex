@@ -1,0 +1,21 @@
+{
+  "title": "unicode-math",
+  "description": "A XeTeX document using \\usepackage{unicode-math} + \\setmathfont to typeset real Unicode math with an OpenType math font (Latin Modern Math, from academic's fontsrecommended set). 'unicode-math' IS a provided-package name in the academic tier, so the §5.4(a) static scan preselects + mounts academic BEFORE pass 1 (resolution=scan). Unlike a CJK CID subset, xdvipdfmx writes a ToUnicode CMap for this OTF math font, so the math ROUND-TRIPS: the recovered text contains the actual Unicode operators — the integral (U+222B), infinity (U+221E), n-ary summation (U+2211) and square root (U+221A) glyphs are asserted directly, proving real math rendered (not a pixel comparison, §8). Structurally corroborated: the LatinModernMath program is embedded (self-contained PDF) with a CID glyph run.",
+  "engine": "xetex",
+  "entry": "main.tex",
+  "bibliography": "off",
+  "index": "off",
+  "expect": {
+    "ok": true,
+    "exitCode": 0,
+    "minPages": 1,
+    "textSnippets": ["Euler", "Gaussian", "summation", "∫", "∞", "∑", "√"],
+    "absentSnippets": ["Wittgenstein"],
+    "embeddedFonts": ["LatinModernMath"],
+    "requireEmbeddedFontFile": true,
+    "minCidGlyphs": 50,
+    "bundlesLoaded": ["core", "academic"]
+  },
+  "resolution": "scan",
+  "phases": ["engine", "xdvipdfmx"]
+}

@@ -1,0 +1,36 @@
+{
+  "title": "multi-include",
+  "description": "A multi-file \\include project: main.tex assembles chap1.tex + chap2.tex and prints a \\tableofcontents. Everything is BASE LaTeX (report.cls + \\include + \\tableofcontents + \\label/\\ref), all in the core tier, so no academic package is scanned and the doc stays core-only (bundlesLoaded=['core'], resolution=none). Chapter 1 forward-\\ref's chapter 2, so pass 1 has an undefined reference and LaTeX prints 'Rerun to get cross-references right'; the §5.3 auto-rerun loop runs a SECOND pass that resolves it — phases=['engine','engine'] pins exactly the two passes. The pinned diagnostics are the pass-1 undefined-reference warnings the multi-pass transcript retains (like the bib-cite seed): a real parser exercise with file/line attribution across the \\included chap1.tex.",
+  "engine": "pdftex",
+  "entry": "main.tex",
+  "bibliography": "off",
+  "index": "off",
+  "expect": {
+    "ok": true,
+    "exitCode": 0,
+    "minPages": 3,
+    "textSnippets": ["Contents", "Introduction", "Background", "Results", "Measurements"],
+    "absentSnippets": ["Wittgenstein"],
+    "diagnostics": [
+      {
+        "severity": "warning",
+        "message": "LaTeX Warning: Reference `chap:results' on page 2 undefined on input line 5.",
+        "file": "chap1.tex",
+        "line": 5
+      },
+      {
+        "severity": "warning",
+        "message": "LaTeX Warning: There were undefined references.",
+        "file": "main.tex"
+      },
+      {
+        "severity": "warning",
+        "message": "LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.",
+        "file": "main.tex"
+      }
+    ],
+    "bundlesLoaded": ["core"]
+  },
+  "resolution": "none",
+  "phases": ["engine", "engine"]
+}

@@ -1,0 +1,16 @@
+\documentclass[11pt]{article}
+% §6.3 host-supplied-font contract: the CJK font is NOT the bundled fandol. It is
+% passed to the runtime through the `files` map and selected by a project-relative
+% path with \setCJKmainfont. \usepackage{xeCJK} IS a provided-package name in the
+% academic tier, so the §5.4(a) scan preselects + mounts academic before pass 1;
+% xeCJK (unlike ctex) loads NO default CJK font, so fandol never enters — the host
+% font WasmTeXStubCJK is the only CJK font embedded. Verified STRUCTURALLY via
+% fontProbe (no pixel comparison, §8): the host font's /BaseFont is embedded, its
+% program is embedded, and NO fandol font appears.
+\usepackage{xeCJK}
+\setCJKmainfont[Path=./]{WasmTeXStubCJK-Regular.ttf}
+\begin{document}
+This document typesets Chinese with a host-supplied font passed via the runtime
+files map, not the bundled fandol font. The characters 你好世界 are rendered by the
+host font, as are 主机字体 and 宿主字体.
+\end{document}

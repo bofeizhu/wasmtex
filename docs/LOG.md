@@ -5,6 +5,37 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M5 item 4: fuller conformance corpus + a stub CJK font fixture
+
+**Done, reviewer-approved.** 5 new corpus entries (12/12 corpus green,
+267 runtime, no regression): `unicode-math` (XeTeX, §5.4 scan→academic,
+math ∫∞∑√ recovered, LatinModernMath embedded), `multi-include` (pdfTeX,
+core-only, 4 pages, `\include`+TOC+`\ref` 2-pass rerun, phases=[engine,
+engine] as the rerun lock), `known-bad` (deliberate missing package →
+ok:false, exit 1, noPdf, exact diagnostic {File not found, main.tex:3};
+mounts academic exactly ONCE then fails — the correct bounded §5.4(b)
+behavior, not spurious), `tikz-standalone` (scan→academic pgfplots
+figure), `cjk-hostfont` (CJK via a HOST-supplied font in the `files` map,
+fandol ABSENT — the §6.3 bring-your-own-font contract; the host font
+round-trips because its plain Unicode cmap gives xdvipdfmx a ToUnicode
+CMap). 2 new runner assertions: `noPdf` (assert no PDF), `absentFonts`
+(negative font control). Assertions proven to discriminate (injected-
+failure).
+
+**Font fixture provenance (§2 constitutional):** `WasmTeXStubCJK-Regular
+.ttf` (~1.6 KB) is ORIGINAL work — `conformance/fixtures/build-stub-cjk.py`
+hand-authors 9 rectangular Han glyphs via fontTools, opening/subsetting NO
+existing font. Reviewer regenerated + TTX-diffed against the checked-in
+binary: identical but for build timestamps → CONFIRMED original, MIT, no
+THIRD_PARTY_NOTICES entry (that file inventories third-party material
+only). Fix folded: `SOURCE_DATE_EPOCH=0` pins the generator so the rebuild
+is BIT-IDENTICAL (`cmp`-verifiable, not a TTX diff) — regenerated. Nit
+folded: a README note that `absentFonts` must pair with a positive check
+(else vacuous on a missing PDF). Nits skipped: pinning tikz's incidental
+pgfplots diagnostic (rebase-fragile, no coverage gain); the §6.3 "font in
+fixtures/" wording (the .ttf lives in the corpus entry dir = the actual
+`files`-map host-font contract; documented in fixtures/README).
+
 ## 2026-07-24 — M5 item 3: release docs (README + embedding guide)
 
 **Done.** Root README.md rewritten — the stale "pre-code bootstrap, no

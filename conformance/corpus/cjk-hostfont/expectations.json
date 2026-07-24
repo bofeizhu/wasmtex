@@ -1,0 +1,22 @@
+{
+  "title": "cjk-hostfont",
+  "description": "The §6.3 HOST-supplied-font contract: the CJK font is passed to the runtime through the `files` map (WasmTeXStubCJK-Regular.ttf, a project file) and selected by a project-relative path with \\setCJKmainfont[Path=./]{...} — NOT the bundled fandol. \\usepackage{xeCJK} IS a provided-package name in the academic tier, so the §5.4(a) scan preselects + mounts academic before pass 1 (resolution=scan); xeCJK (unlike ctex) loads NO default CJK font, so fandol never enters. Asserted STRUCTURALLY via fontProbe (no pixel comparison, §8): the host font's program is embedded (self-contained PDF), its /BaseFont carries the host font's name, and — the load-bearing negative control — NO fandol font is embedded (absentFonts). The stub font also carries a plain Unicode cmap, so xdvipdfmx writes a ToUnicode CMap and the Chinese round-trips: the recovered text contains the actual characters (你好世界 / 主机字体 / 宿主字体), a direct proof the host font rendered them. Contrast cjk-ctex (bundled fandol, retry path, CJK NOT recoverable). The WasmTeXStubCJK-Regular.ttf fixture is ORIGINAL work (hand-authored rectangular glyphs via fontTools; see conformance/fixtures/), MIT-licensed under the repo — not derived from any third-party font.",
+  "engine": "xetex",
+  "entry": "doc.tex",
+  "bibliography": "off",
+  "index": "off",
+  "expect": {
+    "ok": true,
+    "exitCode": 0,
+    "minPages": 1,
+    "textSnippets": ["host-supplied", "你好世界", "主机字体", "宿主字体"],
+    "absentSnippets": ["Wittgenstein"],
+    "embeddedFonts": ["WasmTeXStubCJK"],
+    "absentFonts": ["FandolSong", "fandol"],
+    "requireEmbeddedFontFile": true,
+    "minCidGlyphs": 20,
+    "bundlesLoaded": ["core", "academic"]
+  },
+  "resolution": "scan",
+  "phases": ["engine", "xdvipdfmx"]
+}

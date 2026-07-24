@@ -1,0 +1,22 @@
+{
+  "title": "known-bad",
+  "description": "The ERROR-PATH contract lock (§8: 'a known-bad document asserting diagnostics extraction'). \\usepackage{nosuchpackagexyz} requests a package that exists in NO tier: it is not a provided-package name and nosuchpackagexyz.sty is not a file in any tier's ls-R. So the §5.4(a) scan resolves it to nothing; pass 1 fails 'File `nosuchpackagexyz.sty' not found'; the §5.4(b) missing-file retry makes exactly ONE bounded mount attempt (the sound over-approximation with a single on-demand tier — see bundle-resolution.ts), academic mounts, the re-run STILL cannot find the file, and the job fails cleanly. This is BOUNDED, not spurious: bundlesLoaded=['core','academic'] with no loop, ok:false, exitCode 1, and NO output PDF ('Fatal error occurred, no output PDF file produced!'). The runner asserts the parsed diagnostic shape — severity/message/file/line — with the error attributed to main.tex line 3 (\\begin{document}, the emergency-stop point). No resolution is pinned because the retry mounted but did NOT resolve (the file is genuinely absent).",
+  "engine": "pdftex",
+  "entry": "main.tex",
+  "bibliography": "off",
+  "index": "off",
+  "expect": {
+    "ok": false,
+    "exitCode": 1,
+    "noPdf": true,
+    "diagnostics": [
+      {
+        "severity": "error",
+        "message": "LaTeX Error: File `nosuchpackagexyz.sty' not found.",
+        "file": "main.tex",
+        "line": 3
+      }
+    ],
+    "bundlesLoaded": ["core", "academic"]
+  }
+}

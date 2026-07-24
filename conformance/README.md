@@ -20,8 +20,35 @@ targeting the scientific-journal + CJK working set:
   policy**: `longtable` is core-served but is not a `provides` name in any tier, so
   the resolver must NOT mount academic (`bundlesLoaded=['core']`).
 
-The rest of the full §8 corpus — `unicode-math`, a multi-chapter `\include`
-project, and a known-bad document — arrives with M5.
+**M5 item 4 completes the §8 corpus** with the remaining doc types:
+
+- **`unicode-math`** — a XeTeX document with `\usepackage{unicode-math}` +
+  `\setmathfont{latinmodern-math.otf}` (an OpenType math font in the `academic`
+  tier). Drives the **§5.4(a) scan** (unicode-math preselects academic). xdvipdfmx
+  writes a ToUnicode CMap for the OTF math font, so the math ROUND-TRIPS — the
+  recovered text carries the real operators (∫ ∞ ∑ √), a direct render proof.
+- **`multi-include`** — a multi-file `\include` project (`report.cls` +
+  `\tableofcontents` + two chapters), all **core**-served (`bundlesLoaded=['core']`,
+  `resolution=none`). A forward `\ref` from chapter 1 to chapter 2 makes pass 1 emit
+  "Rerun to get cross-references right"; the §5.3 auto-rerun runs a second pass
+  (`phases=['engine','engine']`). Pins the retained pass-1 undefined-reference
+  diagnostics (file/line across the `\include`d file), like `bib-cite`.
+- **`known-bad`** — the ERROR-PATH lock: `\usepackage{nosuchpackagexyz}` (in no
+  tier). Asserts `ok:false`, `exitCode:1`, **`noPdf`** (no output PDF), and the exact
+  error **diagnostics** shape. Confirms the §5.4(b) retry is BOUNDED — one academic
+  mount attempt then a clean fail (`bundlesLoaded=['core','academic']`), never a
+  download loop (the corpus counterpart to the integration test's
+  "genuinely-missing package" case).
+- **`tikz-standalone`** — a focused `\documentclass{standalone}` figure cropped to
+  one page, `\usepackage{pgfplots}` driving the **§5.4(a) scan**. A real tikzpicture
+  (two plotted functions, title, axis labels, legend); the labels recover as text.
+- **`cjk-hostfont`** — the §6.3 **host-supplied-font** path: a CJK font passed via
+  the runtime `files` map and selected by a project-relative path with
+  `\setCJKmainfont`, NOT the bundled fandol. `\usepackage{xeCJK}` drives the scan;
+  xeCJK loads no default font, so fandol never enters. Asserts (fontProbe) the host
+  font is embedded and — the load-bearing control — **`absentFonts`** proves NO
+  fandol is embedded. The `WasmTeXStubCJK-Regular.ttf` fixture is ORIGINAL work (see
+  `fixtures/`), not a vendored third-party font.
 
 Assertions cover **exit code, PDF page count, extracted text snippets, diagnostics
 shape, which bundle tiers mounted, and the §5.4 resolution path — no pixel
@@ -35,8 +62,10 @@ conformance/
   verify-manifest.mjs # dist/manifest.json integrity check (bytes+sha256, provides)
   pdf-probe.mjs       # shared PDF text/page/font probe (also used by the demo smoke)
   package.json        # `npm run conformance` (mirrors demo/); no external deps
+  fixtures/           # generators + provenance for binary fixtures (the CJK stub font)
   corpus/<name>/
     <entry>.tex ...   # the project sources (the dir IS the project)
+    <font>.ttf        # binary project inputs (e.g. cjk-hostfont's host font) load as bytes
     expectations.json
 ```
 
@@ -61,13 +90,15 @@ path relative to the entry dir (POSIX separators). Text files (`.tex`, `.bib`,
     "ok":             true,                // result.ok
     "exitCode":       0,                   // result.exitCode
     "minPages":       1,                   // countPages(pdf).count >= minPages
+    "noPdf":          true,                // optional; assert NO PDF was produced (error path)
     "textSnippets":   ["XeTeX", "…"],      // each present in the recovered text
     "absentSnippets": ["LibreOffice"],     // optional negative controls (each ABSENT)
     "diagnostics":    [],                  // optional; exact deep-equal vs. result.diagnostics
 
-    // -- M4 item 8: bundle tiers + CJK-font structure ------------------------
+    // -- M4 item 8 + M5 item 4: bundle tiers + font structure ----------------
     "bundlesLoaded":  ["core", "academic"], // optional; exact result.stats.bundlesLoaded
     "embeddedFonts":  ["FandolSong"],       // optional; each must be a substring of some /BaseFont
+    "absentFonts":    ["FandolSong"],       // optional; each must NOT be a substring of any /BaseFont
     "requireEmbeddedFontFile": true,        // optional; a font program (/FontFile*) is embedded
     "minCidGlyphs":   30                    // optional; >= N 2-byte CID glyphs in the content stream
   },
@@ -89,7 +120,15 @@ path relative to the entry dir (POSIX separators). Text files (`.tex`, `.bib`,
   equal whether written or omitted. A clean document is `[]`. The `bib-cite`
   seed deliberately pins the pre-bibtex "Citation … undefined" warnings that the
   multi-pass transcript retains — a real end-to-end exercise of the parser
-  (item 8), and a change is a rebase finding (like the fixtures).
+  (item 8), and a change is a rebase finding (like the fixtures). The
+  `multi-include` entry likewise pins the retained pass-1 undefined-`\ref`
+  warnings (cross-reference, not citation), with file/line attributed across an
+  `\include`d file.
+- **`noPdf`** (optional, M5 item 4) asserts a compile produced **no** PDF —
+  `result.pdf` absent. The error-path counterpart to `minPages`: a fatal failure
+  (e.g. `known-bad`'s missing package, "no output PDF file produced") must fail
+  cleanly, never ship a partial PDF. Paired with `ok:false` + `exitCode` + the
+  error `diagnostics`, it locks the whole failure contract.
 - **`phases`** (optional) is the exact executed step sequence. The
   `engine`/`bibtex8`/`makeindex` steps are read from the transcript in execution
   order; the `xdvipdfmx` driver is silent in the transcript, so it is **inferred**
@@ -110,6 +149,17 @@ path relative to the entry dir (POSIX separators). Text files (`.tex`, `.bib`,
   run of CID glyphs was emitted. When the CJK font is used for nothing but the CJK
   text (Latin uses a separate font), its embedding IS proof the Chinese was set with
   it.
+- **`absentFonts`** (optional, M5 item 4) is the negative control for the fonts:
+  each name must NOT be a substring of any `/BaseFont`. The `cjk-hostfont` entry
+  uses it to prove the **host-supplied** font (`WasmTeXStubCJK`) — not the bundled
+  fandol — is the one embedded for the CJK (§6.3). Unlike `cjk-ctex`, that stub font
+  carries a plain Unicode cmap, so xdvipdfmx writes a ToUnicode CMap and the Chinese
+  ROUND-TRIPS (the characters are asserted as `textSnippets` too, not just
+  structurally). The exact counterpart to `embeddedFonts`. ALWAYS pair
+  `absentFonts` with a positive check on the same probe (`embeddedFonts` +
+  `minPages`/`requireEmbeddedFontFile`): with no PDF (or a probe miss) the
+  `/BaseFont` list is empty and every `absentFonts` name vacuously passes —
+  the positive check is what proves the probe actually saw a rendered PDF.
 
 ### Tiers & the §5.4 resolution (`resolution`)
 

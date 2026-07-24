@@ -1,0 +1,20 @@
+\documentclass{standalone}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.16}
+\begin{document}
+\begin{tikzpicture}
+\begin{axis}[
+    title={Damping Response},
+    xlabel={Frequency},
+    ylabel={Amplitude},
+    legend pos=north east,
+    width=9cm, height=6cm,
+    grid=major,
+  ]
+  \addplot[blue, thick, domain=0:6, samples=80] {exp(-0.4*x)*cos(deg(2*x))};
+  \addlegendentry{underdamped}
+  \addplot[red, dashed, domain=0:6, samples=80] {exp(-0.4*x)};
+  \addlegendentry{envelope}
+\end{axis}
+\end{tikzpicture}
+\end{document}

@@ -151,6 +151,135 @@ alternative resolution (edit `tiers.mjs`). No shipped package is non-free.
 
 ---
 
+## Item 4 — the fuller conformance corpus
+
+Dated 2026-07-24. Goal: complete the §8 corpus beyond the M4 tier-exercising seeds
+(`sci-paper`/`cjk-ctex`/`pkg-core-only`) with the remaining DESIGN §8 doc types —
+`unicode-math` (XeTeX), a multi-chapter `\include` project, a known-bad document
+(diagnostics, not a PDF), a standalone TikZ figure, and a host-supplied-font CJK
+variant (§6.3, font via `files`, not the bundled fandol). Validated against the
+on-disk native `dist/` (core + academic + manifest); no container build. Tester
+work; the orchestrating session reviews + commits.
+
+### What was added
+
+Five corpus entries (each `conformance/corpus/<name>/` with original `.tex` +
+`expectations.json`), all green against `dist/`:
+
+| entry | engine | pages | passes | bundlesLoaded | resolution | pdf | key proof |
+|---|---|---|---|---|---|---|---|
+| `unicode-math` | xetex | 1 | 1 | core+academic | scan | 11 KB | real math ROUND-TRIPS (∫ ∞ ∑ √ recovered); LatinModernMath embedded |
+| `multi-include` | pdftex | 4 | 2 | core | none | 78 KB | `\include` + TOC + forward-`\ref` rerun (`phases=[engine,engine]`); pinned pass-1 diags |
+| `known-bad` | pdftex | — | 1 | core+academic | (n/a) | none | `ok:false`, exit 1, `noPdf`, error-diagnostic shape; bounded 1-mount retry |
+| `tikz-standalone` | pdftex | 1 | 1 | core+academic | scan | 36 KB | cropped `standalone` figure; pgfplots scan; labels recover |
+| `cjk-hostfont` | xetex | 1 | 1 | core+academic | scan | 6 KB | host font embedded, **fandol absent**; CJK round-trips |
+
+Plus: `conformance/fixtures/` (the CJK stub-font generator + provenance README);
+two new runner assertions in `run.mjs` (`noPdf`, `absentFonts`); and `README.md`
+updated (entry descriptions + schema keys + `fixtures/` layout).
+
+### Key design decisions
+
+1. **`provides`-name lookup forces the scan drivers.** The §5.4(a) scan resolves
+   `\usepackage` NAMES against the manifest `provides` index; `tikz` is NOT a
+   provides name (it ships from the `pgf` package), so a bare `\usepackage{tikz}`
+   would fall to the RETRY path. To keep the two figure/math entries on the SCAN
+   path (as §8/the task specify), they load provides-name packages: `unicode-math`
+   and `pgfplots` (both academic provides). `tikz-standalone` uses
+   `\documentclass{standalone}` (academic, invisible to the scan) but `pgfplots`
+   preselects academic before pass 1, so standalone.cls is present when pass 1 runs.
+
+2. **`multi-include` stays core + pins the rerun.** `report.cls` + `\tableofcontents`
+   + `\include` + `\label/\ref` are all base LaTeX (core), so `bundlesLoaded=['core']`,
+   `resolution=none`. A forward `\ref` (chap1 → chap2) is undefined on pass 1 →
+   "Rerun to get cross-references right" → the §5.3 auto-rerun runs pass 2.
+   `phases=['engine','engine']` is the rerun-loop LOCK (the runner has no direct
+   passes assertion; two engine banners = two passes). The 3 pinned diagnostics are
+   the pass-1 undefined-`\ref` warnings the multi-pass transcript retains — a
+   parser exercise distinct from `bib-cite` (cross-reference, not citation; file/line
+   attributed across the `\include`d `chap1.tex:5`).
+
+3. **`known-bad` = missing package, and the retry is BOUNDED, not spurious.**
+   `\usepackage{nosuchpackagexyz}` is in no tier. Observed: pass 1 fails "File
+   `nosuchpackagexyz.sty' not found"; the §5.4(b) retry — the sound
+   over-approximation with a single on-demand tier (`selectBundlesForMissingFiles`)
+   — mounts academic ONCE; the re-run still can't find it; clean fail. So
+   `bundlesLoaded=['core','academic']` (one attempt, no loop), `ok:false`,
+   `exitCode:1`, NO PDF ("Fatal error occurred, no output PDF file produced!").
+   This is the CORRECT non-spurious behavior the task asked to confirm (the corpus
+   counterpart to the integration test "a genuinely-missing package retries once
+   then fails cleanly"). The error diagnostic shape (the deliverable):
+   `{severity:"error", message:"LaTeX Error: File \`nosuchpackagexyz.sty' not
+   found.", file:"main.tex", line:3}` — line 3 is `\begin{document}`, the
+   emergency-stop point (the parser takes the first `l.<n>` after the error). No
+   `resolution` is pinned: the retry mounted but did not resolve, which fits none of
+   scan/retry/none cleanly (final log retains "not found").
+
+4. **Host-CJK fixture is ORIGINAL work, not a vendored font.** Rather than vendor a
+   real open CJK face (5–20 MB even subset, third-party-licensed), the fixture
+   `WasmTeXStubCJK-Regular.ttf` (~1.6 KB) is hand-authored via fontTools
+   (`conformance/fixtures/build-stub-cjk.py`): plain rectangular glyphs for the nine
+   Han codepoints the doc uses. It exercises the ENTIRE §6.3 host-font path
+   (project-file font resolved by `\setCJKmainfont[Path=./]`, used for the CJK range,
+   embedded, demonstrably not fandol) while the assertion is STRUCTURAL (fontProbe;
+   no pixel comparison, §8). `\usepackage{xeCJK}` (not `ctex`) drives the scan and
+   loads no default font, so fandol never enters. Bonus: the stub carries a plain
+   Unicode cmap, so xdvipdfmx writes a ToUnicode CMap and the Chinese round-trips —
+   `你好世界` etc. are asserted as `textSnippets` too (contrast `cjk-ctex`, whose
+   fandol CID subset has no ToUnicode → structural-only).
+
+5. **Two runner assertions added (strengthening, never weakening).** The error path
+   and the negative font control needed harness support the M4 runner lacked:
+   - `noPdf: true` → asserts `!(result.pdf instanceof Uint8Array)` (the `known-bad`
+     "NOT a PDF" contract; counterpart to `minPages`).
+   - `absentFonts: [...]` → each name must NOT substring any `/BaseFont` (the
+     `cjk-hostfont` "NOT fandol" control; counterpart to `embeddedFonts`).
+
+### Validation (native `dist/`, manifest preflight OK: 30 checks, 11 files)
+
+- `node conformance/run.mjs` → **all 12 run corpus entries passed** (7 prior + 5
+  new), exit 0. Per-entry figures in the table above (verbatim from the runner
+  summary). The `known-bad` entry's `ok:false`/no-PDF is a PASS of its test.
+- **Assertions discriminate** (injected wrong expectations → the runner FAILs,
+  verbatim; then reverted):
+  - `known-bad` diag message mutated to `WRONGNAME.sty` → `FAIL: diagnostics — got
+    [{… nosuchpackagexyz.sty …}]`.
+  - `cjk-hostfont` `embeddedFonts:["FandolSong"]` → `FAIL: font:FandolSong — embedded
+    /BaseFont names: [… WasmTeXStubCJK-Regular]`; `absentFonts:["WasmTeXStubCJK"]` →
+    `FAIL: absentFont:WasmTeXStubCJK — /BaseFont unexpectedly matches "WasmTeXStubCJK"`.
+    Both directions of the host-font-not-fandol control proven.
+  - `noPdf:true` injected on `multi-include` (which DOES emit a PDF) → `FAIL: noPdf —
+    unexpected PDF produced (77938B)`.
+- **No regression**: `npm --prefix runtime test` → **267 tests, 12 files, all
+  passed** (unchanged; only the test harness `run.mjs` was touched, not runtime src).
+
+### Reported for human attention (font-fixture provenance)
+
+`conformance/corpus/cjk-hostfont/WasmTeXStubCJK-Regular.ttf` is a NEW binary checked
+into the repo. It is **original work, MIT** (under the repo `LICENSE`) — not derived
+from any third-party font (every outline is a rectangle defined in the generator;
+no fandol/Noto/Source-Han source consulted, DESIGN §2 clean). Because it is original
+repo work, it needs **no** `THIRD_PARTY_NOTICES.md` entry (that file inventories
+third-party material). Provenance is recorded in `conformance/fixtures/README.md` +
+the generator's SPDX header. Flagged so the main session can confirm the classification
+(original/MIT, no third-party notice) at review, and decide whether it prefers the
+`.ttf` physically under `fixtures/` (would need a runner change to load a shared
+fixture; today the runner only loads a corpus entry's own dir, so the font lives in
+the entry as the §6.3 "host supplies it via `files`" contract intends).
+
+### Coverage gaps noted
+
+- `luatex` is not shipped (manifest `engines` = xetex/pdftex/bibtex8/xdvipdfmx/
+  makeindex/kpsewhich), so the corpus exercises unicode-math/CJK via XeTeX only —
+  the LuaTeX path is out of scope for v1.
+- No entry drives the retry path to a SUCCESSFUL non-`\documentclass` miss beyond
+  `cjk-ctex`; the new academic entries all use the scan (by design, per the task).
+- The pinned `multi-include`/`known-bad` diagnostics (message + line) are
+  rebase-sensitive by construction (like the `bib-cite` fixture) — a wording/line
+  shift on a TL rebase is a finding to re-baseline, not a silent failure.
+
+---
+
 ## Item 3 — Docs: README + embedding guide + runtime README flip
 
 Dated 2026-07-24. Goal: make the shipped docs tell the truth for the imminent

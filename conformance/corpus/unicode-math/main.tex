@@ -1,0 +1,21 @@
+\documentclass[11pt]{article}
+% unicode-math is XeTeX/LuaTeX only. \usepackage{unicode-math} IS a provided-package
+% name in the academic tier, so the §5.4(a) static scan preselects + mounts academic
+% BEFORE pass 1. \setmathfont selects an OpenType math font (Latin Modern Math, in
+% academic's fontsrecommended set) — real Unicode math is then typeset with it.
+\usepackage{unicode-math}
+\setmathfont{latinmodern-math.otf}
+\begin{document}
+Euler's identity is written below in Unicode math, typeset with an OpenType math
+font via the unicode-math package.
+\[
+  e^{i\pi} + 1 = 0.
+\]
+The Gaussian integral and a summation exercise real math glyphs:
+\[
+  \int_{-\infty}^{\infty} e^{-x^2}\,\mathrm{d}x = \sqrt{\pi},
+  \qquad
+  \sum_{k=1}^{n} k = \frac{n(n+1)}{2}.
+\]
+Greek symbols such as $\alpha$, $\beta$, and $\Gamma$ come from the math font.
+\end{document}

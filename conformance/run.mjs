@@ -266,6 +266,13 @@ for (const name of entries) {
 
   const pdf = result.pdf;
   const hasPdf = pdf instanceof Uint8Array;
+  // Error-path contract (M5 item 4, the known-bad entry): assert NO PDF was
+  // produced. A fatal compile (e.g. a genuinely-missing package that aborts with
+  // "no output PDF file produced") must fail CLEANLY — result.pdf absent — never
+  // ship a broken/partial PDF. The counterpart to minPages for the failure path.
+  if (want.noPdf === true) {
+    check('noPdf', !hasPdf, hasPdf ? `unexpected PDF produced (${pdf.length}B)` : '');
+  }
   let pages = null;
   if (want.minPages != null) {
     if (hasPdf) {
@@ -335,11 +342,18 @@ for (const name of entries) {
   // runs). We verify the Chinese STRUCTURALLY instead (no pixel comparison, §8):
   // the bundled font is embedded and a run of CID glyphs was emitted.
   let fonts = null;
-  if (want.embeddedFonts != null || want.minCidGlyphs != null || want.requireEmbeddedFontFile != null) {
+  if (want.embeddedFonts != null || want.absentFonts != null || want.minCidGlyphs != null || want.requireEmbeddedFontFile != null) {
     fonts = hasPdf ? fontProbe(pdf) : { baseFonts: [], embeddedFontFile: false, cidGlyphs: 0 };
     for (const wantFont of want.embeddedFonts ?? []) {
       const hit = fonts.baseFonts.some((bf) => bf.toLowerCase().includes(wantFont.toLowerCase()));
       check(`font:${wantFont}`, hit, `embedded /BaseFont names: [${fonts.baseFonts.join(', ')}]`);
+    }
+    // Negative font control (M5 item 4, the host-supplied-font CJK entry): a font
+    // that must NOT be embedded. Proves the HOST font — not the bundled fandol —
+    // is the one used for the CJK (§6.3). The exact counterpart to embeddedFonts.
+    for (const absentFont of want.absentFonts ?? []) {
+      const hit = fonts.baseFonts.some((bf) => bf.toLowerCase().includes(absentFont.toLowerCase()));
+      check(`absentFont:${absentFont}`, !hit, `/BaseFont unexpectedly matches "${absentFont}": [${fonts.baseFonts.join(', ')}]`);
     }
     if (want.requireEmbeddedFontFile) {
       check('embeddedFontFile', fonts.embeddedFontFile, 'no /FontFile* — font not embedded (PDF not self-contained)');

@@ -1,0 +1,18 @@
+{
+  "title": "tikz-standalone",
+  "description": "A focused standalone TikZ/pgfplots figure: \\documentclass{standalone} crops the PDF to a single tightly-bounded figure page. \\usepackage{pgfplots} IS a provided-package name in the academic tier, so the §5.4(a) scan preselects + mounts academic BEFORE pass 1 (resolution=scan) — which also makes standalone.cls (academic, invisible to the scan because it is a \\documentclass) available for pass 1. The body is a real tikzpicture: an axis with two plotted functions, a title, axis labels and a legend. Distinct from sci-paper (a coordinate line plot embedded in a multi-page paper) by being a single-page cropped figure with function plots. The axis/legend labels render as recoverable pdfTeX text (Frequency/Amplitude/Damping/Response/underdamped/envelope), proving the figure typeset. Exactly one engine pass, no rerun (phases=['engine']).",
+  "engine": "pdftex",
+  "entry": "figure.tex",
+  "bibliography": "off",
+  "index": "off",
+  "expect": {
+    "ok": true,
+    "exitCode": 0,
+    "minPages": 1,
+    "textSnippets": ["Frequency", "Amplitude", "Damping", "Response", "underdamped", "envelope"],
+    "absentSnippets": ["Wittgenstein"],
+    "bundlesLoaded": ["core", "academic"]
+  },
+  "resolution": "scan",
+  "phases": ["engine"]
+}

@@ -457,9 +457,9 @@ jobs:
         working-directory: demo
         run: npm ci
 
-      - name: Install Chromium (with OS deps)
+      - name: Install the browser matrix (chromium + firefox + webkit, with OS deps)
         working-directory: demo
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Run Playwright hello-world PDF smoke
         working-directory: demo

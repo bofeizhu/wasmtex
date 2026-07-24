@@ -1,0 +1,534 @@
+# SPDX-License-Identifier: MIT
+# Provenance: original work authored in the WasmTeX repository (see LICENSE).
+#   Not derived from any third-party source. The container-build steps (pins parse,
+#   GHCR login, pull-by-digest, identity gate, cache, fetch, make artifacts-container)
+#   REUSE the proven step patterns from .github/workflows/artifacts-build.yml (slice
+#   B1) — copied deliberately (duplication over premature abstraction; folding the
+#   three workflows' shared container steps into a composite action is noted as
+#   future work, M3-journal item 7 / M5 item 8). The functional-gate jobs mirror
+#   artifacts-build.yml's conformance + demo-smoke.
+#
+# WasmTeX release — versioned asset archives + a DRAFT GitHub Release (M5 item 8).
+# =============================================================================
+# DESIGN.md §9 floor: only container-built, pin-verified artifacts are ever
+# released. So the SHIPPED archives come from the SAME pinned arm64 container
+# artifacts-build.yml uses; native `make artifacts`/`make pack` is dev-only.
+#
+# DESIGN.md §4 LOCKSTEP: the npm version, the manifest `version`, and the release
+# tag `assets-v<X>` move together. This workflow asserts that three-way equality
+# and FAILS LOUD before anything ships (a bump-order slip must abort, not release).
+#
+# TWO ENTRY POINTS:
+#   * push of a tag `assets-v*`  — the REAL release. Full lockstep gate → container
+#     build → full functional gates → pack → rendered notes → a **DRAFT** GitHub
+#     Release (a human reviews + clicks Publish; publishing is a USER-ONLY action).
+#   * workflow_dispatch          — a DRY RUN. Same build/pack/verify/render, but it
+#     uploads the archives + notes as a workflow ARTIFACT and creates NO release and
+#     needs NO tag — so the whole path is provable WITHOUT publishing (item-8
+#     acceptance). The `release` job is guarded off for a dispatch.
+# =============================================================================
+name: release
+
+on:
+  # The REAL release trigger: a version tag. Filtered to `assets-v*` so an
+  # unrelated tag never starts a release build.
+  push:
+    tags:
+      - 'assets-v*'
+  # The DRY RUN: prove the whole path without a tag and without publishing.
+  workflow_dispatch: {}
+
+# A release build must not pile up, and a superseded run is NOT cancelled (its
+# evidence is still valid). Keyed on the ref so a tag and a dispatch don't collide.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Least privilege at the workflow level: read the checkout + pull the private GHCR
+# toolchain package. Only the `release` job widens to `contents: write` (below) to
+# create the draft release.
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  # ===========================================================================
+  # BUILD: lockstep gate → pinned-container build → pack → render notes.
+  # ===========================================================================
+  build:
+    runs-on: ubuntu-24.04-arm
+    # Same envelope as artifacts-build: a single container build is ~60-120 min.
+    timeout-minutes: 300
+    outputs:
+      version: ${{ steps.lockstep.outputs.version }}
+      tag: ${{ steps.lockstep.outputs.tag }}
+      is_release: ${{ steps.lockstep.outputs.is_release }}
+      pins_short: ${{ steps.pins.outputs.pins_short }}
+    env:
+      # The local tag build/artifacts/build.sh expects (its WASMTEX_TOOLCHAIN_TAG
+      # default). We pull by digest, then `docker tag` it to this so the driver's
+      # image_id preflight resolves it unchanged.
+      WASMTEX_TOOLCHAIN_TAG: wasmtex-toolchain:arm64-dev
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      # --- LOCKSTEP GATE (pre-build): tag ↔ runtime/package.json ---------------
+      # runtime/package.json is the single source of truth for the version (the
+      # runtime's ASSETS_VERSION equals it, and the build stamps it into
+      # manifest.version). On a tag push the tag's version MUST equal it, or the
+      # release would mislabel the assets — abort loud. On a dispatch (dry run)
+      # there is no tag: use the package.json version and skip the release job.
+      - id: lockstep
+        name: Lockstep gate — resolve version + assert tag ↔ package.json
+        run: |
+          pkg_version="$(jq -r '.version' runtime/package.json)"
+          if [ -z "$pkg_version" ] || [ "$pkg_version" = "null" ]; then
+            echo "!! runtime/package.json has no version" >&2
+            exit 1
+          fi
+          ref="${GITHUB_REF}"
+          # is_release requires the EVENT to be a tag PUSH — a workflow_dispatch is
+          # ALWAYS a dry run, even if the UI/`gh --ref` points it at a tag ref
+          # (GITHUB_REF would then be refs/tags/… but the run must not create a
+          # release). Gate on event_name so dispatch-on-a-tag can't ship.
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$ref" == refs/tags/assets-v* ]]; then
+            tag="${ref#refs/tags/}"
+            tag_version="${tag#assets-v}"
+            is_release=true
+            if [ "$tag_version" != "$pkg_version" ]; then
+              {
+                echo "!! LOCKSTEP FAILED (pre-build): the tag and runtime/package.json disagree."
+                echo "     tag                    : $tag  (version $tag_version)"
+                echo "     runtime/package.json   : $pkg_version"
+                echo "   Bump runtime/package.json to $tag_version (M5 item 9) BEFORE tagging, or retag to assets-v$pkg_version."
+              } >&2
+              exit 1
+            fi
+            version="$tag_version"
+          else
+            # workflow_dispatch (any ref, incl. a tag ref) = DRY RUN: no release,
+            # the package.json version drives the build + pack so the whole path
+            # is exercised and uploaded as a workflow artifact only.
+            version="$pkg_version"
+            tag="assets-v$version"
+            is_release=false
+          fi
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "is_release=$is_release"
+          } >> "$GITHUB_OUTPUT"
+          echo "resolved: version=$version  tag=$tag  is_release=$is_release  (package.json=$pkg_version)"
+
+      # --- Pinned coordinates (artifacts-build.yml's pins step, verbatim shape) -
+      - id: pins
+        name: Parse pinned image + ISO coordinates (pins.lock)
+        run: |
+          lock="build/sources/pins.lock"
+          [ -r "$lock" ] || { echo "!! $lock missing/unreadable" >&2; exit 1; }
+          parse() {  # section key
+            awk -F= -v sec="$1" -v key="$2" '
+              /^\[/ { s = $0 }
+              s == sec && $1 ~ ("^ *" key " *$") { gsub(/ /, "", $2); print $2; exit }
+            ' "$lock"
+          }
+          registry_ref="$(parse '[toolchain-image-arm64]' registry_ref)"
+          registry_digest="$(parse '[toolchain-image-arm64]' registry_digest)"
+          image_id="$(parse '[toolchain-image-arm64]' image_id)"
+          iso_file="$(parse '[texlive-iso-2026]' file)"
+          iso_sha256="$(parse '[texlive-iso-2026]' sha256)"
+          pins_short="$(sha256sum "$lock" | cut -c1-12)"
+
+          missing=0
+          for kv in "registry_ref=$registry_ref" "registry_digest=$registry_digest" \
+                    "image_id=$image_id" "iso_file=$iso_file" "iso_sha256=$iso_sha256" \
+                    "pins_short=$pins_short"; do
+            [ -n "${kv#*=}" ] || { echo "!! ${kv%%=*} empty in pins.lock" >&2; missing=1; }
+          done
+          [ "$missing" -eq 0 ] || exit 1
+
+          image_ref="${registry_ref%:*}@${registry_digest}"
+          {
+            echo "registry_ref=$registry_ref"
+            echo "registry_digest=$registry_digest"
+            echo "image_id=$image_id"
+            echo "image_ref=$image_ref"
+            echo "iso_file=$iso_file"
+            echo "iso_sha256=$iso_sha256"
+            echo "pins_short=$pins_short"
+          } >> "$GITHUB_OUTPUT"
+          echo "image_ref  = $image_ref"
+          echo "image_id   = $image_id"
+          echo "pins_short = $pins_short"
+
+      - name: Log in to GHCR (read-only, GITHUB_TOKEN)
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+      - id: pull
+        name: Pull canonical image by digest
+        env:
+          IMAGE_REF: ${{ steps.pins.outputs.image_ref }}
+        run: |
+          echo "Pull target (digest form): $IMAGE_REF"
+          docker pull "$IMAGE_REF"
+          size_bytes="$(docker image inspect --format '{{.Size}}' "$IMAGE_REF")"
+          echo "image size : $(numfmt --to=iec --suffix=B "$size_bytes")"
+
+      # IDENTITY GATE (slice A): the pulled image's config .Id MUST equal the pinned
+      # image_id — the registry digest thereby proven to resolve to the EXACT
+      # canonical bytes the release build is anchored to (DESIGN.md §6/§9).
+      - name: Identity gate — pulled .Id must equal pinned image_id
+        env:
+          IMAGE_REF: ${{ steps.pins.outputs.image_ref }}
+          PINNED_ID: ${{ steps.pins.outputs.image_id }}
+        run: |
+          got_id="$(docker image inspect --format '{{.Id}}' "$IMAGE_REF")"
+          echo "pulled .Id : $got_id"
+          echo "pinned id  : $PINNED_ID"
+          if [ "$got_id" != "$PINNED_ID" ]; then
+            {
+              echo "!! IDENTITY GATE FAILED — the registry digest did NOT resolve to the"
+              echo "   canonical image bytes pinned in build/sources/pins.lock."
+              echo "     pulled .Id : $got_id"
+              echo "     pinned id  : $PINNED_ID  ([toolchain-image-arm64])"
+            } >&2
+            exit 1
+          fi
+          echo "Identity gate passed: registry digest resolves to the canonical image bytes."
+
+      - name: Tag pulled image as the driver's local tag
+        env:
+          IMAGE_REF: ${{ steps.pins.outputs.image_ref }}
+        run: docker tag "$IMAGE_REF" "$WASMTEX_TOOLCHAIN_TAG"
+
+      # --- Pinned source acquisition (artifacts-build.yml cache strategy) --------
+      # Exact keys only (no restore-keys): fetch.sh fails closed on a hash-mismatched
+      # cached file, so a fuzzy fallback would hard-fail instead of refetching.
+      - id: iso-restore
+        name: Restore pinned TL ISO cache (content-keyed, exact only)
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.cache/wasmtex/sources/${{ steps.pins.outputs.iso_file }}
+          key: wasmtex-iso-${{ steps.pins.outputs.iso_sha256 }}
+
+      - id: src-restore
+        name: Restore small pinned sources cache (ISO excluded; exact only)
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.cache/wasmtex/sources
+            !~/.cache/wasmtex/sources/${{ steps.pins.outputs.iso_file }}
+          key: wasmtex-src-${{ hashFiles('build/sources/pins.lock') }}
+
+      - name: Fetch + verify pinned sources
+        run: build/sources/fetch.sh
+
+      - name: Save pinned TL ISO cache
+        if: steps.iso-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.cache/wasmtex/sources/${{ steps.pins.outputs.iso_file }}
+          key: wasmtex-iso-${{ steps.pins.outputs.iso_sha256 }}
+
+      - name: Save small pinned sources cache
+        if: steps.src-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cache/wasmtex/sources
+            !~/.cache/wasmtex/sources/${{ steps.pins.outputs.iso_file }}
+          key: wasmtex-src-${{ hashFiles('build/sources/pins.lock') }}
+
+      # --- The canonical release build ------------------------------------------
+      # build.sh mounts runtime/package.json into the container; run-in-container.sh
+      # reads its version and hands it to gen-assets as --version, so dist/manifest.json
+      # is stamped with the lockstep version. The dist stage also runs the execution
+      # gate + the license audit + the size-budget check (all fail-closed).
+      - name: Build the artifact set in the pinned container (make artifacts-container)
+        run: make artifacts-container
+
+      # --- LOCKSTEP GATE (post-build): manifest.version === resolved version ------
+      # Proves the driver stamped runtime/package.json's version into the manifest
+      # AND that it equals the release version. Fail loud (nothing packs/ships).
+      - name: Lockstep gate — manifest.version must equal the release version
+        env:
+          VERSION: ${{ steps.lockstep.outputs.version }}
+        run: |
+          manifest_version="$(jq -r '.version' dist/manifest.json)"
+          echo "manifest.version = $manifest_version   release version = $VERSION"
+          if [ "$manifest_version" != "$VERSION" ]; then
+            {
+              echo "!! LOCKSTEP FAILED (post-build): dist/manifest.json version does not match the release version."
+              echo "     dist/manifest.json version : $manifest_version"
+              echo "     release version            : $VERSION"
+              echo "   The container build did not stamp the expected version (check the runtime/package.json mount)."
+            } >&2
+            exit 1
+          fi
+          echo "Lockstep OK: tag == runtime/package.json == manifest.version == $VERSION"
+
+      # --- Pack (single pass: writes the archives AND emits the --json report) ----
+      # pack.mjs re-reads each archive and verifies it against dist/manifest.json
+      # (fail-closed) and honours the manifest.version↔--version mislabel guard. Run
+      # directly (the tool `make pack` wraps) with --json so the report and the
+      # archives come from ONE pack — re-packing 400+ MB twice just for the report is
+      # wasteful — and --out OUTSIDE dist/ so the dist upload below stays the plain
+      # `path: dist` artifacts-build.yml proved (no exclusion-path edge cases).
+      - name: Pack + verify the versioned release archives (+ --json report)
+        env:
+          VERSION: ${{ steps.lockstep.outputs.version }}
+        run: |
+          node build/release/pack.mjs --version "$VERSION" --out "$RUNNER_TEMP/release" --json > "$RUNNER_TEMP/pack-report.json"
+          echo "== pack report =="
+          cat "$RUNNER_TEMP/pack-report.json"
+
+      # --- Render the release notes from the template + the pack report ----------
+      - name: Render the release notes
+        env:
+          VERSION: ${{ steps.lockstep.outputs.version }}
+        run: |
+          node build/release/render-notes.mjs \
+            --version "$VERSION" \
+            --pack-report "$RUNNER_TEMP/pack-report.json" \
+            --manifest dist/manifest.json \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}" \
+            --date "$(date -u +%Y-%m-%d)" \
+            --out "$RUNNER_TEMP/RELEASE_NOTES.md"
+          echo "== rendered notes (head) =="
+          head -n 20 "$RUNNER_TEMP/RELEASE_NOTES.md"
+
+      # --- Stage the release payload (the loose files the release job attaches) ---
+      # The 3 archives + the top-level integrity/inventory files + the rendered notes
+      # + the pack report (evidence). Kept flat so the release job attaches by name.
+      - name: Stage the release payload
+        run: |
+          dest="$RUNNER_TEMP/release-payload"
+          mkdir -p "$dest"
+          cp "$RUNNER_TEMP/release"/*.tar.gz "$dest/"
+          cp dist/manifest.json dist/SHA256SUMS dist/licenses.json "$dest/"
+          cp "$RUNNER_TEMP/RELEASE_NOTES.md" "$RUNNER_TEMP/pack-report.json" "$dest/"
+          echo "== release payload =="
+          ls -la "$dest"
+
+      # --- Evidence + gate inputs ------------------------------------------------
+      # dist/ (the archives were packed to RUNNER_TEMP, so dist/ is exactly the
+      # built asset set) → the functional gates (conformance + demo-smoke) download
+      # this, the plain `path: dist` artifacts-build.yml uses.
+      - name: Upload dist/ artifact (functional gates)
+        uses: actions/upload-artifact@v6
+        with:
+          name: wasmtex-dist-${{ steps.pins.outputs.pins_short }}
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
+
+      # The release payload → the dry-run PROOF (a dispatch stops here, no release)
+      # and the `release` job's source on a tag push.
+      - name: Upload release payload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: wasmtex-release-${{ steps.pins.outputs.pins_short }}
+          path: ${{ runner.temp }}/release-payload
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Release build summary
+        if: always()
+        env:
+          VERSION: ${{ steps.lockstep.outputs.version }}
+          TAG: ${{ steps.lockstep.outputs.tag }}
+          IS_RELEASE: ${{ steps.lockstep.outputs.is_release }}
+          PINS_SHORT: ${{ steps.pins.outputs.pins_short }}
+        run: |
+          {
+            echo "## Release build"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| version | \`${VERSION}\` |"
+            echo "| tag | \`${TAG}\` |"
+            echo "| mode | $([ "$IS_RELEASE" = "true" ] && echo 'tag push → DRAFT release' || echo 'workflow_dispatch → DRY RUN (artifact only)') |"
+            echo "| pins (short) | \`${PINS_SHORT}\` |"
+            echo ""
+            if [ -f "$RUNNER_TEMP/pack-report.json" ]; then
+              echo "### pack report"
+              echo ""
+              echo '```json'
+              cat "$RUNNER_TEMP/pack-report.json"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ===========================================================================
+  # FUNCTIONAL GATES against the release-built dist/ (mirror artifacts-build.yml).
+  # Run on amd64 (ubuntu-latest) — the artifact is arm64-built, so this ALSO proves
+  # the arm64 wasm executes on amd64 (a free cross-arch proof, DESIGN.md §9).
+  # ===========================================================================
+  conformance:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download the release-built dist/ artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: wasmtex-dist-${{ needs.build.outputs.pins_short }}
+          path: dist
+
+      # Safety assert: run.mjs GREEN-SKIPS when a required artifact is absent, so a
+      # broken download must hard-fail here instead of masquerading as a pass.
+      - name: Assert the engine + tier artifacts are real (no silent green-skip)
+        run: |
+          missing=0
+          for f in busytex.wasm busytex.js core.js core.data manifest.json academic.js academic.data; do
+            [ -f "dist/$f" ] || { echo "!! dist/$f missing after download" >&2; missing=1; }
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "!! partial/empty dist — the conformance corpus would green-skip; failing the gate." >&2
+            ls -la dist dist/formats 2>/dev/null || true
+            exit 1
+          fi
+          echo "required tiered artifacts present (core + academic + manifest) -> conformance runs the real corpus."
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Install runtime dependencies (clean, from committed lockfile)
+        working-directory: runtime
+        run: npm ci
+
+      - name: Build the runtime (ESM client + worker + node harness)
+        working-directory: runtime
+        run: npm run build
+
+      - name: Run the conformance corpus
+        run: node conformance/run.mjs
+
+  demo-smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download the release-built dist/ artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: wasmtex-dist-${{ needs.build.outputs.pins_short }}
+          path: dist
+
+      - name: Assert the engine artifact is real (no silent no-op)
+        run: |
+          if [ ! -f dist/busytex.wasm ]; then
+            echo "!! dist/busytex.wasm missing after download — failing the demo gate." >&2
+            ls -la dist || true
+            exit 1
+          fi
+          echo "dist/busytex.wasm present -> demo smoke will drive the real engine."
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Install runtime dependencies (clean, from committed lockfile)
+        working-directory: runtime
+        run: npm ci
+
+      - name: Build the runtime (ESM client + worker bundle)
+        working-directory: runtime
+        run: npm run build
+
+      - name: Install demo dependencies
+        working-directory: demo
+        run: npm ci
+
+      - name: Install Chromium (with OS deps)
+        working-directory: demo
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright hello-world PDF smoke
+        working-directory: demo
+        run: npm test
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-report
+          path: demo/playwright-report
+          if-no-files-found: ignore
+
+  # ===========================================================================
+  # RELEASE: create the DRAFT GitHub Release (tag push ONLY; after all gates green).
+  # A DRY RUN (workflow_dispatch) skips this job entirely — the archives are already
+  # uploaded as a workflow artifact by `build`, so the path is proven without shipping.
+  # Publishing the draft is a USER-ONLY action (the human clicks Publish).
+  # ===========================================================================
+  release:
+    needs: [build, conformance, demo-smoke]
+    # Only on a real `assets-v*` tag PUSH — never a dispatch dry run. Both
+    # conditions (event is push AND the build resolved is_release) must hold, so
+    # a dispatch pointed at a tag ref can never reach this job.
+    if: github.event_name == 'push' && needs.build.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The only job that writes: create the draft release + upload its assets.
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download the release payload
+        uses: actions/download-artifact@v7
+        with:
+          name: wasmtex-release-${{ needs.build.outputs.pins_short }}
+          path: release-payload
+
+      # Create the DRAFT release for the tag that triggered the run, attaching the 3
+      # archives + manifest.json + SHA256SUMS + licenses.json, with the rendered notes
+      # as the body. draft:true — nothing is public until a human reviews + Publishes.
+      - name: Create the DRAFT GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job has no checkout (only the artifact download), so gh has no git
+          # remote to infer the repo from — name it explicitly.
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.build.outputs.tag }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          cd release-payload
+          # Guard: refuse to double-create if a release already exists for this tag
+          # (a re-run). The human deletes the stale draft (or Publishes) to proceed.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "!! a GitHub Release already exists for $TAG — not overwriting." >&2
+            echo "   Delete the existing (draft) release to re-create it, or Publish it." >&2
+            exit 1
+          fi
+          gh release create "$TAG" \
+            --draft \
+            --title "WasmTeX $VERSION" \
+            --notes-file RELEASE_NOTES.md \
+            --verify-tag \
+            "wasmtex-assets-${VERSION}.tar.gz" \
+            "wasmtex-bundle-core-${VERSION}.tar.gz" \
+            "wasmtex-bundle-academic-${VERSION}.tar.gz" \
+            "manifest.json" \
+            "SHA256SUMS" \
+            "licenses.json"
+          echo "Draft release created for $TAG. Review it in the GitHub Releases UI and click Publish."

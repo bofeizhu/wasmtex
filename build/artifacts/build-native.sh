@@ -351,8 +351,24 @@ do_dist() {
   # manifest (role "checksums"). --tiers is the stage-tiers side-channel (per-bundle
   # provides + TL snapshot id); generated=/snapshot are pinned off SOURCE_DATE_EPOCH,
   # so re-running this stage is byte-identical.
-  banner "dist: generate manifest.json + assets.json (integrity manifest)"
-  node "$here/../manifest/gen-assets.mjs" "$dist" --tiers "$work/build/stage/tiers.json"
+  #
+  # --version stamps the npm↔assets LOCKSTEP manifest.version (DESIGN §4, M5 item 8):
+  # runtime/package.json is the single source of truth (the runtime's ASSETS_VERSION
+  # equals it), read here on the host and handed to gen-assets so the manifest and
+  # the built assets carry the same version. The release workflow asserts this
+  # equals the tag; pack.mjs fails closed if --version disagrees with it.
+  local pkg_version
+  pkg_version="$(node -p "require('$repo/runtime/package.json').version" 2>/dev/null || true)"
+  # Reject empty AND the literal "undefined"/"null" node prints for a missing/nulled
+  # field — those would otherwise be stamped verbatim into manifest.version.
+  case "$pkg_version" in
+    '' | undefined | null)
+      echo "!! could not read a valid lockstep version from runtime/package.json (got '${pkg_version}'; does it have a \"version\" field?)" >&2
+      exit 1
+      ;;
+  esac
+  banner "dist: generate manifest.json + assets.json (integrity manifest, version=$pkg_version)"
+  node "$here/../manifest/gen-assets.mjs" "$dist" --tiers "$work/build/stage/tiers.json" --version "$pkg_version"
 
   # Asset size-budget check (M5 item 5, DESIGN §8). Reads the per-file `bytes`
   # gen-assets just wrote into dist/manifest.json (NOT re-stat'd) and compares each

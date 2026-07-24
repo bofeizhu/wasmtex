@@ -5,6 +5,45 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M5 item 8: release workflow + npm↔assets version lockstep
+
+**Done, reviewer-approved (request-changes → all fixes applied → approve).**
+`.github/workflows/release.yml` (4 jobs): `build` on arm64 (pre-build
+lockstep gate tag==package.json, container build in the pinned toolchain,
+post-build gate manifest.version==version, pack the 3 archives, render
+notes), `conformance`+`demo-smoke` on amd64 (needs:build), and `release`
+(needs all three; `contents:write` scoped to THIS job only; `gh release
+create --draft --verify-tag`). Triggered by an `assets-v*` tag PUSH; a
+`workflow_dispatch` on any ref is always a dry-run (builds+packs+uploads a
+workflow artifact, never a release).
+
+Lockstep chain, single source of truth = `runtime/package.json` version:
+`runtime/src/version.ts` (`version` + `ASSETS_VERSION = version`, a leaf
+module to avoid an index↔client cycle) → drivers read package.json and pass
+`--version` to gen-assets → `manifest.json.version` → `createTypesetter`
+soft-verifies the fetched manifest BEFORE spawning any worker
+(`AssetVersionMismatchError`, `factoryState.spawns===0` on mismatch).
+Default verify is lenient on an absent manifest version (back-compat with
+older asset trees); an explicit `expectAssetsVersion: '<v>'` pin is
+fail-closed (absent ⇒ throw). protocol.ts gained the `license-inventory`
+role (item 6 follow-through).
+
+**Review: request-changes → fixed → approve.** Finding 1 (should-fix): a
+`workflow_dispatch` pointed at a tag ref could set `is_release=true` and cut
+a release — double-gated on `github.event_name == 'push'` (in the
+`is_release` derivation AND the `release` job `if:`). Nit 2: `createTypesetter`
+now rejects a malformed `expectAssetsVersion` (anything not a non-empty
+string or `false`) with `TypesetInputError`, before the fetch. Nit 3: the
+drivers (`run-in-container.sh`, `build-native.sh`) + gen-assets + pack now
+reject a literal `undefined`/`null` version (those PASS the filename-safe
+regex — the string `node -p .version` prints for a missing field). Nit 4:
+the string-pin path is fail-closed on an absent manifest version, matching
+the "guard against a wrong/corrupt manifest" contract. Tests: +6 runtime
+(pinned-absent fail-closed, malformed-override rejects; 281 total) +2
+build-tooling (undefined/null reject; 160 total), all green; typecheck +
+lint clean. Commit triggers a container build that stamps the version and
+runs the full gate set + browser matrix.
+
 ## 2026-07-24 — M5 item 7: versioned-archive packer (the §7 release archives)
 
 **Done, reviewer-approved.** `build/release/`: an ORIGINAL zero-dep

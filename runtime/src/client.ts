@@ -46,6 +46,7 @@ import {
   parseClientMessage,
   parseWorkerMessage,
 } from './protocol';
+import { ASSETS_VERSION } from './version';
 import type {
   AssetEntry,
   AssetsConfig,
@@ -147,6 +148,27 @@ export interface CreateTypesetterOptions {
   readonly locateAsset?: (name: string) => string | undefined;
   /** Skip the `assets.json` fetch by supplying the inventory directly (tests / hosts that already hold it). */
   readonly inventory?: AssetsInventory;
+  /**
+   * Control the boot-time asset-version soft-verify (DESIGN.md §4 lockstep).
+   *
+   * By default `createTypesetter` reads the fetched manifest's `version` field and,
+   * when present, requires it to equal this build's {@link ASSETS_VERSION} —
+   * throwing an {@link AssetVersionMismatchError} otherwise, so a package/assets
+   * mismatch fails CLEARLY at boot instead of as a confusing mid-compile error. A
+   * manifest with no `version` (an older asset tree) is never rejected (back-compat).
+   *
+   * Override:
+   * - a **string** requires the manifest to declare THAT exact version instead of
+   *   `ASSETS_VERSION`. This is a deliberate pin and is FAIL-CLOSED: unlike the
+   *   default, a manifest with no `version` is rejected (not accepted as
+   *   back-compat) — the point of pinning is to guard against a wrong/corrupt
+   *   manifest, which includes one missing its version. Must be non-empty.
+   * - **`false`** disables the check entirely (no version coupling).
+   *
+   * A non-empty string or `false` are the only accepted values; anything else
+   * throws {@link TypesetInputError} at boot rather than silently disabling.
+   */
+  readonly expectAssetsVersion?: string | false;
   /** `fetch` implementation for loading `assets.json`. Defaults to `globalThis.fetch`. */
   readonly fetchImpl?: FetchLike;
   /** Build the worker. Defaults to `() => new Worker(workerUrl)` (classic). Node tests inject a fake or an in-process adapter. */
@@ -294,6 +316,28 @@ export class TypesetInputError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'TypesetInputError';
+  }
+}
+
+/**
+ * `createTypesetter` rejected because the fetched `manifest.json` declares an asset
+ * `version` that does not match the version this `wasmtex` build expects
+ * ({@link ASSETS_VERSION}, or `expectAssetsVersion` when set) — the npm↔assets
+ * LOCKSTEP guard (DESIGN.md §4). Nothing was spawned; the fix is to host the
+ * matching `wasmtex-assets-<expected>` archive (tag `assets-v<expected>`) or to
+ * override with `expectAssetsVersion`. Carries both versions so a host can surface
+ * or branch on the exact mismatch.
+ */
+export class AssetVersionMismatchError extends Error {
+  /** The version this build required (its {@link ASSETS_VERSION}, or `expectAssetsVersion`). */
+  readonly expected: string;
+  /** The version the fetched manifest actually declared. */
+  readonly actual: string;
+  constructor(expected: string, actual: string, message: string) {
+    super(message);
+    this.name = 'AssetVersionMismatchError';
+    this.expected = expected;
+    this.actual = actual;
   }
 }
 
@@ -917,6 +961,49 @@ async function resolveInventory(options: CreateTypesetterOptions): Promise<Asset
   );
 }
 
+/**
+ * Boot-time asset-version verify (DESIGN.md §4 lockstep). Throws
+ * {@link AssetVersionMismatchError} when the fetched manifest's `version` does not
+ * line up with what this build expects. Three modes:
+ *   * `expectAssetsVersion: false` disables the check entirely;
+ *   * an explicit `expectAssetsVersion: '<v>'` is a deliberate PIN and is
+ *     fail-closed — the manifest MUST declare exactly `<v>`; a manifest that
+ *     declares no version at all is treated as wrong/corrupt, not back-compat;
+ *   * the DEFAULT path (no override) is SOFT — a manifest with no `version` (an
+ *     older asset tree) is accepted, and only a present, mismatched `version`
+ *     fails against this build's {@link ASSETS_VERSION}.
+ * The caller has already validated the override's shape (non-empty string | false).
+ */
+function verifyAssetsVersion(inventory: AssetsInventory, options: CreateTypesetterOptions): void {
+  const override = options.expectAssetsVersion;
+  if (override === false) return; // host opted out of version coupling
+  const declared = inventory.version;
+  const present = typeof declared === 'string' && declared.length > 0;
+  if (typeof override === 'string') {
+    // Deliberate pin => fail-closed: exact match required, absent version rejected.
+    if (present && declared === override) return;
+    throw new AssetVersionMismatchError(
+      override,
+      present ? declared : '',
+      present
+        ? `asset version ${declared} does not match the pinned expectAssetsVersion ${override} — ` +
+            `host the matching wasmtex-assets-${override} archive (GitHub tag assets-v${override})`
+        : `assets manifest declares no version but expectAssetsVersion is pinned to ${override} — ` +
+            `host the matching wasmtex-assets-${override} archive (GitHub tag assets-v${override}), ` +
+            `or pass expectAssetsVersion: false to disable the check`,
+    );
+  }
+  // Default (no override): back-compat lenience — absent version is accepted.
+  if (!present) return;
+  if (declared === ASSETS_VERSION) return;
+  throw new AssetVersionMismatchError(
+    ASSETS_VERSION,
+    declared,
+    `asset version ${declared} does not match this wasmtex build ${ASSETS_VERSION} — host the matching ` +
+      `wasmtex-assets-${ASSETS_VERSION} archive (GitHub tag assets-v${ASSETS_VERSION}), or pass expectAssetsVersion to override`,
+  );
+}
+
 /** Choose the worker factory: explicit, else the default `new Worker(workerUrl)` (classic). */
 function resolveWorkerFactory(options: CreateTypesetterOptions): WorkerFactory {
   if (options.workerFactory) return options.workerFactory;
@@ -944,8 +1031,20 @@ export async function createTypesetter(options: CreateTypesetterOptions): Promis
   if (typeof baseUrl !== 'string' || baseUrl.length === 0) {
     throw new TypesetInputError('createTypesetter: assetsBaseUrl must be a non-empty string');
   }
+  // Reject a malformed lockstep override up front (before the assets.json fetch),
+  // so a typo can never silently become "off": only a non-empty string or `false`.
+  const expect = options.expectAssetsVersion;
+  if (expect !== undefined && expect !== false && (typeof expect !== 'string' || expect.length === 0)) {
+    throw new TypesetInputError(
+      'createTypesetter: expectAssetsVersion must be a non-empty version string or false ' +
+        `(got ${JSON.stringify(expect)})`,
+    );
+  }
   const bundles = normalizeBundles(options.bundles);
   const rawInventory = await resolveInventory(options);
+  // Soft-verify the npm↔assets lockstep BEFORE spawning anything (DESIGN.md §4): a
+  // version mismatch throws a clear, typed error at boot, not mid-compile.
+  verifyAssetsVersion(rawInventory, options);
   const inventory = applyLocateAsset(rawInventory, options.locateAsset);
 
   // Validate the init config through the SAME total validator the worker trusts.

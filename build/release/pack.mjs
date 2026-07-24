@@ -109,6 +109,11 @@ export function parseArgs(argv) {
 // A version token must be filename-safe (it becomes part of the archive names).
 export function validateVersion(v) {
   if (typeof v !== 'string' || v === '') fail('--version <v> is required (e.g. 0.1.0)');
+  // Reject the literal a driver stamps when `node -p .version` reads a missing field;
+  // these pass the filename-safe regex but are never a real version (mirror gen-assets).
+  if (v === 'undefined' || v === 'null') {
+    fail(`--version "${v}" looks like a missing package.json "version" field, not a real version`);
+  }
   if (!/^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(v)) {
     fail(`--version "${v}" is not a filename-safe version token (allowed: [0-9A-Za-z.+-], no leading punctuation)`);
   }

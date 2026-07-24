@@ -189,6 +189,73 @@ describe('gen-assets — without a side-channel (standalone dist inventory)', ()
   });
 });
 
+describe('gen-assets — lockstep manifest.version (--version, M5 item 8)', () => {
+  test('--version stamps manifest.version (after schemaVersion); assets.json omits it', () => {
+    writeDist();
+    const r = runGen(['--tiers', writeSidecar(), '--version', '0.1.0']);
+    assert.equal(r.status, 0, r.stderr);
+
+    const m = readManifest();
+    assert.equal(m.version, '0.1.0');
+    // version sits right after schemaVersion in the fixed key order.
+    assert.deepEqual(Object.keys(m), [
+      'schemaVersion',
+      'version',
+      'generated',
+      'texliveSnapshot',
+      'engines',
+      'bundles',
+      'assets',
+    ]);
+
+    // assets.json stays the schemaVersion-1 inventory subset — no version leak.
+    const a = readAssets();
+    assert.equal(a.version, undefined);
+    assert.deepEqual(Object.keys(a), ['schemaVersion', 'generated', 'assets']);
+  });
+
+  test('without --version the field is OMITTED (back-compat; runtime soft-verify tolerates absence)', () => {
+    writeDist();
+    runGen(['--tiers', writeSidecar()]);
+    const m = readManifest();
+    assert.equal('version' in m, false);
+  });
+
+  test('a re-run with the same --version is byte-identical (deterministic)', () => {
+    writeDist();
+    const sc = writeSidecar();
+    runGen(['--tiers', sc, '--version', '2.3.4']);
+    const first = readFileSync(join(distDir, 'manifest.json'));
+    runGen(['--tiers', sc, '--version', '2.3.4']);
+    assert.deepEqual(readFileSync(join(distDir, 'manifest.json')), first);
+  });
+
+  test('a version token that is not filename-safe aborts (mislabel guard, mirrors pack.mjs)', () => {
+    writeDist();
+    const r = runGen(['--tiers', writeSidecar(), '--version', '../evil']);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /filename-safe version token/);
+  });
+
+  test('accepts a semver with pre-release / build metadata', () => {
+    writeDist();
+    const r = runGen(['--tiers', writeSidecar(), '--version', '1.0.0-rc.1+build.5']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(readManifest().version, '1.0.0-rc.1+build.5');
+  });
+
+  // The literal a driver stamps when `node -p .version` reads a missing/nulled field.
+  // These PASS the filename-safe regex, so a dedicated reject guards the manifest.
+  for (const bad of ['undefined', 'null']) {
+    test(`rejects the literal "${bad}" version (missing package.json field, not a real version)`, () => {
+      writeDist();
+      const r = runGen(['--tiers', writeSidecar(), '--version', bad]);
+      assert.notEqual(r.status, 0);
+      assert.match(r.stderr, /looks like a missing package\.json "version" field/);
+    });
+  }
+});
+
 describe('gen-assets — guards', () => {
   test('a given-but-missing --tiers path fails loud (wiring guard)', () => {
     writeDist();

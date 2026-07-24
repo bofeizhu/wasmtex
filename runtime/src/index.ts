@@ -13,15 +13,11 @@
 // internal to the package: `runtime/worker` and `./client` import them directly
 // from `./protocol`, so they are not part of the published value surface.
 
-/**
- * Semantic version of the `wasmtex` package.
- *
- * Kept in lockstep with the `version` field of `package.json` — the invariant
- * is enforced by `test/index.test.ts`. Exposed as a plain constant (rather than
- * a runtime read of `package.json`) so the value survives bundling and needs no
- * filesystem or JSON-import support in the consumer.
- */
-export const version = '0.0.1';
+// The package version + the lockstep asset-archive version (DESIGN.md §4). Both
+// live in the leaf `./version` module so the client can read `ASSETS_VERSION`
+// without an import cycle; re-exported here as the public value surface. `version`
+// is kept in lockstep with package.json (enforced by test/index.test.ts).
+export { version, ASSETS_VERSION } from './version';
 
 // Protocol version is a value; re-exported explicitly (a `export type *` would
 // not carry it).
@@ -42,6 +38,7 @@ export {
   WorkerCrashedError,
   FatalError,
   TypesetInputError,
+  AssetVersionMismatchError,
 } from './client';
 export type {
   Typesetter,

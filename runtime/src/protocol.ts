@@ -230,9 +230,18 @@ export interface BundleManifestEntry {
  * per-bundle provided-package index) — all optional, so the schemaVersion-1
  * subset and a hand-written minimal `{ assets: [] }` still validate. The index
  * signature absorbs any further top-level fields a later schema adds.
+ *
+ * `version` is the npm↔assets LOCKSTEP package version (DESIGN.md §4): the
+ * schemaVersion-2 `manifest.json` carries it (stamped by `gen-assets.mjs` from
+ * `runtime/package.json`) so the client can soft-verify it against its own
+ * `ASSETS_VERSION` at boot. Optional — an older asset tree omits it, and the check
+ * is skipped for back-compat. Informational to the WORKER (which loads by role from
+ * `assets`), so the client→worker validator does not carry it across the boundary;
+ * the client reads it from the fetched manifest directly.
  */
 export interface AssetsInventory {
   readonly schemaVersion?: number;
+  readonly version?: string;
   readonly generated?: string;
   readonly texliveSnapshot?: TexliveSnapshot;
   readonly engines?: readonly string[];

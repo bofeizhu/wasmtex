@@ -35,6 +35,7 @@
 // -----------------------------------------------------------------------------
 //   {
 //     "schemaVersion": 2,
+//     "version": "<pkg version>",       // OMITTED unless --version is passed (M5 item 8)
 //     "generated": "<ISO 8601>",        // OMITTED unless SOURCE_DATE_EPOCH is set
 //     "texliveSnapshot": {              // OMITTED if no snapshot facts are known
 //       "release": "<TL release id>",   // from the tlpdb (side-channel), e.g. "2026"
@@ -57,6 +58,17 @@
 //     ]
 //   }
 //
+// - `version` is the npm↔assets LOCKSTEP package version (DESIGN §4, M5 item 8):
+//   the single source of truth is `runtime/package.json`, read by the build DRIVER
+//   and handed here via `--version <v>` (this tool never reads package.json — it
+//   stays a pure dist-inventory tool, so the version is an EXPLICIT input, like the
+//   `--tiers` side-channel). It is OMITTED when `--version` is absent (a standalone
+//   dist inventory, or an asset tree that predates the lockstep field — the runtime
+//   soft-verify tolerates its absence for back-compat). The runtime exports a
+//   matching `ASSETS_VERSION` and boot-checks the fetched manifest's `version`
+//   against it; `build/release/pack.mjs` fails closed if `--version` disagrees with
+//   this field (the mislabel guard). Only `manifest.json` carries it — `assets.json`
+//   stays the schemaVersion-1 inventory subset.
 // - `generated` is derived from SOURCE_DATE_EPOCH (seconds) when that env var is
 //   set, and OMITTED otherwise — determinism: the field must never carry a
 //   wall-clock time, or two builds of identical inputs would differ. The pinned
@@ -143,9 +155,11 @@
 //     When SHA256SUMS is absent (e.g. an un-checksummed dist), the cross-check
 //     is skipped and no "checksums" asset is emitted.
 //
-// Usage:  node gen-assets.mjs [distDir] [--tiers SIDECAR]
+// Usage:  node gen-assets.mjs [distDir] [--tiers SIDECAR] [--version V]
 //         distDir defaults to <repo>/dist; --tiers is the stage-tiers side-channel
-//         (build/stage/tiers.json) — when given it MUST exist (a wiring guard).
+//         (build/stage/tiers.json) — when given it MUST exist (a wiring guard);
+//         --version stamps the lockstep manifest.version (the driver reads it from
+//         runtime/package.json) — when absent the field is omitted.
 // =============================================================================
 
 import { createHash } from 'node:crypto';
@@ -184,12 +198,13 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..', '..');
 
 function parseArgs(argv) {
-  const opts = { distDir: null, tiers: null };
+  const opts = { distDir: null, tiers: null, version: null };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--tiers') opts.tiers = argv[++i];
+    else if (a === '--version') opts.version = argv[++i];
     else if (a === '-h' || a === '--help') {
-      console.log('Usage: node gen-assets.mjs [distDir] [--tiers SIDECAR]');
+      console.log('Usage: node gen-assets.mjs [distDir] [--tiers SIDECAR] [--version V]');
       process.exit(0);
     } else if (a.startsWith('--')) fail(`unknown argument: ${a}`);
     else if (opts.distDir === null) opts.distDir = a;
@@ -198,7 +213,28 @@ function parseArgs(argv) {
   return opts;
 }
 
+// The lockstep package version becomes `manifest.version` and (via pack.mjs) part
+// of the archive filenames, so hold it to the same filename-safe token bar
+// build/release/pack.mjs uses — a malformed value must STOP the build, not stamp a
+// manifest that then mislabels the archives. Mirrors pack.mjs validateVersion.
+function validateVersion(v) {
+  if (typeof v !== 'string' || v === '') fail('--version was given without a value');
+  // `undefined`/`null` are filename-safe tokens, so the regex below would wave them
+  // through — but they are the string a driver stamps when `node -p .version` reads a
+  // missing/nulled field. Reject them explicitly so a broken lockstep source can
+  // never label the manifest+archives "undefined" (defense behind the driver guards).
+  if (v === 'undefined' || v === 'null') {
+    fail(`--version "${v}" looks like a missing package.json "version" field, not a real version`);
+  }
+  if (!/^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(v)) {
+    fail(`--version "${v}" is not a filename-safe version token (allowed: [0-9A-Za-z.+-], no leading punctuation)`);
+  }
+  return v;
+}
+
 const opts = parseArgs(process.argv.slice(2));
+// The lockstep package version (npm↔assets, DESIGN §4). undefined => field omitted.
+const packageVersion = opts.version !== null ? validateVersion(opts.version) : undefined;
 const distDir = resolve(opts.distDir || join(repoRoot, 'dist'));
 
 if (!existsSync(distDir) || !statSync(distDir).isDirectory()) {
@@ -479,6 +515,7 @@ const assetEntries = assets.map((a) => ({
 
 const manifest = {
   schemaVersion: SCHEMA_VERSION,
+  ...(packageVersion !== undefined ? { version: packageVersion } : {}),
   ...(generated !== undefined ? { generated } : {}),
   ...(texliveSnapshot !== undefined ? { texliveSnapshot } : {}),
   engines: ENGINES,
@@ -522,6 +559,7 @@ if (texliveSnapshot !== undefined) {
 } else {
   note('texliveSnapshot: omitted (no --tiers and no SOURCE_DATE_EPOCH)');
 }
+note(`version: ${packageVersion !== undefined ? packageVersion : 'omitted (no --version; runtime soft-verify tolerates absence)'}`);
 note(
   `wrote ${relative(repoRoot, manifestPath)} (${Buffer.byteLength(manifestJson)} bytes) + ` +
     `${relative(repoRoot, assetsPath)} (${Buffer.byteLength(assetsJson)} bytes)` +

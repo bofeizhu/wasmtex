@@ -817,3 +817,165 @@ the public POSIX ustar interchange format; gzip via node's `zlib`. No GPL/AGPL
 source and no other WASM-TeX wrapper opened or consulted (none encountered). The
 aggregate-distribution wording in the notes template reuses our own
 `THIRD_PARTY_NOTICES.md` text (DESIGN §7), not a third party's.
+
+---
+
+## Item 8 — release workflow + version lockstep
+
+Dated 2026-07-24. Three parts: (1) a lockstep `version` field in `manifest.json`;
+(2) the runtime's `ASSETS_VERSION` export + a boot-time soft-verify; (3)
+`.github/workflows/release.yml` (a tag-triggered DRAFT release + a dispatch dry
+run). Wires the npm↔assets lockstep (DESIGN §4) end to end so a version-pairing
+slip fails LOUD before anything ships, and proves the whole release path without
+publishing. Local validation only (no container build; the release is user-cut).
+
+### The version flow (single source of truth: runtime/package.json)
+
+`runtime/package.json` `version` is the ONE source; everything else derives from it
+so item 9's bump propagates with no other edit:
+
+- **manifest.version** ← the build DRIVER reads `runtime/package.json` and hands it
+  to `gen-assets.mjs` as `--version` (gen-assets stays a pure dist-inventory tool —
+  the version is an EXPLICIT input like `--tiers`, not a file it reaches out to
+  read). `build-native.sh` reads it directly (`node -p`); the container path mounts
+  `runtime/package.json` read-only into the image (`build.sh` adds the mount +
+  preflight) and `run-in-container.sh` reads it with node INSIDE the container (the
+  `artifacts-build` runner has no host node, so a host read was not viable) and
+  fails loud if it can't. gen-assets stamps `version` right after `schemaVersion`,
+  OMITTED when `--version` is absent (a standalone inventory / an older asset tree).
+  Only `manifest.json` carries it; `assets.json` stays the v1 inventory subset.
+- **ASSETS_VERSION** ← the runtime's `version` constant, which is already
+  test-locked to `package.json` (`test/index.test.ts`). Moved both into a new leaf
+  `runtime/src/version.ts` (`version` + `ASSETS_VERSION = version`) so `client.ts`
+  can import `ASSETS_VERSION` WITHOUT an index→client→index import cycle; `index.ts`
+  re-exports both. So `ASSETS_VERSION === version === package.json`, and the runtime
+  and the manifest stamp read the SAME number.
+
+This ACTIVATES `pack.mjs`'s pre-wired (item 7) `--version`↔`manifest.version`
+mislabel guard: the native dist now stamps `0.0.1`, so `make pack VERSION=0.1.0`
+now ABORTS (0.1.0 ≠ 0.0.1) — the guard doing its job. Locally, pack with the
+CURRENT package.json version (`VERSION=0.0.1`) until item 9 bumps to `0.1.0`.
+
+### The soft-verify (createTypesetter, DESIGN §4)
+
+After `resolveInventory` and BEFORE spawning anything, `createTypesetter` reads the
+fetched manifest's `version` and, when present, requires it to equal
+`ASSETS_VERSION` — else it throws a typed **`AssetVersionMismatchError`** (new,
+exported; carries `expected` + `actual`, message names the `wasmtex-assets-<v>`
+archive + `assets-v<v>` tag to host). SOFT by three rules:
+
+- a manifest with **no `version`** (older assets) is accepted — back-compat;
+- **option `expectAssetsVersion?: string | false`** overrides: a *string* verifies
+  against THAT version instead (a host that pinned a different asset build but still
+  wants the fail-closed guard against a wrong/corrupt manifest); **`false`** disables
+  the check entirely (no version coupling). One option, all three cases the task's
+  `allowAssetVersionMismatch`/`expectAssetsVersion` examples cover.
+
+`protocol.ts` gained `version?: string` on `AssetsInventory` (type-only; the client
+reads the raw fetched manifest — the worker never needs it, so the client→worker
+validator does not carry it across the boundary). The embedding guide §10 was
+flipped from "not yet shipped" to the real contract (+ a code example); §11's error
+table gained the new type.
+
+### release.yml (tag → DRAFT, dispatch → dry run)
+
+Two entry points, four jobs; the container-build steps are copied faithfully from
+`artifacts-build.yml` (the proven pull-by-digest → identity-gate → `make
+artifacts-container` path — duplication over premature abstraction, per that file's
+own note; a composite action across the three workflows is flagged future work):
+
+- **`build`** (arm64): the **pre-build lockstep gate** (`jq` reads
+  `runtime/package.json`; on a tag it asserts `tag_version == package.json`, aborting
+  loud on a slip; on a dispatch there is no tag so it uses the package.json version
+  and marks `is_release=false`) → the pinned-container build (which stamps + audits +
+  size-checks + runs the execution gate in its dist stage) → the **post-build
+  lockstep gate** (`manifest.version == version`) → pack (`pack.mjs --version --out
+  $RUNNER_TEMP/release --json`, ONE pass: writes + verifies the archives against the
+  manifest AND emits the report; packed outside `dist/` so the dist upload stays the
+  plain `path: dist` artifacts-build proved) → render notes (`render-notes.mjs`) →
+  upload `wasmtex-dist-<pins>` (the gates' input) + `wasmtex-release-<pins>` (archives
+  + manifest/SHA256SUMS/licenses + notes + report — the dry-run PROOF and the release
+  job's source).
+- **`conformance`** + **`demo-smoke`** (amd64, `needs: build`): mirror
+  artifacts-build — download the release-built dist, hard-assert the engine is real
+  (no silent green-skip), run the corpus / Playwright. Running the arm64-built wasm
+  on amd64 is a free cross-arch proof (DESIGN §9).
+- **`release`** (`needs: [build, conformance, demo-smoke]`, `if:
+  needs.build.outputs.is_release == 'true'`, `permissions: contents: write`): tag
+  push ONLY — downloads the release payload and `gh release create "$TAG" --draft
+  --title --notes-file --verify-tag` attaching the 3 archives + `manifest.json` +
+  `SHA256SUMS` + `licenses.json`. **draft:true** — the human reviews + clicks Publish
+  (publishing is a USER-ONLY action). A dispatch skips this job (the archives are
+  already the uploaded artifact), so the whole path is provable WITHOUT publishing.
+  Guards: refuses to double-create if a release already exists for the tag.
+
+A new tested tool, **`build/release/render-notes.mjs`** (+ 9 tests), fills the
+`RELEASE_NOTES.template.md` `{{PLACEHOLDERS}}` from the pack `--json` report (archive
+sizes + sha256) + `manifest.json` (TL release/rev) + the workflow's version/tag/
+repo/date. Fail-closed: a lockstep disagreement (report/manifest vs `--version` — a
+THIRD lockstep check), a missing archive/snapshot, or ANY surviving `{{...}}` aborts.
+Strips the template's leading authoring-comment (which documents `{{PLACEHOLDERS}}`)
+before substituting. Wired into `build.yml`'s fast-CI `node --test` line.
+
+### Validation (local, no container)
+
+- **manifest.version**: regenerated the on-disk native `dist/` exactly as the driver
+  now does (`gen-assets … --tiers … --version 0.0.1`, SOURCE_DATE_EPOCH pinned) →
+  `manifest.version:"0.0.1"` right after `schemaVersion`, provides preserved
+  (academic 2414 / core 157), `assets.json` clean. `pack.mjs --version 0.1.0` against
+  it now ABORTS with the mislabel-guard message (the guard is live on the real dist).
+- **runtime**: `npm run typecheck` clean; full suite **275/275** (7 new
+  version-verify: constant exported + in lockstep; match boots; mismatch throws
+  `AssetVersionMismatchError` with expected/actual BEFORE any spawn; absent/blank
+  tolerated; `expectAssetsVersion` string + `false` overrides). Conformance
+  **12/12** against the versioned manifest (soft-verify passes silently:
+  `manifest.version 0.0.1 == ASSETS_VERSION 0.0.1`).
+- **build tooling**: `node --test` over gen-assets (+5 version tests) / pack /
+  render-notes (9) / tar / check-sizes → **77/77**. `license-audit.sh` PASS (new
+  `render-notes.mjs`/test carry SPDX+provenance headers; aggregate audit 2545 free).
+- **release.yml**: PyYAML parses; `bash -n` all 24 run blocks clean; actionlint
+  not installed locally (noted). Structurally mirrors artifacts-build's container
+  steps. **End-to-end pack→render dry run** against the real dist: `pack.mjs
+  --version 0.0.1 --out … --json` (3 archives, all verified vs manifest, 27 s) →
+  `render-notes.mjs` → complete notes, zero leftover placeholders, real sizes +
+  sha256s + TL 2026/78233 + repo/tag links filled.
+- All three drivers `bash -n` clean (`build.sh` mount + preflight,
+  `run-in-container.sh` version read, `build-native.sh` `node -p` read).
+
+### What the release workflow needs that only exists at tag time
+
+The container build + the full gate set + pack + the draft-release attach are all
+exercised by the **dispatch dry run** (item-8 acceptance — the first real exercise,
+like slices A/B). Only these are tag-time-only, unprovable here:
+
+- the `assets-v*` **tag push** trigger + `refs/tags/…` parsing (the pre-build
+  lockstep's tag branch — the dispatch path takes the package.json branch instead);
+- `gh release create --draft --verify-tag` writing a real draft (needs the tag to
+  exist + `contents: write` on a real ref — the dry run stops at the artifact);
+- the GHCR pull / identity gate / 6.8 GB fetch / ~90-min container build wall (CI +
+  the pinned image only; no local container builds per the standing directive).
+
+### Flagged for the user (decisions)
+
+1. **Draft, not published** — `release.yml` creates a `--draft` release; a human
+   reviews and clicks Publish (the DESIGN §9 / standing user-only rule). Confirm this
+   is the intended posture (vs auto-publish, which the rules forbid anyway).
+2. **Release-notes wording** — `RELEASE_NOTES.template.md` is seeded 0.1.0-specific
+   (the `texlive-basic`-removed Breaking-changes note). Review the prose before the
+   first Publish; it is edited per release.
+3. **Item 9 bump** — bumping `runtime/package.json` to `0.1.0` must ALSO bump the
+   `version` constant in `runtime/src/version.ts` (the `test/index.test.ts` lockstep
+   test enforces it); then the native/container manifest stamps `0.1.0` and
+   `ASSETS_VERSION` becomes `0.1.0` automatically. Handoff commands are item 9's.
+4. **Composite action** — the container-build steps now live in THREE workflows
+   (toolchain-smoke, artifacts-build, release). Folding them into a composite action
+   is worthwhile now but touches the proven `artifacts-build.yml` (regression risk);
+   left as future work per that file's own note.
+
+### Provenance
+
+Original work, SPDX-MIT. `render-notes.mjs` + its test are original (node builtins
+only; read only our own template / pack report / manifest). The release workflow's
+container steps are copied from our own `artifacts-build.yml` (MIT, this repo). No
+GPL/AGPL source and no other WASM-TeX wrapper opened or consulted (none
+encountered).

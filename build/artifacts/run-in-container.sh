@@ -56,6 +56,7 @@
 #   /bundles      (ro)  build/bundles            — tier scripts + licenses.mjs (audit)
 #   /audit        (ro)  build/audit              — check-sizes.mjs (size-budget gate)
 #   /budgets.json (ro)  build/budgets.json       — per-asset size ceilings
+#   /runtime-package.json (ro)  runtime/package.json — the lockstep VERSION source
 #   /dist         (rw)  dist/                     — assembled artifacts land here
 #   /work         (vol) named docker volume       — the build tree (fast, VM-native)
 #
@@ -93,6 +94,7 @@ MANIFEST=/manifest
 BUNDLES=/bundles   # OUR tier scripts (build/bundles/: gen-profile / stage-tiers / resolver); mounted ro by build.sh
 AUDIT=/audit       # build/audit/ (check-sizes.mjs — the M5 item 5 size-budget gate); mounted ro by build.sh
 BUDGETS=/budgets.json  # build/budgets.json (per-asset size ceilings); mounted ro by build.sh
+RUNTIME_PKG=/runtime-package.json  # runtime/package.json (the lockstep manifest.version source); mounted ro by build.sh
 DIST=/dist
 BUILD=/work
 
@@ -284,8 +286,24 @@ do_dist() {
   # not a downstream consumer. --tiers is the stage-tiers side-channel (per-bundle
   # provides + TL snapshot id); generated=/snapshot are pinned off SOURCE_DATE_EPOCH,
   # so re-running this stage is byte-identical (and matches the native build's).
-  banner "dist: generate manifest.json + assets.json (integrity manifest)"
-  node "$MANIFEST/gen-assets.mjs" "$DIST" --tiers "$BUILD/build/stage/tiers.json"
+  #
+  # --version stamps the npm↔assets LOCKSTEP manifest.version (DESIGN §4, M5 item 8)
+  # from runtime/package.json (the single source of truth) — read with node INSIDE
+  # the container off the mounted /runtime-package.json, so the host needs no node.
+  # A missing/empty mount fails loud: a release build must not silently ship an
+  # unversioned manifest. The release workflow asserts this equals the tag.
+  local pkg_version
+  pkg_version="$(node -p "require('$RUNTIME_PKG').version" 2>/dev/null || true)"
+  # Reject empty AND the literal "undefined"/"null" node prints for a missing/nulled
+  # field — those would otherwise be stamped verbatim into manifest.version.
+  case "$pkg_version" in
+    '' | undefined | null)
+      echo "!! could not read a valid lockstep version from $RUNTIME_PKG (got '${pkg_version}'; is runtime/package.json mounted with a \"version\" field?)" >&2
+      exit 1
+      ;;
+  esac
+  banner "dist: generate manifest.json + assets.json (integrity manifest, version=$pkg_version)"
+  node "$MANIFEST/gen-assets.mjs" "$DIST" --tiers "$BUILD/build/stage/tiers.json" --version "$pkg_version"
 
   # Asset size-budget check (M5 item 5, DESIGN §8). Reads the per-file `bytes`
   # gen-assets just wrote into /dist/manifest.json (NOT re-stat'd) and compares each

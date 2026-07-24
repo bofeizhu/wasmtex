@@ -68,6 +68,7 @@ manifest="$repo/build/manifest"
 bundles="$repo/build/bundles"   # OUR tier scripts (gen-profile / stage-tiers / resolver); M4 item 3
 audit="$repo/build/audit"       # check-sizes.mjs — the M5 item 5 size-budget gate
 budgets="$repo/build/budgets.json"  # per-asset size ceilings (checked in the dist stage)
+runtime_pkg="$repo/runtime/package.json"  # the npm↔assets lockstep VERSION source (DESIGN §4, M5 item 8)
 dist="$repo/dist"
 
 # --- Preflight: pinned inputs + config + image identity ----------------------
@@ -107,6 +108,14 @@ if [ ! -f "$audit/check-sizes.mjs" ]; then
 fi
 if [ ! -f "$budgets" ]; then
   echo "!! size budget file not found at $budgets" >&2
+  exit 1
+fi
+# runtime/package.json is bind-mounted read-only so the dist stage can stamp the
+# lockstep manifest.version from it (read with node INSIDE the container, so the
+# host needs no node — the artifacts-build runner has none). Same single-file
+# mount hazard as budgets.json: fail loud if it is missing.
+if [ ! -f "$runtime_pkg" ]; then
+  echo "!! runtime/package.json (the lockstep version source) not found at $runtime_pkg" >&2
   exit 1
 fi
 
@@ -172,6 +181,7 @@ echo "   cache:       $cache_dir  (mounted ro, --network none)"
 echo "   config:      $engines  (build/engines, mounted ro)"
 echo "   bundles:     $bundles  (build/bundles tier scripts, mounted ro)"
 echo "   audit:       $audit  (check-sizes.mjs size-budget gate) + budgets.json, mounted ro"
+echo "   version src:  $runtime_pkg  (lockstep manifest.version), mounted ro"
 echo "   work volume: $volume  ($([ "$stage" = all ] || [ "$stage" = prep ] && echo 'fresh (clean per build)' || echo 'reused (resume)'))"
 echo "   dist:        $dist"
 echo "   jobs:        MAKEFLAGS=-j${jobs:-<nproc>}   SOURCE_DATE_EPOCH=$source_date_epoch"
@@ -196,6 +206,7 @@ docker run \
   -v "$bundles":/bundles:ro \
   -v "$audit":/audit:ro \
   -v "$budgets":/budgets.json:ro \
+  -v "$runtime_pkg":/runtime-package.json:ro \
   -v "$dist":/dist \
   -v "$volume":/work \
   "$image_tag" \

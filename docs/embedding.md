@@ -458,26 +458,46 @@ The npm package and the asset archives are versioned **in lockstep**:
 `assets-v0.1.0`.
 
 To make a mismatch fail *clearly* instead of as a confusing mid-compile error,
-the intended contract for `0.1.0` is:
+the package makes the pairing checkable:
 
-- the package exports an **`ASSETS_VERSION`** constant (equal to the package
-  version), and
-- `createTypesetter` **soft-verifies** that the fetched `manifest.json` declares
-  a matching version — throwing a clear, actionable error on mismatch, with an
-  option to override (so a host that has deliberately pinned a different asset
-  build can proceed).
+- it exports an **`ASSETS_VERSION`** constant (equal to the package version), and
+- `createTypesetter` **soft-verifies** that the fetched `manifest.json` declares a
+  matching `version` — throwing a clear, typed `AssetVersionMismatchError` on a
+  mismatch, *before* it spawns anything.
 
-> **Status:** this discovery/verification code is **not yet in the shipped
-> package** — it is implemented as M5 item 8 alongside the first release
-> (`docs/plans/M5.md`). Until then, the version pairing is a convention you
-> uphold by hosting the `wasmtex-assets-<version>` archive that matches your
-> installed `wasmtex` version. The `manifest.json` you host must be the one from
-> that archive.
+The build stamps the same version into the shipped `manifest.json` (a top-level
+`version` field, in lockstep with `runtime/package.json`), so at boot the runtime
+compares the manifest's `version` against its own `ASSETS_VERSION`:
 
-So the discovery flow a host implements is simply: read the installed package
-version, download the matching `assets-v<version>` archive, host it, and point
-`assetsBaseUrl` (or `locateAsset`) at it. Once `ASSETS_VERSION` lands, the
-runtime confirms the match for you at boot.
+```js
+import { ASSETS_VERSION, createTypesetter, AssetVersionMismatchError } from 'wasmtex';
+
+console.log(ASSETS_VERSION); // e.g. "0.1.0" — host the assets-v0.1.0 archive
+
+try {
+  const tex = await createTypesetter({ assetsBaseUrl: '…', preload: ['core'] });
+} catch (err) {
+  if (err instanceof AssetVersionMismatchError) {
+    // err.expected === ASSETS_VERSION, err.actual === the manifest's version
+    console.error(`host the wasmtex-assets-${err.expected} archive (you served ${err.actual})`);
+  }
+}
+```
+
+The check is **soft** — it never gets in your way when it shouldn't:
+
+- an asset tree whose `manifest.json` has **no `version`** (an older build) is
+  accepted without a check (back-compat);
+- `expectAssetsVersion: '<v>'` requires the manifest to declare `<v>` *instead of*
+  `ASSETS_VERSION` — for a host that has deliberately pinned a different asset
+  build but still wants the guard against a wrong/corrupt manifest;
+- `expectAssetsVersion: false` disables the check entirely (no version coupling).
+
+So the discovery flow a host implements is simply: read `ASSETS_VERSION` (or the
+installed package version), download the matching `assets-v<version>` archive,
+host it, and point `assetsBaseUrl` (or `locateAsset`) at it — the runtime confirms
+the match for you at boot. The `manifest.json` you host must be the one from that
+archive.
 
 ## 11. Error handling
 
@@ -487,6 +507,7 @@ Every failure surfaces as one of four exported error types (all importable from
 | Error | When | Key fields |
 | --- | --- | --- |
 | `TypesetInputError` | Thrown **synchronously** by `createTypesetter` (bad options) or `typeset()` (malformed job) | — |
+| `AssetVersionMismatchError` | `createTypesetter` — the fetched `manifest.json` `version` does not match this build (see [§10](#10-versioning-matching-the-package-to-its-assets)) | `expected`, `actual` |
 | `FatalError` | A structured engine/init failure; rejects `done` (or `createTypesetter`) | `code`, `detail?` |
 | `WorkerCrashedError` | The worker terminated unexpectedly (not a structured fatal) | `detail?` |
 | `CancelledError` | `job.cancel()` or `tex.dispose()` | `reason: 'cancelled' \| 'disposed'` |

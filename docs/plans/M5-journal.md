@@ -691,3 +691,129 @@ reduction of `conformance/pdf-probe.mjs` (our own module — it can't be importe
 into the typechecked runtime tree, which is outside its rootDir and plain JS).
 No GPL/AGPL source and no other WASM-TeX wrapper opened or consulted (none
 encountered).
+
+## Item 7 — versioned-archive packer (DESIGN.md §7 release archives)
+
+Dated 2026-07-24. Turns a built `dist/` into the DESIGN §7 release archives,
+deterministically, each VERIFIED byte-for-byte against `dist/manifest.json`
+before it is trusted. Version-parameterized (the tool hardcodes no release
+number; `--version`/`VERSION=` supplies it). Validated locally against the
+on-disk, alias-free native `dist/` (core + academic; no container build).
+
+### What was built
+
+- **`build/release/tar.mjs`** — a zero-dep, pure-node **deterministic USTAR
+  writer + streaming reader/hasher**. `packTarGz` streams each source file
+  through one gzip into the archive (a 474 MB bundle never lands in memory
+  whole); `readTarGzEntries` streams untar+gunzip and hashes each entry without
+  buffering it (CI-safe on the full asset set). Exports `ustarHeader` /
+  `splitUstarPath` / `sha256File` too.
+- **`build/release/pack.mjs`** — the CLI + importable `pack()` /
+  `buildArchiveSpecs()` / `verifyArchive()` / `resolveEpoch()`. Reads
+  `manifest.json`, packs the archive set, re-reads each archive and verifies it
+  against the manifest, prints a per-archive report (`--json` for machine form).
+- **`make pack VERSION=<v>`** (root Makefile) → `dist/release/*.tar.gz`; guards
+  on `VERSION=` and a built `dist/`. Documented in the Makefile header +
+  `build/release/README.md`.
+- **`build/release/RELEASE_NOTES.template.md`** — the §7 aggregate-distribution
+  statement, tier/size table, archive list + how-to-use (host + `assetsBaseUrl`,
+  links `docs/embedding.md`), the 0.1.0 BREAKING note (texlive-basic removed),
+  and `{{PLACEHOLDERS}}` (version / TL release / tlpdb rev / date / per-archive
+  size+sha256) that item 8 fills from the pack `--json` report.
+- **Tests**: `tar.test.mjs` (17) + `pack.test.mjs` (14) — 31 total, wired into
+  `build.yml`'s tooling suite (now 145 tooling tests green).
+
+### The archive set (data-driven, not hardcoded)
+
+- `wasmtex-assets-<v>.tar.gz` = the **full `dist/` tree** (walked, output dir
+  excluded) — engine + both bundles + `.fmt` + `manifest.json` + `assets.json` +
+  `licenses.json` + `SHA256SUMS`.
+- one `wasmtex-bundle-<name>-<v>.tar.gz` per **real (non-alias) bundle** the
+  manifest lists — `core` + `academic` today; the file lists come from
+  `manifest.bundles[].files`, so a rebase rename is followed with no code edit
+  (DESIGN rebase-proofing: inventories are DATA). A future `full` tier packs for
+  free.
+
+### Key design decisions
+
+- **Pure-node tar, not host `tar`.** macOS ships bsdtar, Linux GNU tar; their
+  deterministic-flag spellings and default block-padding differ, so shelling out
+  would make the bytes host-dependent. Owning a ~150-line USTAR encoder removes
+  every host variance. Cross-checked BOTH directions against the system bsdtar
+  during validation (bsdtar lists/extracts our archives; we read a bsdtar
+  archive) — but the committed tests are self-contained (writer↔reader
+  round-trip), so CI needs no `tar` on PATH.
+- **Determinism knobs** (DESIGN §6.1): sorted entries (C-locale, matching
+  SHA256SUMS), mode 0644 / uid-gid 0 / empty owner names / typeflag 0, two POSIX
+  end blocks (no 20-block padding), `mtime = SOURCE_DATE_EPOCH`. Node's zlib
+  already emits `MTIME=0`/no-FNAME (the `gzip -n` shape) but the **OS byte is
+  host-specific** (0x13 on macOS, 0x03 on GNU/Linux) — so the gzip header is
+  canonicalized post-write to `MTIME=0, XFL=0, OS=0xFF`, neutralizing host
+  identity. Result: `1f 8b 08 00 00 00 00 00 00 ff`. Byte-repro is per fixed
+  node/zlib version (same-host double-pack byte-identical — the proof below);
+  cross-version not promised (§6.1 amendment descopes it for v1).
+- **mtime precedence**: `SOURCE_DATE_EPOCH` env → `manifest.texliveSnapshot.
+  sourceDateEpoch` (the build's own recorded epoch) → 0. All deterministic; no
+  wall-clock. For the current dist that resolves to the TL freeze
+  1772323200 (2026-03-01) with no env set.
+- **Verify mirrors gen-assets' SHA256SUMS-exclusion rules.** Assets archive:
+  every manifest asset present + `bytes`/`sha256` match; every archived file is
+  a manifest asset OR a gen-assets output (`manifest.json`/`assets.json`, the
+  two files gen-assets excludes from its own inventory). `SHA256SUMS` **is** a
+  manifest asset (role `checksums`) so it is verified normally, NOT exempted.
+  Bundle archives: exactly the declared files, each matching. Fail-closed
+  (non-zero exit on any mismatch/missing/stray).
+- **Item-8 mislabel guard, pre-wired.** If `manifest.json` gains a package
+  `version` field (item 8 adds it for the npm↔assets lockstep) that disagrees
+  with `--version`, the pack ABORTS. Absent today → packs with a note.
+  `--version` is validated filename-safe (rejects `../evil`).
+
+### Validation (local, native alias-free `dist/`, `VERSION=0.1.0`)
+
+- **3 archives, all verified** (packed + re-read + checked vs manifest):
+
+  | archive | entries | raw | gzip | sha256 (12) |
+  | --- | --- | --- | --- | --- |
+  | `wasmtex-assets-0.1.0.tar.gz` | 12 | 568.5 MB | **415.0 MB** | `c0c458fb5fd8` |
+  | `wasmtex-bundle-academic-0.1.0.tar.gz` | 2 | 482.5 MB | **363.3 MB** | `3f24e9253b18` |
+  | `wasmtex-bundle-core-0.1.0.tar.gz` | 2 | 52.8 MB | **36.0 MB** | `417d9a94b24b` |
+
+  (`make pack` ≈ 27 s for the whole set; gzip level 6, pinned.)
+- **Determinism proof**: packed the full set three times into different out dirs
+  (rel1, rel2, dist/release) — all three archives `cmp`/sha256-**identical**
+  across every pack. gzip header confirmed canonical (`1f8b0800 00000000 00 ff`).
+- **Extraction cross-check**: `bsdtar -xf` the assets archive → the extracted
+  file set equals `dist/` exactly (12 files); every file byte-identical to
+  `dist/` (`cmp`); the extracted `SHA256SUMS` self-verifies (`shasum -c` all OK)
+  — a host can extract + verify with stock tools.
+- **Tests**: 31 new (tar round-trip incl. 0-byte + >chunk streaming, byte-identical
+  double-pack, fixed header knobs, canonical gzip header, checksum/magic/truncation/
+  typeflag rejection; pack verify-PASS, tamper/missing/stray FAIL, end-to-end
+  tampered-dist CLI fail, double-pack cmp, epoch precedence, version guard).
+  Full tooling suite **145/145**; **license audit PASS** (new `build/release/*.mjs`
+  carry SPDX+provenance headers).
+
+### Flagged for the orchestrator / item 8
+
+- **`M5.md` item 7 checkbox** left unchecked — flip on review/acceptance (the
+  item-2..6 pattern).
+- **Item 8 needs `manifest.version`.** gen-assets must add a lockstep package
+  `version` field to `manifest.json` (item 8, already noted at item 3). pack.mjs
+  ALREADY honors it (the mislabel guard) the moment it appears — no pack change
+  needed, just gen-assets.
+- **Item 8 wiring**: run `node build/release/pack.mjs --version <tag> --json`
+  after the container build; `SOURCE_DATE_EPOCH` is already exported by the build
+  drivers (pack picks it up). The `--json` report carries each archive's
+  size+sha256 to attach to the Release and fill the notes-template placeholders.
+  Per DESIGN §9 the SHIPPED archives come from the container build, not a native
+  `make pack` (dev convenience).
+- The release-notes **Breaking changes** section is seeded 0.1.0-specific
+  (texlive-basic removed); it is per-release and edited each release.
+
+### Provenance
+
+Original work, SPDX-MIT. The USTAR encoder + streaming reader are written from
+the public POSIX ustar interchange format; gzip via node's `zlib`. No GPL/AGPL
+source and no other WASM-TeX wrapper opened or consulted (none encountered). The
+aggregate-distribution wording in the notes template reuses our own
+`THIRD_PARTY_NOTICES.md` text (DESIGN §7), not a third party's.

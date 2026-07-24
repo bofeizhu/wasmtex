@@ -37,9 +37,18 @@
 # fully offline. Per DESIGN.md §9 only container-built, pin-verified artifacts are
 # ever released; the native flow above is a development vehicle. Same STAGE knob.
 # See build/artifacts/README.md.
+#
+# `make pack VERSION=<v>` (M5 item 7, DESIGN.md §7): pack the versioned release
+# archives from an already-built dist/ — `wasmtex-assets-<v>.tar.gz` (the full
+# asset set) + one `wasmtex-bundle-<tier>-<v>.tar.gz` per bundle — deterministically
+# (sorted, SOURCE_DATE_EPOCH mtime, canonical gzip), each VERIFIED byte-for-byte
+# against dist/manifest.json before it is trusted. Writes to dist/release/. Does NOT
+# build: run `make artifacts` (dev) or the release workflow's container build first.
+# The release workflow (M5 item 8) runs this after the container build. See
+# build/release/README.md.
 # =============================================================================
 
-.PHONY: artifacts artifacts-container clean-artifacts rebase-check repro-check
+.PHONY: artifacts artifacts-container pack clean-artifacts rebase-check repro-check
 
 STAGE ?= all
 # Extra args forwarded to build/repro-check.sh (e.g. REPRO_ARGS=--reuse-current).
@@ -52,6 +61,19 @@ artifacts:
 # Container flow (M3 canonical builder). Same STAGE knob as `artifacts`.
 artifacts-container:
 	WASMTEX_STAGE=$(STAGE) build/artifacts/build.sh
+
+# `make pack VERSION=<v>` (M5 item 7, DESIGN.md §7): pack + verify the versioned
+# release archives from a built dist/ into dist/release/. VERSION is required (it
+# names the archives; the packer hardcodes no release number). Guards on a built
+# dist/ (needs dist/manifest.json — the verification oracle gen-assets writes).
+VERSION ?=
+pack:
+	@test -n "$(VERSION)" || { \
+	  echo "!! make pack: VERSION is required, e.g. \`VERSION=0.1.0 make pack\`."; exit 1; }
+	@test -f dist/manifest.json || { \
+	  echo "!! make pack: dist/ not built — run \`make artifacts\` (dev) or the release container build first."; \
+	  echo "   pack needs dist/manifest.json (the gen-assets integrity manifest) to verify against."; exit 1; }
+	node build/release/pack.mjs --version "$(VERSION)"
 
 # `make rebase-check` (M2 item 8, DESIGN.md §6.2): the mechanical ACCEPTANCE tail
 # of the annual rebase — a fail-fast, ordered aggregator of the six gates the

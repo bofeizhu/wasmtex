@@ -43,5 +43,5 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
-      - name: build/bundles + build/manifest + build/audit + conformance tooling unit tests (node --test)
-        run: node --test build/bundles/tlpdb.test.mjs build/bundles/resolve.test.mjs build/bundles/gen-profile.test.mjs build/bundles/stage-tiers.test.mjs build/bundles/licenses.test.mjs build/manifest/gen-assets.test.mjs build/audit/check-sizes.test.mjs conformance/pdf-probe.test.mjs
+      - name: build/bundles + build/manifest + build/audit + build/release + conformance tooling unit tests (node --test)
+        run: node --test build/bundles/tlpdb.test.mjs build/bundles/resolve.test.mjs build/bundles/gen-profile.test.mjs build/bundles/stage-tiers.test.mjs build/bundles/licenses.test.mjs build/manifest/gen-assets.test.mjs build/audit/check-sizes.test.mjs build/release/tar.test.mjs build/release/pack.test.mjs conformance/pdf-probe.test.mjs

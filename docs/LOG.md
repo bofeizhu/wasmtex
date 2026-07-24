@@ -5,6 +5,42 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M5 item 7: versioned-archive packer (the §7 release archives)
+
+**Done, reviewer-approved.** `build/release/`: an ORIGINAL zero-dep
+deterministic tar+gzip core (`tar.mjs` — a hand-rolled USTAR writer +
+streaming reader, chosen over shelling to host tar because bsdtar
+(macOS) / GNU tar (Linux) differ in deterministic-flag spelling +
+padding; streams so the 474 MB bundle never buffers whole, peak 112 MB
+RSS) + `pack.mjs` (CLI + fail-closed verify-vs-manifest) + README +
+`RELEASE_NOTES.template.md` + `make pack VERSION=<v>`. 32 tests
+(round-trip, byte-identical double-pack, corrupt/truncated/tamper
+rejection, epoch precedence, + a system-`tar` cross-check).
+
+3 archives (VERSION=0.1.0): `wasmtex-assets-0.1.0.tar.gz` 415 MB gz (full
+dist: engine + formats + core+academic + manifest/assets/licenses/
+SHA256SUMS), `wasmtex-bundle-academic-0.1.0.tar.gz` 363 MB, `wasmtex-
+bundle-core-0.1.0.tar.gz` 36 MB. Determinism proven (packed 3× →
+byte-identical; canonical gzip header, SOURCE_DATE_EPOCH mtime). Verify
+re-reads each written archive, re-hashes every entry vs manifest sha256+
+bytes (both directions, gen-assets SHA256SUMS-exclusion rules), fail-
+closed. USTAR validated field-by-field vs POSIX + against system tar
+(byte-identical extraction). The per-bundle set is data-driven from
+manifest.bundles[].files (alias-filtered) → rebase-proof.
+
+**Review: approve, 3 should-fixes folded.** (1) `readTarGzEntries` used
+`src.pipe(gunzip)` which doesn't forward a SOURCE error → an ENOENT/read
+error crashed the process instead of rejecting; added `src.on('error')`
+→ now rejects (verified). (2) The writer+reader share assumptions, so a
+symmetric bug would pass every self-round-trip test — added a system-tar
+interop test (skips where no tar). (3) The release-notes template's
+`../THIRD_PARTY_NOTICES.md`/`../docs/embedding.md` links resolved wrong
+(and don't work in a GitHub Release body) → `{{REPO_URL}}/{{TAG}}`
+placeholders. Nits noted-not-fixed: interior-zero-block tolerance,
+stale-archive verify message, fail() in exported helpers. build/release
+is NOT a build input → this commit is fast-CI only (the archives ship
+from the container build via item 8's release workflow, DESIGN §9 floor).
+
 ## 2026-07-24 — M5 item 6: soak + browser matrix + demo migration + alias drop
 
 **Done, reviewer-approved.** The hardening finale, 5 parts:

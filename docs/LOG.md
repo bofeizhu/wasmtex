@@ -41,16 +41,22 @@ bare-Node `import('…/dist/src/index.js')` now returns the exports. Reviewer:
 request-changes → the guard test, the demo/README + conformance wording, and this
 LOG entry landed. Bumped to **0.1.1** (lockstep) and cut `assets-v0.1.1`.
 
-**Docs made publish-ready** (before the 0.1.1 publish): root `README.md` and
-`runtime/README.md` (the npm README) now say "published on npm" with an
-`npm install wasmtex`, milestone table marked M5 done (dup row dropped), the
-runtime README notes the native-ESM `.js` specifiers (loads under bundler /
-native browser ESM / bare Node) and the completed chromium+firefox+webkit
-matrix. `docs/embedding.md`: version framing made generic (`assets-v<version>`,
-current example `0.1.1`) and a real API bug fixed in the §10 example
-(`createTypesetter({ …, preload: [...] })` → `bundles: { preload, onDemand }`).
-Docs land on `main`; `npm publish` packs `runtime/` from the working tree, so the
-polished README ships with 0.1.1 without disturbing the tag/asset build.
+**Docs made publish-ready** (before the 0.1.1 publish). The root `README.md` was
+**redesigned into a landing page** — hero + tagline, shields.io badges (npm /
+license / types), a copy-paste quickstart with the exact `createTypesetter` API,
+a scannable feature table, a `core`/`academic` tier comparison table, and a short
+assets/lockstep note — cutting the internal milestone table and WIP verbiage.
+Produced via a 4-draft judge+synthesize Workflow (each draft channeling a
+different exemplar: Vite / Bun-esbuild / Prisma-tRPC / Playwright), grounded in a
+strict factual brief and verified against the real API. `runtime/README.md` (the
+npm README) now says "published on npm" with install, notes the native-ESM `.js`
+specifiers (loads under bundler / native browser ESM / bare Node) and the
+completed chromium+firefox+webkit matrix. `docs/embedding.md`: version framing
+made generic (`assets-v<version>`, current example `0.1.1`) and a real API bug
+fixed in the §10 example (`createTypesetter({ …, preload: [...] })` →
+`bundles: { preload, onDemand }`). Docs land on `main`; `npm publish` packs
+`runtime/` from the working tree, so the polished docs ship with 0.1.1 without
+disturbing the tag/asset build.
 
 ## 2026-07-24 — 🎉 WasmTeX v1 (0.1.0) SHIPPED — M5 complete
 

@@ -1,117 +1,86 @@
 # wasmtex
 
-**wasmtex** is an MIT-licensed, current-TeX-Live WebAssembly typesetter for
-embedding in host applications. It compiles LaTeX projects to PDF entirely
-inside browser-class runtimes — web pages, Web Workers, Electron renderers or
-hidden views — via a single multicall engine binary, tiered TeX Live data
-bundles, and a typed, job-oriented ESM API.
+**Current-TeX-Live LaTeX → PDF, entirely in the browser.** A real TeX Live 2026 typesetter compiled to WebAssembly — compile LaTeX to PDF in any browser-class runtime (web page, Web Worker, Electron renderer), with no server and no network at compile time.
 
-## Why
+[![npm](https://img.shields.io/npm/v/wasmtex.svg)](https://www.npmjs.com/package/wasmtex)
+[![license](https://img.shields.io/npm/l/wasmtex.svg)](LICENSE)
+![types](https://img.shields.io/npm/types/wasmtex.svg)
 
-- **Current TeX Live.** Tracks a pinned *current* TeX Live snapshot (the first
-  release pins TL 2026) and treats the rebase to the next year's release as a
-  first-class, scripted operation rather than an archaeology project.
-- **License clarity for proprietary hosts.** The repository's own code is MIT;
-  the compiled artifacts are an *aggregate distribution of TeX Live programs*
-  under their own free licenses, which hosts drive as separate programs (argv
-  in, files out) with no copyleft wrapper layer in between.
-- **Embedding-first runtime.** The API is built for host apps that need
-  deterministic assets, integrity manifests, custom URL schemes, request
-  correlation, cancellation, and streaming logs — never depending on browser
-  persistence (IndexedDB/localStorage) being available.
+wasmtex packages the genuine **XeTeX** and **pdfTeX** engines from **TeX Live 2026** — plus `bibtex8`, `makeindex`, and automatic engine reruns — behind one small, friendly JavaScript API. Point it at your `.tex` sources, get back a `Uint8Array` PDF. The same code that runs on your laptop runs offline in your users' tabs.
 
-## Status
+> Pre-1.0: published on npm and usable today; the API may still change before 1.0.
 
-**Published** — the runtime is on npm as
-[`wasmtex`](https://www.npmjs.com/package/wasmtex), and its matching engine +
-data assets are on GitHub Releases (tag `assets-v<version>`). Still pre-1.0 and
-honest about it: the API may still change before 1.0, and the design targets
-**one embedder** (a desktop app embedding WasmTeX in a hidden Electron view
-behind a custom scheme; see DESIGN.md §10). The engine, runtime, bundle system,
-release pipeline, and CI are all built, tested, and shipping.
+## Install
 
 ```sh
 npm install wasmtex
 ```
 
-| Milestone | Goal | Status |
-| --- | --- | --- |
-| Bootstrap | Repo scaffolding, licensing posture, CI skeletons | Done |
-| M0 | Faithful baseline — reproduce upstream busytex's build natively on the dev host | Done |
-| M1 | Runtime v1 — typed ESM API, XeTeX-first (LuaTeX dropped from v1) (MVP core) | Done |
-| M2 | Rebase to TeX Live 2026 — port patches, dump formats; LuaTeX exits the build | Done |
-| M3 | Build logistics & CI — pinned arm64 container as canonical builder | Done |
-| M4 | Bundles + manifests — tlpdb-driven tiering and on-demand resolution | Done |
-| M5 | Release engineering + hardening — versioned archives, license audit, docs, conformance corpus, size budgets, browser matrix | Done |
+The npm package is **JavaScript only (~160 KB)**. The engine WebAssembly and TeX data ship separately as versioned GitHub Release archives — see [Assets](#assets).
 
-(Milestone order revised 2026-07-22 — native-first bootstrap pivot; see
-DESIGN.md §9.)
+## Quickstart
 
-## What works today
+```js
+import { createTypesetter } from 'wasmtex';
 
-Against the pinned TeX Live 2026 snapshot, proven end to end by the runtime
-test suite, the Node conformance corpus, and a real-browser Playwright smoke:
+const tex = await createTypesetter({
+  assetsBaseUrl: '/wasmtex-assets/',                 // where you serve the unpacked asset archive
+  workerUrl: '/node_modules/wasmtex/dist/worker.js',
+  bundles: { preload: ['core'], onDemand: ['academic'] },
+});
 
-- **XeTeX** (primary; engine pass → `xdvipdfmx` → PDF) and **pdfTeX**, driven
-  through the typed `createTypesetter` API.
-- **Automatic multi-pass sequencing**: `bibtex8` when the `.aux` requests a
-  bibliography, `makeindex` on a non-empty `.idx`, and engine reruns until
-  references/TOC quiesce (bounded).
-- **Two data tiers**: `core` (~55 MB, always preloaded — the LaTeX base,
-  `amsmath`/`hyperref`/`geometry`/`babel`, `natbib`/`bibtex`, `makeindex`, the
-  `lm`/`cm` fonts, and the XeTeX/pdfTeX formats) and `academic` (~506 MB,
-  on-demand — `fontspec`, TikZ/PGF, `beamer`, `biblatex`, `unicode-math`,
-  `siunitx`, `tcolorbox`, CJK via `xeCJK`/`ctex`/`fandol`, …).
-- **On-demand resolution** (DESIGN.md §5.4): an up-front `\usepackage` scan
-  plus a missing-file retry mount the `academic` tier automatically and *only*
-  when a document needs it — loading another **local** bundle, never touching
-  the network at compile time.
-- **Structured diagnostics** parsed from the transcript (errors/warnings with
-  file/line), streaming `onLog`, real `cancel()` (worker termination), and
-  cold-start correctness with **zero browser storage**.
+const job = tex.typeset({
+  engine: 'xetex',                                    // 'xetex' | 'pdftex'
+  entry: 'main.tex',
+  files: { 'main.tex': source },                      // path -> string | Uint8Array
+});
 
-Host-supplied fonts and CJK work by passing font bytes in the job's `files`
-map (DESIGN.md §6.3). `'luatex'` is reserved in the engine union but **not**
-implemented in v1 (a job requesting it is rejected with a clear error).
+job.onLog((line) => console.log(line));               // streaming logs
+const { ok, pdf, log, diagnostics } = await job.done; // pdf is a Uint8Array
+```
 
-## Using it / embedding
+That's the whole loop: create a typesetter once, hand `typeset` your files, await the PDF. The bibliography, index, and engine-rerun passes all happen for you.
 
-- **[`docs/embedding.md`](docs/embedding.md)** — the embedding guide: install
-  the package, host the separately-published asset archives, point the runtime
-  at them (`assetsBaseUrl`, or a custom scheme via `locateAsset` + `workerUrl`),
-  verify the download against the integrity manifest, and drive the job API.
-  Written for the DESIGN.md §10 hard-constraint profile (same-origin host,
-  custom scheme, cold start, no network after load).
-- **[`runtime/README.md`](runtime/README.md)** — the npm-package-facing README
-  (`wasmtex`): quickstart, layout, dev commands, and test philosophy.
+## Features
 
-The npm package ships **JavaScript only** (no engine, no bundles). The engine
-`wasm`, formats, and data bundles are published **separately** as versioned
-GitHub Release archives (`assets-v<version>`) that a host serves same-origin;
-`wasmtex@X.Y.Z` is designed to pair with `wasmtex-assets-X.Y.Z`. See the
-embedding guide for the version contract.
+|  |  |
+| --- | --- |
+| **Real engines** | XeTeX (primary) and pdfTeX, built from TeX Live 2026 — not a reimplementation. (`'luatex'` is reserved in the type union but not implemented in v1; a job requesting it is rejected with a clear error.) |
+| **Automatic multi-pass** | `bibtex8` for bibliographies, `makeindex` for indexes, and engine reruns until cross-references and the TOC settle — automatic and bounded. |
+| **Structured diagnostics** | Errors and warnings with file + line, plus streaming `onLog` and the raw `log`. |
+| **On-demand packages** | The `academic` tier mounts automatically, from a local bundle, only when a document needs it — never the network. |
+| **CJK ready** | xeCJK, ctex, and fandol ship in the academic tier; supply your own font bytes through the job's `files` map. |
+| **Real `cancel()`** | Backed by worker termination — no zombie compiles. |
+| **Zero browser storage** | Cold-start correct with no IndexedDB or localStorage; a fresh tab produces the same PDF as a warm one. |
+| **Native ESM everywhere** | Works under a bundler, as native browser ESM (no import map), and in bare Node. |
 
-## Design
+### Two data tiers
 
-[`DESIGN.md`](DESIGN.md) is the founding design document and the source of
-truth for goals, non-goals, API shape, build pipeline, licensing posture, and
-milestones. [`docs/rebase.md`](docs/rebase.md) is the annual-rebase runbook —
-the operational sequence for tracking each new TeX Live release, seeded by the
-TL 2026 rebase and honest about what is scripted versus a judgment call.
+| Tier | Size | Loading | Contents |
+| --- | --- | --- | --- |
+| `core` | ~55 MB | always preloaded | LaTeX base, amsmath / hyperref / geometry / babel, natbib / bibtex, Latin Modern & Computer Modern fonts, the XeTeX + pdfTeX formats |
+| `academic` | ~506 MB | on-demand, local | fontspec, TikZ / PGF, beamer, biblatex, unicode-math, siunitx, tcolorbox, CJK (xeCJK / ctex / fandol) |
+
+The academic tier mounts **automatically, only when a document requires it**, by loading another local bundle — never from the network.
+
+## Assets
+
+wasmtex splits the tiny driver from the large payload:
+
+- The **npm package** is JavaScript only (~160 KB) — it does not bundle the hundreds of MB of engine and data.
+- The **engine wasm, preloaded formats, and data bundles** ship as GitHub Release archives tagged `assets-v<version>`, kept in **lockstep** with the npm version: `wasmtex@X.Y.Z` ↔ `assets-vX.Y.Z`.
+
+You host the unpacked archive yourself and point `assetsBaseUrl` at it, so you control hosting, caching, and offline behavior. An integrity manifest plus an exported `ASSETS_VERSION` constant let the runtime **soft-verify** that the assets match the library at boot. See the [embedding guide](docs/embedding.md) for hosting layout, custom URL schemes, integrity verification, and cold-start details.
+
+## Documentation
+
+- **[Embedding guide](docs/embedding.md)** — hosting assets, custom URL schemes, integrity verification, cold start, and the bundle model.
+- **[DESIGN.md](DESIGN.md)** — the design source of truth.
 
 ## License
 
-Repository code is licensed [MIT](LICENSE). The compiled release artifacts are
-an aggregate distribution of TeX Live programs under their own respective
-licenses; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the full
-inventory.
+wasmtex's own code is **MIT** — see [LICENSE](LICENSE). The compiled artifacts are an **aggregate distribution of TeX Live programs** under their own free licenses, driven as separate programs (argv in, files out) with no copyleft wrapper layer around your code — proprietary hosts included. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full picture.
 
-## Acknowledgments
+## Acknowledgment
 
-WasmTeX's build machinery derives from
-[**busytex**](https://github.com/busytex/busytex) by Vadim Kantorov and
-contributors (MIT) — the upstream project that established the multicall
-WebAssembly TeX binary and its Emscripten build approach. WasmTeX would not
-exist without that work. See [`NOTICE`](NOTICE) and
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for full attribution and the
-vendored-file manifest.
+The build machinery derives from [**busytex**](https://github.com/busytex/busytex) by Vadim Kantorov (MIT) — the upstream project that established the multicall WebAssembly TeX binary.

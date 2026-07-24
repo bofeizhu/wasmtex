@@ -22,13 +22,17 @@ bundles, and a typed, job-oriented ESM API.
 
 ## Status
 
-Pre-1.0 and honest about it: the API may still change, and the design targets
+**Published** — the runtime is on npm as
+[`wasmtex`](https://www.npmjs.com/package/wasmtex), and its matching engine +
+data assets are on GitHub Releases (tag `assets-v<version>`). Still pre-1.0 and
+honest about it: the API may still change before 1.0, and the design targets
 **one embedder** (a desktop app embedding WasmTeX in a hidden Electron view
-behind a custom scheme; see DESIGN.md §10). The engine, runtime, bundle
-system, and CI are built and accepted; **M5 — release engineering — is
-underway**, turning the accepted artifacts into versioned, verifiable release
-archives. **The first release is `0.1.0`** (npm `wasmtex@0.1.0`, asset tag
-`assets-v0.1.0`); it is imminent, not yet published.
+behind a custom scheme; see DESIGN.md §10). The engine, runtime, bundle system,
+release pipeline, and CI are all built, tested, and shipping.
+
+```sh
+npm install wasmtex
+```
 
 | Milestone | Goal | Status |
 | --- | --- | --- |
@@ -36,10 +40,9 @@ archives. **The first release is `0.1.0`** (npm `wasmtex@0.1.0`, asset tag
 | M0 | Faithful baseline — reproduce upstream busytex's build natively on the dev host | Done |
 | M1 | Runtime v1 — typed ESM API, XeTeX-first (LuaTeX dropped from v1) (MVP core) | Done |
 | M2 | Rebase to TeX Live 2026 — port patches, dump formats; LuaTeX exits the build | Done |
-| M3 | Build logistics & CI — pinned arm64 container as canonical builder, repro gate | Done |
+| M3 | Build logistics & CI — pinned arm64 container as canonical builder | Done |
 | M4 | Bundles + manifests — tlpdb-driven tiering and on-demand resolution | Done |
-| M5 | Release engineering — versioned archives, license audit, docs, hardening | In progress |
-| M5 | Release engineering + hardening — archives, audit, npm dry-run, corpus, budgets | In progress |
+| M5 | Release engineering + hardening — versioned archives, license audit, docs, conformance corpus, size budgets, browser matrix | Done |
 
 (Milestone order revised 2026-07-22 — native-first bootstrap pivot; see
 DESIGN.md §9.)

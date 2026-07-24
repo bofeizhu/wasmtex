@@ -8,30 +8,29 @@ and automatic bibliography / index / rerun passes over a **correlated worker
 protocol** (every message carries a `jobId`). No DOM, no network after asset
 load, no required browser storage (§5.2).
 
-## Status: 0.0.x today — the first tagged release is `0.1.0`
+## Status
 
-The runtime is **fully implemented and tested** — a node unit suite over the
-correlated protocol, engine sequencing, bundle resolution, and diagnostics,
-plus a Node-driven typeset integration test and a real-browser Playwright
-smoke. XeTeX and pdfTeX are proven end to end against TeX Live 2026 engines,
-including bibliography via bibtex8, makeindex, and automatic on-demand mounting
-of the `academic` tier. The current `0.0.x` line claims the package name while
-release engineering (M5) finishes; **`0.1.0` is the first real, versioned
-release** — imminent, not yet published.
+**Published on npm** — `npm install wasmtex`. The runtime is fully implemented
+and tested: a Node unit suite over the correlated protocol, engine sequencing,
+bundle resolution, and diagnostics, plus a Node-driven typeset integration test
+and a real-browser Playwright smoke across **chromium + firefox + webkit**.
+XeTeX and pdfTeX are proven end to end against TeX Live 2026 engines, including
+bibliography via bibtex8, makeindex, and automatic on-demand mounting of the
+`academic` tier. Still pre-1.0 — the API may still change before 1.0.
+`'luatex'` in the `EngineName` union is **reserved** — LuaTeX is not
+implemented in v1 (a job requesting it is rejected with a clear error).
 
-**The assets ship separately, and now have a release channel.** The engine
-(`busytex.wasm`), preloaded formats, and the `core`/`academic` data bundles
-this library loads at runtime are published as **versioned GitHub Release
-archives** tagged `assets-v<version>` (the first is `assets-v0.1.0`). Host the
-archive that matches your installed `wasmtex` version and point the runtime at
-it via `assetsBaseUrl` — or, for a custom URL scheme, `locateAsset` +
+The compiled ESM carries explicit `.js` specifiers, so `wasmtex` loads under a
+bundler, native browser ESM (no import map), and bare Node alike.
+
+**The assets ship separately.** The engine (`busytex.wasm`), preloaded formats,
+and the `core`/`academic` data bundles this library loads at runtime are
+published as **versioned GitHub Release archives** tagged `assets-v<version>`.
+Host the archive that matches your installed `wasmtex` version and point the
+runtime at it via `assetsBaseUrl` — or, for a custom URL scheme, `locateAsset` +
 `workerUrl`. The full walkthrough (hosting, the `application/wasm` MIME
 requirement, integrity verification, custom scheme, cold start, the bundle
 model) is the **[embedding guide](../docs/embedding.md)**.
-
-Expect breaking changes before 1.0. `'luatex'` in the `EngineName` union is
-**reserved** — LuaTeX is not implemented in v1 (a job requesting it is
-rejected with a clear error).
 
 ## Quickstart
 
@@ -92,6 +91,6 @@ The correctness-critical pieces — the correlated protocol, engine sequencing
 correlation — are **pure modules unit-tested in Node**, with no browser and no
 wasm. That keeps `npm test` fast and deterministic. The wasm compile path is
 covered separately: a Node-driven typeset-path integration test and the
-Playwright demo smoke (see `demo/`), with the full browser matrix deferred to
-M5. Diagnostics are tested against fixtures captured from real engine
-transcripts, regenerated at each rebase (M1 plan, rebase-proofing rule 2).
+Playwright demo smoke (see `demo/`) across the full **chromium + firefox +
+webkit** matrix. Diagnostics are tested against fixtures captured from real
+engine transcripts, regenerated at each rebase (M1 plan, rebase-proofing rule 2).

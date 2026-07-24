@@ -81,12 +81,14 @@ browser/Worker. Node ≥18 is only relevant if you run the package's own tooling
 ## 3. Host the asset archives
 
 The engine and data are published as versioned archives on a GitHub Release
-tagged `assets-v<version>` (the first release: **`assets-v0.1.0`**):
+tagged `assets-v<version>`, one Release per `wasmtex` version (e.g.
+**`assets-v0.1.1`**):
 
-- `wasmtex-assets-0.1.0.tar.gz` — the full set: engine + formats + **both**
+- `wasmtex-assets-<version>.tar.gz` — the full set: engine + formats + **both**
   bundles + `manifest.json`.
-- `wasmtex-bundle-core-0.1.0.tar.gz` and `wasmtex-bundle-academic-0.1.0.tar.gz`
-  — the per-tier archives, if you want to host the tiers separately.
+- `wasmtex-bundle-core-<version>.tar.gz` and
+  `wasmtex-bundle-academic-<version>.tar.gz` — the per-tier archives, if you want
+  to host the tiers separately.
 
 Unpack the archive under a directory your host serves. The tree is flat, with a
 `formats/` subdirectory:
@@ -454,8 +456,8 @@ your handler exactly as `demo/serve.mjs` does for the `http` case.)
 
 The npm package and the asset archives are versioned **in lockstep**:
 `wasmtex@X.Y.Z` is meant to run against `wasmtex-assets-X.Y.Z` (GitHub tag
-`assets-vX.Y.Z`). For the first release that is `wasmtex@0.1.0` ↔
-`assets-v0.1.0`.
+`assets-vX.Y.Z`) — e.g. `wasmtex@0.1.1` ↔ `assets-v0.1.1`. Each `wasmtex`
+release has a matching `assets-v<version>` GitHub Release.
 
 To make a mismatch fail *clearly* instead of as a confusing mid-compile error,
 the package makes the pairing checkable:
@@ -472,10 +474,10 @@ compares the manifest's `version` against its own `ASSETS_VERSION`:
 ```js
 import { ASSETS_VERSION, createTypesetter, AssetVersionMismatchError } from 'wasmtex';
 
-console.log(ASSETS_VERSION); // e.g. "0.1.0" — host the assets-v0.1.0 archive
+console.log(ASSETS_VERSION); // e.g. "0.1.1" — host the assets-v0.1.1 archive
 
 try {
-  const tex = await createTypesetter({ assetsBaseUrl: '…', preload: ['core'] });
+  const tex = await createTypesetter({ assetsBaseUrl: '…', bundles: { preload: ['core'], onDemand: ['academic'] } });
 } catch (err) {
   if (err instanceof AssetVersionMismatchError) {
     // err.expected === ASSETS_VERSION, err.actual === the manifest's version

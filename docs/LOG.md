@@ -5,6 +5,41 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — M4 COMPLETE (Bundles + manifests): independently accepted
+
+**Milestone accepted** (item 9). The tester independently verified all 7
+acceptance criteria firsthand against the CI-built tiered artifact
+(acceptance run 30055643973, commit 53f6f87, all jobs green): disjoint
+core+academic tiers (157 / 2414 pkgs, tlpdb rev 78233); schemaVersion-2
+manifest integrity (verify-manifest 30 checks, SHA256SUMS 10/10,
+snapshot {2026, rev 78233, freeze 2026-03-01}); runtime on-demand mount
+(267/267 runtime tests); §5.4 BOTH paths + citation + core-only-no-
+download (7/7 corpus run firsthand against the CI bytes — sci-paper scan,
+cjk-ctex retry, pkg-core-only none); in-container CI gates against the
+tiered artifact; provenance/license clean. No blockers.
+
+**What M4 delivered:** the single 53 MB texlive-basic bundle became a
+tlpdb-driven two-tier system — `core` (53.9 MB, always preloaded) +
+`academic` (473.6 MiB, on-demand: the scientific-journal + CJK working
+set with bundled fandol) — with a top-level schemaVersion-2 integrity
+`manifest.json` (per-file sha256/bytes + per-bundle provided-package
+index + TL snapshot), real on-demand mounting (JS-heap, survives the
+between-jobs memory reset, no re-snapshot), and the §5.4 automatic
+resolution: an up-front `\usepackage` scan (unknown names do nothing) +
+a missing-file retry that mounts `academic` and re-runs once. A journal
+author's document — scientific math/figures/citations, or Chinese via
+ctex/fandol — pulls academic automatically and only when needed.
+texlive-basic kept as a byte-identical core alias (dropped at M5).
+
+**Deferred to M5 (documented, not M4 defects):** real-browser on-demand
+Playwright smoke; CJK Unicode-extraction (needs a ToUnicode CMap path);
+the per-PR cross-run integration coverage; dropping the texlive-basic
+alias; the item-5/6/7 hardening nits (in-flight loadBundle idempotency
+edge, multi-level alias, pass-2 retry test). M5 = release engineering
+(versioned archives, the first real assets-vX.Y.Z release, npm publish,
+browser matrix, size budgets, soak) — **user-gated** (release/publish are
+user-only actions).
+
 ## 2026-07-24 — Fix: conformance pdf-probe drops a page-tree object stream (CI red)
 
 **Red CI fixed** (item-8 build run 30050548281: `conformance` failed,

@@ -5,6 +5,30 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — 🎉 WasmTeX v1 (0.1.0) SHIPPED — M5 complete
+
+The release cut of `assets-v0.1.0` went fully green (release.yml run
+30085081168: lockstep pre/post gates, pinned arm64-container build, conformance
+corpus incl. the journal-template entries, demo-smoke browser matrix, pack,
+render notes) and created the DRAFT GitHub Release. The user published it and ran
+`npm publish`. Both are LIVE and lockstep-consistent (npm == manifest.version ==
+tag == `0.1.0`):
+
+- **npm**: `wasmtex@0.1.0` (dist-tag `latest`) — the 162.6 kB runtime package.
+- **GitHub Release** `assets-v0.1.0` (published 2026-07-24 11:05 UTC): the 3
+  versioned archives — `wasmtex-assets-0.1.0.tar.gz` (415 MB full dist),
+  `wasmtex-bundle-academic-0.1.0.tar.gz` (363 MB), `wasmtex-bundle-core-0.1.0.tar.gz`
+  (36 MB) — plus `manifest.json` + `SHA256SUMS` + `licenses.json`.
+
+M5 (Release engineering + hardening) is COMPLETE; all 10 items done. This ships
+the v1 milestone set: TL 2026 engines (xetex/pdftex/bibtex8/xdvipdfmx/makeindex/
+kpsewhich) as multicall WASM, the §5 runtime over a correlated worker, tiered
+core+academic bundles with §5.4 on-demand resolution, integrity manifests +
+license inventory, versioned release archives, and the full CI gate set.
+
+(Second `npm publish` attempt after the fact errored "cannot publish over 0.1.0"
+— expected/idempotent; the first publish had already landed.)
+
 ## 2026-07-24 — M5 item 9: version bump 0.0.1 → 0.1.0 (release prep) + cut assets-v0.1.0
 
 **Done (user asked to cut the release via gh).** Bumped `wasmtex` to **0.1.0**

@@ -30,10 +30,12 @@
 
   Import map (load-bearing): the runtime is authored as ESM for BUNDLER
     consumption, so tsc emits extensionless relative specifiers (`./protocol`,
-    `./client`, `./diagnostics`). Native browser ESM needs full paths, so this
-    map bridges each resolved specifier to its `.js` file. It enumerates the
-    runtime's three internal modules; if that graph changes, module loading
-    fails loudly in the smoke (a deliberate canary) rather than silently.
+    `./client`, `./diagnostics`, `./version`). Native browser ESM needs full
+    paths, so this map bridges each resolved specifier to its `.js` file. It
+    MUST enumerate every internal module reachable from the imported client;
+    the `importmap covers every runtime module` smoke test fails fast if this
+    map drifts from the runtime's module graph (a new module was added but not
+    mapped) instead of a slow page-load timeout.
 
   Same-origin only: every asset (/dist/... engine + bundles, /runtime/dist/...
     runtime + worker, and this page) is served from one origin by
@@ -50,6 +52,7 @@
   "imports": {
     "/runtime/dist/src/protocol": "/runtime/dist/src/protocol.js",
     "/runtime/dist/src/diagnostics": "/runtime/dist/src/diagnostics.js",
+    "/runtime/dist/src/version": "/runtime/dist/src/version.js",
     "/runtime/dist/src/client": "/runtime/dist/src/client.js"
   }
 }

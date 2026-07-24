@@ -5,6 +5,40 @@ how it was fixed, and what was deferred. This log is kept because TeX toolchain
 knowledge rots fast: the annual rebase to the next TeX Live release depends on
 an honest record of why the build is shaped the way it is.
 
+## 2026-07-24 — Fix: demo importmap drift broke the browser demo-smoke (item-8 regression)
+
+**Done.** The M5 item-8 artifacts-build (commit 8e303c9) went red: `build` and
+`conformance` PASSED, but the `demo-smoke` job hit its 20-min timeout and the run
+was CANCELLED. Root cause = an item-8 regression: item 8 added the leaf module
+`runtime/src/version.ts`, so the compiled `index.js` now re-exports
+`from './version'` (extensionless, tsc-preserved). The demo loads the runtime as
+native browser ESM via a hand-maintained `<importmap>` in `demo/index.html` that
+bridges each extensionless specifier to its `.js` — but the map was NOT updated
+for `version`, so the browser requested `/runtime/dist/src/version` → 404 → the
+whole runtime module graph failed to evaluate → `window.__wasmtexResult` never
+set → EVERY smoke test failed. Because the page-load tests only notice via a
+wait-timeout, each failure burned the 2.5-min Playwright test timeout and the job
+blew past 20 min (a slow CANCEL, not a clear failure).
+
+**Fix (2 parts).** (1) Added `"/runtime/dist/src/version"` to the importmap
+(reproduced the failure locally, then verified the full chromium suite + firefox/
+webkit module-load all green). (2) Added a fast, no-browser **drift guard** test
+(`importmap covers every runtime module`): it reads the built `runtime/dist/src/*.js`
+relative imports and asserts the importmap covers each — passes in ~10 ms, and on
+drift fails in ~6 ms with the exact missing specifier, converting the 20-min
+silent timeout into an instant, precise error. Proven to fail-on-drift.
+
+**Known CI-gating gap (recorded, deferred).** artifacts-build (which HOSTS the
+conformance + demo-smoke gates) triggers only on `build/**` path changes — so a
+change under `conformance/**`, `demo/**`, or `runtime/**` alone does NOT re-run
+those integration gates. Item 8 only tripped it because it also touched `build/**`;
+the journal-templates commit (conformance-only) triggered NO artifacts-build at
+all. For THIS release these are validated by a manual `workflow_dispatch` of
+artifacts-build on main-tip (covers item 8 + journal entries + this demo fix in
+one run). Post-v1 follow-up: wire a cheap "consumer gate" that runs conformance +
+demo-smoke against a downloaded/cached dist, triggered by those dirs — so they are
+auto-gated without a full ~50-min container rebuild.
+
 ## 2026-07-24 — Conformance: supplied-class top-journal templates (test-only)
 
 **Done, reviewer-approved (request-changes → 3 should-fixes + 2 nits applied →
